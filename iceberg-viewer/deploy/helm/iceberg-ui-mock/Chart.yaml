@@ -1,0 +1,11 @@
+apiVersion: v2
+name: iceberg-ui-mock
+description: >-
+  ytsaurus-ui plus the in-RAM mock YT proxy backend, for testing the
+  Iceberg-viewer protocol stack on Kubernetes. Modeled on the official
+  ytsaurus-ui-chart (packages/ui-helm-chart).
+type: application
+version: 0.1.0
+appVersion: "1.60.1"
+sources:
+  - https://github.com/ytsaurus/ytsaurus-ui

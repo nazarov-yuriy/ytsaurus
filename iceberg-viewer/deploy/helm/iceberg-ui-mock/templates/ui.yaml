@@ -1,0 +1,153 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "iceberg-ui-mock.fullname" . }}-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "iceberg-ui-mock.labels" . | nindent 4 }}
+data:
+  clusters-config.json: |
+    {{ list (dict
+        "id" .Values.ui.cluster.id
+        "name" .Values.ui.cluster.name
+        "description" .Values.ui.cluster.description
+        "environment" .Values.ui.cluster.environment
+        "group" .Values.ui.cluster.group
+        "theme" .Values.ui.cluster.theme
+        "authentication" .Values.ui.cluster.authentication
+        "secure" false
+        "disableHeavyProxies" true
+        "proxy" (include "iceberg-ui-mock.mock.proxyAddress" .)
+      ) | toJson }}
+  common.js: |
+    module.exports = {
+      uiSettings: {
+        directDownload: {{ .Values.settings.directDownload | toJson }},
+      },
+    };
+---
+# Auth "none" needs no token data, but the stock config requires the secret
+# file to be loadable at boot (see docs/bootstrap-config.md §2.4).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "iceberg-ui-mock.fullname" . }}-ui-secret
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "iceberg-ui-mock.labels" . | nindent 4 }}
+type: Opaque
+stringData:
+  yt-interface-secret.json: "{}"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "iceberg-ui-mock.fullname" . }}-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "iceberg-ui-mock.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.ui.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "iceberg-ui-mock.ui.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "iceberg-ui-mock.labels" . | nindent 8 }}
+        app.kubernetes.io/component: ui
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Same pattern as the official ui-helm-chart: stage the secret file into
+      # the emptyDir the app reads from (/opt/app/secrets).
+      initContainers:
+        - name: prepare-secret
+          image: "{{ .Values.ui.image.repository }}:{{ .Values.ui.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.ui.image.pullPolicy }}
+          command: ["bash", "-c", "cp /vault/yt-interface-secret.json /opt/app/secrets"]
+          volumeMounts:
+            - mountPath: /vault
+              name: vault
+              readOnly: true
+            - mountPath: /opt/app/secrets
+              name: secrets
+      containers:
+        - name: ui
+          image: "{{ .Values.ui.image.repository }}:{{ .Values.ui.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.ui.image.pullPolicy }}
+          command:
+            - /bin/bash
+            - -c
+            - /usr/bin/supervisord -c /etc/supervisor/supervisord.conf
+          env:
+            - name: APP_INSTALLATION
+              value: custom
+            - name: YT_AUTH_ALLOW_INSECURE
+              value: "1"
+            {{- with .Values.ui.env }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+          resources:
+            {{- toYaml .Values.ui.resources | nindent 12 }}
+          volumeMounts:
+            - mountPath: /opt/app/clusters-config.json
+              name: config
+              readOnly: true
+              subPath: clusters-config.json
+            - mountPath: /opt/app/dist/server/configs/custom/common.js
+              name: config
+              readOnly: true
+              subPath: common.js
+            - mountPath: /vault
+              name: vault
+              readOnly: true
+            - mountPath: /opt/app/secrets
+              name: secrets
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "iceberg-ui-mock.fullname" . }}-ui
+        - name: vault
+          secret:
+            secretName: {{ include "iceberg-ui-mock.fullname" . }}-ui-secret
+        - name: secrets
+          emptyDir:
+            sizeLimit: 1Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "iceberg-ui-mock.fullname" . }}-ui
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "iceberg-ui-mock.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.ui.service.type }}
+  ports:
+    - port: {{ .Values.ui.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "iceberg-ui-mock.ui.selectorLabels" . | nindent 4 }}

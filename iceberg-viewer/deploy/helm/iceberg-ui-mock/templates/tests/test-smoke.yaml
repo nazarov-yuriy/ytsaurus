@@ -1,0 +1,51 @@
+# `helm test <release>` — verifies the deployed stack end to end:
+# mock directly, then the UI boot gates, then a YT command through the UI tunnel.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "iceberg-ui-mock.fullname" . }}-smoke-test
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "iceberg-ui-mock.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+spec:
+  restartPolicy: Never
+  containers:
+    - name: smoke
+      image: curlimages/curl:8.11.1
+      command: ["sh", "-ec"]
+      args:
+        - |
+          MOCK='http://{{ include "iceberg-ui-mock.mock.proxyAddress" . }}'
+          UI='http://{{ include "iceberg-ui-mock.fullname" . }}-ui.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.ui.service.port }}'
+          CLUSTER='{{ .Values.ui.cluster.id }}'
+
+          echo "1. mock /version answers"
+          curl -sf "$MOCK/version" | grep -E '[0-9]+\.[0-9]+\.[0-9]+'
+
+          echo "2. mock /auth/whoami returns a csrf token"
+          curl -sf "$MOCK/auth/whoami" | grep csrf_token
+
+          echo "3. UI serves the app shell"
+          curl -sf "$UI/$CLUSTER/navigation" -o /dev/null
+
+          echo "4. UI cluster-info gate (version + csrf_token)"
+          INFO=$(curl -sf "$UI/api/cluster-info/$CLUSTER")
+          echo "$INFO" | grep csrf_token
+          echo "$INFO" | grep version
+
+          echo "5. UI cluster-params gate (mediumList without error)"
+          curl -sf "$UI/api/cluster-params/$CLUSTER" | grep -v '"mediumList":{"error"' | grep mediumList
+
+          echo "6. YT command through the UI tunnel"
+          curl -sf -X POST -H 'Content-Type: application/json' \
+            -d '{"path":"//home/iceberg/warehouse"}' \
+            "$UI/api/yt/$CLUSTER/api/v3/exists" | grep -x true
+
+          echo "7. read_table web_json returns rows"
+          curl -sf -X POST -H 'Content-Type: application/json' \
+            -d '{"path":"//home/iceberg/warehouse/trips[#0:#3]","output_format":{"$value":"web_json","$attributes":{"max_selected_column_count":50}}}' \
+            "$UI/api/yt/$CLUSTER/api/v3/read_table" | grep all_column_names
+
+          echo "ALL SMOKE CHECKS PASSED"
