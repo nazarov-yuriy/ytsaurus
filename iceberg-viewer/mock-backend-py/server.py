@@ -471,7 +471,8 @@ class Handler(BaseHTTPRequestHandler):
                 decoded = base64.b64decode(m.group(1)).decode('utf-8', 'replace')
                 user, _, password = decoded.partition(':')
             if user not in users or users[user]['password'] != password:
-                return self.send_yt_error(401, yt_error(900, 'Invalid username or password'), cors)
+                # Real proxy masks the cause: generic code 1 (cypress_cookie_login.cpp:83).
+                return self.send_yt_error(401, yt_error(1, 'Incorrect login or password'), cors)
             cookie = make_cookie(user)
             expires = format_datetime(datetime.now(timezone.utc) + timedelta(days=30), usegmt=True)
             return self.send_body(200, b'', {

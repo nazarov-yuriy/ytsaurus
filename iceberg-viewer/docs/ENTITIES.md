@@ -67,7 +67,7 @@ Password login: browser POSTs JSON to UI server /api/yt/:cluster/login; UI serve
 
 | Status | Field | Type | Required | Description |
 |--------|-------|------|----------|-------------|
-| 🟢 implemented | `password` | string | yes | plain password; a wrong pair returns HTTP 401 with mock-only code 900, while the real proxy masks it as generic code 1 ('Incorrect login or password') |
+| 🟢 implemented | `password` | string | yes | plain password; a wrong pair returns HTTP 401 with generic code 1 ('Incorrect login or password'), matching the real proxy which masks the cause |
 | 🟢 implemented | `username` | string | yes | checked against users map in data.js |
 
 ## node-attributes
@@ -220,6 +220,6 @@ YT TError JSON envelope; body of every error response, mirrored in X-YT-Error he
 | Status | Field | Type | Required | Description |
 |--------|-------|------|----------|-------------|
 | 🟢 implemented | `attributes` | map | yes | extra context (path, code, ...) |
-| 🟢 implemented | `code` | int | yes | numeric YT error code; the mock uses 1 (generic), 500 (resolve/NODE_DOES_NOT_EXIST), and mock-only 900/901 for login/CSRF. The real proxy returns generic code 1 for a wrong-password /login response and native auth codes such as 111/110 for cookie-auth failures |
+| 🟢 implemented | `code` | int | yes | numeric YT error code; the mock uses 1 (generic, incl. wrong-password /login, matching the real proxy), 500 (resolve/NODE_DOES_NOT_EXIST), and mock-only 900/901 for API-command auth/CSRF failures. The real proxy uses native auth codes such as 111/110 for cookie-auth failures |
 | 🟢 implemented | `message` | string | yes | human-readable message |
 | 🟡 constant | `inner_errors` | list<yt-error> | yes | mock always returns [] |

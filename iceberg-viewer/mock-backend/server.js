@@ -372,7 +372,8 @@ const server = http.createServer(async (req, res) => {
         : [];
       const password = pw.join(':');
       if (!(user in users) || users[user].password !== password) {
-        return void sendYtError(res, 401, ytError(900, 'Invalid username or password'), cors);
+        // Real proxy masks the cause: generic code 1 (cypress_cookie_login.cpp:83).
+        return void sendYtError(res, 401, ytError(1, 'Incorrect login or password'), cors);
       }
       const cookie = makeCookie(user);
       const expires = new Date(Date.now() + 30 * 24 * 3600 * 1000).toUTCString();

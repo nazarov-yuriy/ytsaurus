@@ -136,16 +136,18 @@ class TestAuth(Both):
             self.assertIn('HttpOnly', cookie)
             self.assertNotIn('SameSite', cookie)  # real proxy never sets it
 
-    def test_login_wrong_password_is_401_code_900(self):
-        # auth.md §5: the proxy maps auth failures to HTTP 401 with YT code 900;
-        # the body is the yt-error entity, mirrored into X-YT-* headers.
+    def test_login_wrong_password_is_401_generic_code(self):
+        # cypress_cookie_login.cpp:83 — the real proxy masks the failure cause as a
+        # generic TError (code 1) "Incorrect login or password" with HTTP 401. The
+        # body is the yt-error entity, mirrored into X-YT-* headers.
         bad = 'Basic ' + base64.b64encode(b'iceberg:wrong').decode()
         for port in self.each():
             status, body, hdrs = call(port, 'POST', '/login', headers={'Authorization': bad})
             self.assertEqual(status, 401)
-            self.assertEqual(body['code'], 900)
-            self.assertEqual(hdrs.get('X-YT-Response-Code'), '900')
-            self.assertEqual(json.loads(hdrs.get('X-YT-Error'))['code'], 900)
+            self.assertEqual(body['code'], 1)
+            self.assertEqual(body['message'], 'Incorrect login or password')
+            self.assertEqual(hdrs.get('X-YT-Response-Code'), '1')
+            self.assertEqual(json.loads(hdrs.get('X-YT-Error'))['code'], 1)
 
     def test_whoami_without_credentials_still_succeeds(self):
         # empirical-findings + auth.md §4: with authentication:"none" the UI server
