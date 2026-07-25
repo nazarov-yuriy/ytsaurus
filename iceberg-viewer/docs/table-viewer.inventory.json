@@ -1,0 +1,636 @@
+[
+  {
+    "layer": "ui-server",
+    "command": "home",
+    "method": "GET",
+    "path": "/:ytAuthCluster/:page?/:tab?",
+    "description": "Serves the SPA HTML. Embeds window.YT (cluster configs, parameters.login, parameters.version) and window.__DATA__ (settings, ytApiUseCORS, uiSettings, allowPasswordAuth, ...) as inline scripts. Cluster list is NOT fetched by the client; it comes from here.",
+    "request": {"headers": {"Cookie": "<cluster>_YTCypressCookie=<secret>"}, "params": {}},
+    "response": {"body_schema": "text/html; inline script sets window.YT = {clusters: {...}, parameters: {version, login, authWay}} and window.__DATA__ = {settings:{data,meta}, ytApiUseCORS, uiSettings, odinPageEnabled, allowPasswordAuth, ...}"},
+    "api_version": "v3",
+    "needed_for_mock": true,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/server/routes.ts:127-132",
+      "ytsaurus-ui/packages/ui/src/server/controllers/home.ts:12-93",
+      "ytsaurus-ui/packages/ui/src/server/components/layout-config.ts:19-86"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "command": "cluster-info",
+    "method": "GET",
+    "path": "/api/cluster-info/:ytAuthCluster",
+    "description": "Bootstrap step 1. Server-side calls GET <proxy>/auth/whoami and GET <proxy>/version in parallel. A missing/failed version blocks the whole app (PRELOAD_ERROR.CONNECTION); a missing csrf_token blocks it with PRELOAD_ERROR.AUTHENTICATION. The client stores csrf_token in the cookie ytfront_<cluster>_xsrf_token.",
+    "request": {"headers": {}, "params": {}},
+    "response": {"body_schema": "{token?: {login: string, csrf_token: string}, version?: string, tokenError?: YTError, versionError?: YTError}"},
+    "api_version": "v3",
+    "needed_for_mock": true,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/server/routes.ts:56",
+      "ytsaurus-ui/packages/ui/src/server/components/cluster-queries.ts:122-155",
+      "ytsaurus-ui/packages/ui/src/ui/store/actions/cluster-params.ts:197-280"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "command": "cluster-params",
+    "method": "GET",
+    "path": "/api/cluster-params/:ytAuthCluster",
+    "description": "Bootstrap step 2 (cached server-side). Server issues two execute_batch calls to the cluster proxy: (1) list //sys/primary_masters; (2) list //sys/media, get //sys/scheduler/orchid/service/version, get //sys/@ui_config, get //sys/@ui_config_dev_overrides, get //sys/primary_masters/<first>/orchid/service/version. All sub-requests carry suppress_transaction_coordinator_sync:true and suppress_upstream_sync:true. Only mediumList errors are fatal client-side.",
+    "request": {"headers": {}, "params": {}},
+    "response": {"body_schema": "{mediumList: BatchResultsItem<string[]>, schedulerVersion: BatchResultsItem<string>, masterVersion: BatchResultsItem<string>, uiConfig: BatchResultsItem<object>, uiDevConfig: BatchResultsItem<object>} where BatchResultsItem = {output?: any, error?: YTError}"},
+    "api_version": "v3",
+    "needed_for_mock": true,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/server/routes.ts:57",
+      "ytsaurus-ui/packages/ui/src/server/components/cluster-params.ts:27-247",
+      "ytsaurus-ui/packages/ui/src/ui/store/actions/cluster-params.ts:69-128",
+      "ytsaurus-ui/packages/ui/src/shared/constants/index.ts:14-17"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "command": "clusters-versions",
+    "method": "GET",
+    "path": "/api/clusters/versions",
+    "description": "Root page (/) only: version of every configured cluster, via GET <proxy>/version per cluster.",
+    "request": {"headers": {}, "params": {}},
+    "response": {"body_schema": "Array<{id: string, version?: string}>"},
+    "api_version": "v3",
+    "needed_for_mock": false,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/server/routes.ts:58",
+      "ytsaurus-ui/packages/ui/src/server/controllers/clusters.ts:6-12",
+      "ytsaurus-ui/packages/ui/src/ui/store/actions/clusters-menu.ts:27-41"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "command": "clusters-auth-status",
+    "method": "GET",
+    "path": "/api/clusters/auth-status",
+    "description": "Root page (/) only. When allowPasswordAuth is off, every cluster is reported authorized:true.",
+    "request": {"headers": {}, "params": {}},
+    "response": {"body_schema": "Record<clusterId, {authorized: boolean}>"},
+    "api_version": "v3",
+    "needed_for_mock": false,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/server/routes.ts:59",
+      "ytsaurus-ui/packages/ui/src/server/controllers/clusters.ts:16-42"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "command": "settings-get",
+    "method": "GET",
+    "path": "/api/settings/:ytAuthCluster/:username",
+    "description": "User settings, backed by a Cypress document under userSettingsConfig.mapNodePath. Preceded by POST (create, ignore_existing). Only active when userSettingsConfig is configured; all errors are swallowed client-side.",
+    "request": {"headers": {"content-type": "application/json"}, "params": {}},
+    "response": {"body_schema": "Record<settingKey, any>"},
+    "api_version": "v3",
+    "needed_for_mock": false,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/server/routes.ts:93-97",
+      "ytsaurus-ui/packages/ui/src/server/components/settings.ts:38-130",
+      "ytsaurus-ui/packages/ui/src/ui/common/utils/settings-remote-provider.ts:17-71"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "command": "yt-api-reverse-proxy",
+    "method": "GET|POST|PUT",
+    "path": "/api/yt/:ytAuthCluster/api/:version/:command",
+    "description": "The single reverse proxy the browser uses for ALL YT commands when ytApiUseCORS is falsy (the default). Validates version/command against the javascript-wrapper command list; resolves a heavy proxy via GET <proxy>/hosts for heavy commands (read_table!) unless isLocalCluster or disableHeavyProxies; forwards query string, body and all headers except host/cookie, adding accept-encoding:gzip, X-YT-Correlation-Id, X-YT-Suppress-Redirect:1 and Cookie: YTCypressCookie=<secret>. The response is streamed back verbatim, so all X-YT-* response headers survive.",
+    "request": {
+      "headers": {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "X-YT-Suppress-Redirect": "1",
+        "X-Custom-Request-Id": "<YTApiId, stripped before forwarding>",
+        "X-YT-Header-Format": "<encode_utf8=%false>json (only when X-YT-Parameters-N is used)",
+        "X-YT-Parameters-0": "<base64(JSON) chunk, only for non-body commands>",
+        "X-Csrf-Token": "<ytfront_<cluster>_xsrf_token, only when authentication != 'none'>"
+      },
+      "params": {}
+    },
+    "response": {"body_schema": "streamed verbatim from the cluster proxy"},
+    "api_version": "v3",
+    "needed_for_mock": true,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/server/routes.ts:82-84",
+      "ytsaurus-ui/packages/ui/src/server/controllers/yt-api.ts:31-141",
+      "ytsaurus-ui/packages/ui/src/ui/store/selectors/global/cluster.ts:40-46",
+      "ytsaurus-ui/packages/ui/src/ui/common/yt-api.ts:14-42"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "command": "table-column-preset-get",
+    "method": "GET",
+    "path": "/api/table-column-preset/:ytAuthCluster/:hash",
+    "description": "Only fired when the table URL carries columns=<hash>. Returns a saved column selection.",
+    "request": {"headers": {}, "params": {}},
+    "response": {"body_schema": "{columns: string[]}"},
+    "api_version": "v3",
+    "needed_for_mock": false,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/server/routes.ts:102-104",
+      "ytsaurus-ui/packages/ui/src/ui/store/actions/navigation/content/table/columns-preset.ts:53-58"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "command": "login",
+    "method": "POST",
+    "path": "/api/yt/:ytAuthCluster/login",
+    "description": "Password login. Proxies to POST <proxy>/login with Authorization: Basic base64(user:pass); duplicates the YTCypressCookie Set-Cookie header as <cluster>_YTCypressCookie. Only needed when allowPasswordAuth is enabled.",
+    "request": {"headers": {}, "params": {"username": "string", "password": "string"}},
+    "response": {"body_schema": "streamed from the cluster proxy; Set-Cookie: YTCypressCookie=... and <cluster>_YTCypressCookie=..."},
+    "api_version": "v3",
+    "needed_for_mock": false,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/server/routes.ts:61",
+      "ytsaurus-ui/packages/ui/src/server/controllers/login.ts:23-87"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "command": "version",
+    "method": "GET",
+    "path": "/version",
+    "description": "Plain-text cluster version. Called by the UI Node server from /api/cluster-info and /api/clusters/versions. A failure here blocks the whole UI.",
+    "request": {"headers": {}, "params": {}},
+    "response": {"body_schema": "text/plain, e.g. \"24.1.0-mock\""},
+    "api_version": "v3",
+    "needed_for_mock": true,
+    "source_refs": [
+      "yt/yt/server/http_proxy/bootstrap.cpp:638",
+      "yt/yt/server/http_proxy/bootstrap.cpp:467-484",
+      "ytsaurus-ui/packages/ui/src/server/components/cluster-queries.ts:72-81"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "command": "auth-whoami",
+    "method": "GET",
+    "path": "/auth/whoami",
+    "description": "Returns the authenticated login and a CSRF token. Called by the UI Node server from /api/cluster-info. The csrf_token becomes the ytfront_<cluster>_xsrf_token cookie and is echoed as X-Csrf-Token on subsequent authenticated requests.",
+    "request": {"headers": {"Cookie": "YTCypressCookie=<secret>"}, "params": {}},
+    "response": {"body_schema": "{login: string, csrf_token: string}"},
+    "api_version": "v3",
+    "needed_for_mock": true,
+    "source_refs": [
+      "yt/yt/server/http_proxy/bootstrap.cpp:625",
+      "ytsaurus-ui/packages/ui/src/server/components/cluster-queries.ts:25-70"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "command": "hosts",
+    "method": "GET",
+    "path": "/hosts",
+    "description": "Heavy-proxy discovery. Called by the UI Node server before forwarding heavy commands (read_table) unless the cluster is local or disableHeavyProxies is set; res.data[0] becomes the target host. The browser never calls it (useHeavyProxy is false client-side).",
+    "request": {"headers": {}, "params": {}},
+    "response": {"body_schema": "string[] (host:port), ordered best-first"},
+    "api_version": "v3",
+    "needed_for_mock": true,
+    "source_refs": [
+      "yt/yt/server/http_proxy/bootstrap.cpp:627",
+      "ytsaurus-ui/packages/ui/src/server/controllers/yt-api.ts:92-101",
+      "ytsaurus-ui/packages/javascript-wrapper/lib/core.js:321-329"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "command": "api-discovery",
+    "method": "GET",
+    "path": "/api",
+    "description": "Returns the supported API versions. Not used by the UI; useful for smoke-testing a mock.",
+    "request": {"headers": {}, "params": {}},
+    "response": {"body_schema": "[\"v3\",\"v4\"]"},
+    "api_version": "v3",
+    "needed_for_mock": false,
+    "source_refs": ["yt/yt/server/http_proxy/context.cpp:142-152"]
+  },
+  {
+    "layer": "proxy",
+    "command": "get",
+    "method": "POST",
+    "path": "/api/v3/get",
+    "description": "Cypress read. Parameters travel in the JSON body (useBodyForParameters). Path suffixes the UI uses: /@ (all attributes), /@<attr>, &/@<attr> (link suppression), #<object-id>/@<attr>. Unrecognized parameters are kept and forwarded by the driver. v3 returns the value unwrapped.",
+    "request": {
+      "headers": {"Accept": "application/json", "Content-Type": "application/json", "X-YT-Suppress-Redirect": "1"},
+      "params": {
+        "path": "required, rich YPath",
+        "attributes": "optional list<string>; DEFAULT = universal filter (all attributes)",
+        "max_size": "optional i64",
+        "return_only_value": "default false",
+        "node_count_limit": "optional i64 >= 0",
+        "result_size_limit": "optional i64 >= 0",
+        "transaction_id": "optional",
+        "suppress_access_tracking": "\"true\" (always sent by the UI)",
+        "suppress_transaction_coordinator_sync": "optional bool (cluster-params batches)",
+        "suppress_upstream_sync": "optional bool (cluster-params batches)",
+        "output_format": "optional; the UI passes {$value:'json',$attributes:{stringify:true,annotate_with_types:true}} on the batch envelope"
+      }
+    },
+    "response": {"body_schema": "v3: the node value directly (JSON with $attributes/$value on demand). v4: {\"value\": <same>}"},
+    "api_version": "v3",
+    "needed_for_mock": true,
+    "source_refs": [
+      "yt/yt/client/driver/driver.cpp:164",
+      "yt/yt/client/driver/cypress_commands.cpp:23-73",
+      "yt/yt/client/driver/command.cpp:41-60",
+      "ytsaurus-ui/packages/javascript-wrapper/lib/commands/v3.js:35-41"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "command": "list",
+    "method": "POST",
+    "path": "/api/v3/list",
+    "description": "Directory listing for the navigation map_node view. NB the driver default for `attributes` is an EMPTY filter (unlike get, whose default is the universal filter). With attributes non-empty each entry is a string node carrying $attributes.",
+    "request": {
+      "headers": {"Accept": "application/json", "Content-Type": "application/json", "X-YT-Suppress-Redirect": "1"},
+      "params": {
+        "path": "required",
+        "attributes": "[type, dynamic, row_count, unmerged_row_count, chunk_row_count, modification_time, creation_time, resource_usage, sorted, data_weight, account, target_path, broken, lock_count, tablet_state, _restore_path, expiration_time, expiration_timeout, effective_expiration, treat_as_queue_consumer, treat_as_queue_producer, path, pipeline_format_version]",
+        "max_size": "optional i64",
+        "return_only_value": "default false",
+        "transaction_id": "optional",
+        "suppress_access_tracking": "\"true\""
+      }
+    },
+    "response": {"body_schema": "v3: Array<{\"$attributes\": {...}, \"$value\": \"<child name>\"}> (plain strings when attributes is empty). v4: {\"value\": [...]}"},
+    "api_version": "v3",
+    "needed_for_mock": true,
+    "source_refs": [
+      "yt/yt/client/driver/driver.cpp:165",
+      "yt/yt/client/driver/cypress_commands.cpp:169-222",
+      "ytsaurus-ui/packages/ui/src/ui/store/actions/navigation/content/map-node.js:47-86",
+      "ytsaurus-ui/packages/javascript-wrapper/lib/commands/v3.js:42-48"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "command": "exists",
+    "method": "POST",
+    "path": "/api/v3/exists",
+    "description": "Only used on the navigation error path: ytApiV3.exists({path: '//sys/idm/lock'}) decides whether IDM is supported. Returning false is fine.",
+    "request": {"headers": {"Content-Type": "application/json"}, "params": {"path": "required", "suppress_access_tracking": "\"true\""}},
+    "response": {"body_schema": "v3: true|false. v4: {\"value\": true|false}"},
+    "api_version": "v3",
+    "needed_for_mock": true,
+    "source_refs": [
+      "yt/yt/client/driver/driver.cpp:174",
+      "yt/yt/client/driver/cypress_commands.cpp:652-664",
+      "ytsaurus-ui/packages/ui/src/ui/store/actions/navigation/index.ts:192-193"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "command": "execute_batch",
+    "method": "POST",
+    "path": "/api/v3/execute_batch",
+    "description": "The workhorse of navigation. Sub-requests always run with an internal YSON output_format, so the batch's own output_format governs only the outer envelope. Commands with Tabular/Binary output (read_table) are REJECTED inside a batch. Each result element is {} | {output: ...} | {error: {...}}.",
+    "request": {
+      "headers": {"Accept": "application/json", "Content-Type": "application/json", "X-YT-Suppress-Redirect": "1", "X-Custom-Request-Id": "navigationAttributes|navigationTypeDynamic|navigationTableMountConfig|navigationCheckPermissions|clusterParamsIsDeveloper"},
+      "params": {
+        "requests": "required Array<{command: string, parameters: object, input?: any}>",
+        "concurrency": "default 50",
+        "output_format": "the UI sends {$value:'json',$attributes:{stringify:true,annotate_with_types:true}} for the navigation attributes batch"
+      }
+    },
+    "response": {"body_schema": "v3: Array<{output?: any} | {error: {code,message,attributes,inner_errors}}>. v4: {\"results\": [...]}"},
+    "api_version": "v3",
+    "needed_for_mock": true,
+    "source_refs": [
+      "yt/yt/client/driver/driver.cpp:338",
+      "yt/yt/client/driver/etc_commands.cpp:303-309",
+      "yt/yt/client/driver/etc_commands.cpp:340-470",
+      "ytsaurus-ui/packages/javascript-wrapper/lib/commands/v3.js:334-339"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "command": "execute_batch:get(navigation attributes)",
+    "method": "POST",
+    "path": "/api/v3/execute_batch",
+    "description": "The single most important navigation call: get <path>/@ with the full 70-attribute list. Everything the navigation header, the table meta panel and the schema tab render comes from here; there is NO separate get //path/@schema or @row_count call. Row count is derived from chunk_row_count (row_count is NOT requested).",
+    "request": {
+      "headers": {"Content-Type": "application/json"},
+      "params": {
+        "requests[0].command": "get",
+        "requests[0].parameters.path": "<path>/@",
+        "requests[0].parameters.transaction_id": "optional",
+        "requests[0].parameters.attributes": "[_format, _read_schema, _restore_path, _yql_key_meta, _yql_op_id, _yql_runner, _yql_row_spec, _yql_subkey_meta, _yql_type, _yql_value_meta, access_time, account, acl, atomicity, broken, chunk_count, chunk_row_count, cluster_name, compressed_data_size, compression_codec, compression_ratio, creation_time, data_weight, default_disk_space, disk_space, dynamic, effective_expiration, enable_dynamic_store_read, erasure_codec, expiration_time, expiration_timeout, id, in_memory_mode, key, key_columns, leader_controller_address, lock_count, lock_mode, locks, mode, modification_time, monitoring_cluster, monitoring_project, optimize_for, owner, path, pipeline_format_version, primary_medium, queue_static_export_destination, remount_needed_tablet_count, replica_path, replicated_table_options, replication_factor, resource_usage, schema, schema_mode, security_tags, sorted, sorted_by, start_time, state, tablet_cell_bundle, tablet_count, tablet_error_count, tablet_state, target_path, timeout, title, treat_as_queue_consumer, type, uncompressed_data_size]",
+        "output_format": "{\"$value\":\"json\",\"$attributes\":{\"stringify\":true,\"annotate_with_types\":true}}"
+      }
+    },
+    "response": {"body_schema": "[{\"output\": {\"type\": {\"$type\":\"string\",\"$value\":\"table\"}, \"schema\": {\"$attributes\":{\"strict\":..., \"unique_keys\":...}, \"$value\":[{\"name\":...,\"type\":...,\"required\":...}]}, \"chunk_row_count\": {\"$type\":\"int64\",\"$value\":\"1000\"}, ...}}]"},
+    "api_version": "v3",
+    "needed_for_mock": true,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/ui/store/actions/navigation/index.ts:75-94",
+      "ytsaurus-ui/packages/ui/src/ui/store/actions/navigation/index.ts:274-358",
+      "ytsaurus-ui/packages/ui/src/ui/constants/index.ts:36-42",
+      "ytsaurus-ui/packages/ui/src/ui/utils/navigation/index.ts:42-65"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "command": "execute_batch:get(@type,@dynamic)",
+    "method": "POST",
+    "path": "/api/v3/execute_batch",
+    "description": "Fired from updateView to decide whether to start tablet-error polling. Two get sub-requests: <path>/@type and <path>/@dynamic. Only when dynamic is true AND type is table|replication_log_table does further polling happen, so a mock returning dynamic:false ends the chain.",
+    "request": {"headers": {"Content-Type": "application/json"}, "params": {"requests": "[{command:'get',parameters:{path:'<path>/@type'}},{command:'get',parameters:{path:'<path>/@dynamic'}}]"}},
+    "response": {"body_schema": "[{\"output\":\"table\"},{\"output\":false}]"},
+    "api_version": "v3",
+    "needed_for_mock": true,
+    "source_refs": ["ytsaurus-ui/packages/ui/src/ui/store/actions/navigation/tabs/tablet-errors/tablet-errors-background.ts:60-80"]
+  },
+  {
+    "layer": "proxy",
+    "command": "execute_batch:get(@mount_config)",
+    "method": "POST",
+    "path": "/api/v3/execute_batch",
+    "description": "Fired from updateView for every node. Error code 500 (NODE_DOES_NOT_EXIST) is explicitly tolerated, so a mock may always answer with that error.",
+    "request": {"headers": {"Content-Type": "application/json"}, "params": {"requests": "[{command:'get',parameters:{path:'<path>/@mount_config'}}]"}},
+    "response": {"body_schema": "[{\"output\": {...}}] or [{\"error\": {\"code\": 500, ...}}]"},
+    "api_version": "v3",
+    "needed_for_mock": true,
+    "source_refs": ["ytsaurus-ui/packages/ui/src/ui/store/actions/navigation/content/table/table-mount-config.ts:13-39"]
+  },
+  {
+    "layer": "proxy",
+    "command": "execute_batch:get(@annotation)",
+    "method": "POST",
+    "path": "/api/v3/execute_batch",
+    "description": "Description block on the navigation content tab: get <path>/@ with attributes [annotation, annotation_path].",
+    "request": {"headers": {"Content-Type": "application/json"}, "params": {"requests": "[{command:'get',parameters:{path:'<path>/@',attributes:['annotation','annotation_path']}}]"}},
+    "response": {"body_schema": "[{\"output\": {\"annotation\": null, \"annotation_path\": \"//home\"}}]"},
+    "api_version": "v3",
+    "needed_for_mock": false,
+    "source_refs": ["ytsaurus-ui/packages/ui/src/ui/store/api/navigation/tabs/description.ts:24-50"]
+  },
+  {
+    "layer": "proxy",
+    "command": "execute_batch:check_permission",
+    "method": "POST",
+    "path": "/api/v3/execute_batch",
+    "description": "Fired from updateView only when the node has an `account` attribute. Two sub-requests: write on <path> and use on //sys/accounts/<account>. Result drives isWriteable / isAccountUsable; failures degrade gracefully.",
+    "request": {"headers": {"Content-Type": "application/json"}, "params": {"requests": "[{command:'check_permission',parameters:{user,permission:'write',path,transaction_id?}},{command:'check_permission',parameters:{user,permission:'use',path:'//sys/accounts/<account>'}}]"}},
+    "response": {"body_schema": "[{\"output\": {\"action\": \"allow\"}}, {\"output\": {\"action\": \"allow\"}}]"},
+    "api_version": "v3",
+    "needed_for_mock": true,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/ui/store/actions/navigation/index.ts:155-181",
+      "ytsaurus-ui/packages/ui/src/ui/utils/acl/acl-api.ts:209-224"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "command": "execute_batch:check_permission_by_acl",
+    "method": "POST",
+    "path": "/api/v3/execute_batch",
+    "description": "Bootstrap: is the current user in the `admins` group (isDeveloper flag)? Errors are caught and turned into false, so a mock may answer with an error element.",
+    "request": {"headers": {"Content-Type": "application/json", "X-Custom-Request-Id": "clusterParamsIsDeveloper"}, "params": {"requests": "[{command:'check_permission_by_acl',parameters:{acl:[{permissions:['write'],subjects:['admins'],action:'allow'}],user:'<login>',permission:'write'}}]"}},
+    "response": {"body_schema": "[{\"output\": {\"action\": \"deny\"}}]"},
+    "api_version": "v3",
+    "needed_for_mock": true,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/shared/utils/check-permission.ts:8-57",
+      "ytsaurus-ui/packages/ui/src/ui/store/actions/cluster-params.ts:130-152"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "command": "execute_batch:get(@recursive_resource_usage)",
+    "method": "POST",
+    "path": "/api/v3/execute_batch",
+    "description": "On-demand only (the map-node 'recursive usage' content mode). Chunks of up to 200 get sub-requests, path form '<node>&/@recursive_resource_usage' with timeout 60000.",
+    "request": {"headers": {"Content-Type": "application/json"}, "params": {"requests": "[{command:'get',parameters:{path:'<node>&/@recursive_resource_usage',timeout:60000}}, ...]"}},
+    "response": {"body_schema": "[{\"output\": {\"disk_space\": 123, \"chunk_count\": 1, \"node_count\": 1}}, ...]"},
+    "api_version": "v3",
+    "needed_for_mock": false,
+    "source_refs": ["ytsaurus-ui/packages/ui/src/ui/store/actions/navigation/content/map-node.js:136-240"]
+  },
+  {
+    "layer": "proxy",
+    "command": "read_table",
+    "method": "POST",
+    "path": "/api/v3/read_table",
+    "description": "The static-table viewer. ALWAYS /api/v3 even via yt.v4 (the command config pins version:'v3'). Heavy (the UI Node server resolves a heavy proxy via /hosts). Parameters are the JSON POST body. The row range is a YPath STRING suffix '<path>[#lower:#upper]', not a ranges object (the object form with lower_limit/upper_limit tablet_index+row_index is used only for the unmounted-unsorted dynamic-table fallback). Two calls per table open: (1) column-discovery preload with column_names:[] and range [#0:#0] for a strict schema, (2) the real page with the selected columns. requestedPageSize = pageSize + 1 (one extra row detects end-of-table).",
+    "request": {
+      "headers": {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "X-YT-Suppress-Redirect": "1",
+        "X-Custom-Request-Id": "tableReadPreload | tableRead"
+      },
+      "params": {
+        "path": "'<path>[#0:#51]' | '<path>[#0:#0]' | '<path>{\"col\"}[#r:#r+1]' (cell preview)",
+        "table_reader": "{\"workload_descriptor\": {\"category\": \"user_interactive\"}}",
+        "transaction_id": "optional",
+        "output_format": "{\"$value\":\"web_json\",\"$attributes\":{\"field_weight_limit\":<cellSize>,\"string_weight_limit\":<round(cellSize/10)>,\"max_selected_column_count\":<user setting|50>,\"max_all_column_names_count\":3000,\"value_format\":\"yql\"?,\"column_names\":[...]?}}",
+        "dump_error_into_response": "true (always)",
+        "omit_inaccessible_columns": "true (always)",
+        "omit_inaccessible_rows": "true (always)",
+        "suppress_access_tracking": "\"true\"",
+        "control_attributes": "not sent by the UI; driver defaults",
+        "unordered": "not sent; default false",
+        "start_row_index_only": "not sent; default false"
+      }
+    },
+    "response": {"body_schema": "Content-Type: application/json. Body = web_json: {\"rows\": [{col: {\"$type\":..,\"$value\":..} | [val, \"typeIdx\"]}], \"incomplete_columns\": \"false\", \"incomplete_all_column_names\": \"false\", \"all_column_names\": [sorted strings], \"yql_type_registry\"?: [...]}. Header X-YT-Response-Parameters: {\"approximate_row_count\": i64, \"omitted_inaccessible_columns\": [], \"start_row_index\"?: i64}. On error with dump_error_into_response the pretty JSON error is APPENDED to the body between two 80-'=' delimiter lines."},
+    "api_version": "v3",
+    "needed_for_mock": true,
+    "source_refs": [
+      "yt/yt/client/driver/driver.cpp:197",
+      "yt/yt/client/driver/table_commands.cpp:75-178",
+      "yt/yt/client/formats/config.cpp:321-339",
+      "yt/yt/library/formats/web_json_writer.cpp:576-579",
+      "yt/yt/library/formats/web_json_writer.cpp:741-777",
+      "ytsaurus-ui/packages/ui/src/ui/store/actions/navigation/content/table/table.js:288-337",
+      "ytsaurus-ui/packages/ui/src/ui/store/actions/navigation/content/table/table.js:361-393",
+      "ytsaurus-ui/packages/ui/src/ui/store/actions/navigation/content/table/readTable.ts:6-25",
+      "ytsaurus-ui/packages/ui/src/ui/store/actions/navigation/content/table/readStaticTable.ts:16-44",
+      "ytsaurus-ui/packages/ui/src/ui/utils/navigation/content/table/table.js:28-99",
+      "ytsaurus-ui/packages/javascript-wrapper/lib/commands/v3.js:94-106"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "command": "get_supported_features",
+    "method": "GET",
+    "path": "/api/v3/get_supported_features",
+    "description": "Polled every 600 s by SupportedFeaturesUpdater. Parameters would be in X-YT-Parameters headers (GET), but the UI sends an empty object. Failure is non-fatal.",
+    "request": {"headers": {"Accept": "application/json", "X-YT-Suppress-Redirect": "1", "X-YT-Header-Format": "<encode_utf8=%false>json", "X-YT-Parameters-0": "<base64 of {}>"}, "params": {}},
+    "response": {"body_schema": "{\"features\": {\"structured_web_json\": true, \"compression_codecs\": [...], \"erasure_codecs\": [...], ...}}"},
+    "api_version": "v3",
+    "needed_for_mock": false,
+    "source_refs": [
+      "ytsaurus-ui/packages/javascript-wrapper/lib/commands/v3.js:346-350",
+      "ytsaurus-ui/packages/ui/src/ui/store/actions/global/supported-features.ts:21-46",
+      "yt/yt/client/driver/etc_commands.cpp:93"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "command": "check_permission",
+    "method": "POST",
+    "path": "/api/v3/check_permission",
+    "description": "Standalone (non-batch) call from the table meta panel: {path, transaction_id, permission: 'full_read', user}. Degrades gracefully on failure.",
+    "request": {"headers": {"Content-Type": "application/json"}, "params": {"path": "<path>", "permission": "full_read", "user": "<login>", "transaction_id": "optional"}},
+    "response": {"body_schema": "{\"action\": \"allow\"|\"deny\", \"object_id\"?: string, \"subject_name\"?: string}"},
+    "api_version": "v3",
+    "needed_for_mock": false,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/ui/pages/navigation/content/Table/table-hooks/useTableAccessMetaItem.tsx:21-34",
+      "ytsaurus-ui/packages/javascript-wrapper/lib/commands/v3.js:214-218"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "command": "get(@has_row_level_ace)",
+    "method": "POST",
+    "path": "/api/v4/get",
+    "description": "The only v4 call on the table path: get <path>/@has_row_level_ace from the table meta panel. Response is wrapped as {\"value\": ...}. Degrades gracefully on failure.",
+    "request": {"headers": {"Content-Type": "application/json"}, "params": {"path": "<path>/@has_row_level_ace", "transaction_id": "optional"}},
+    "response": {"body_schema": "{\"value\": false}"},
+    "api_version": "v4",
+    "needed_for_mock": false,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/ui/pages/navigation/content/Table/table-hooks/useTableAccessMetaItem.tsx:21-34",
+      "yt/yt/client/driver/command.cpp:41-60"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "command": "get_table_columnar_statistics",
+    "method": "POST",
+    "path": "/api/v3/get_table_columnar_statistics",
+    "description": "NOT USED by the UI (no call site in src/ui). Documented for completeness. Heavy. Output is a bare list (ProduceOutput, so no v4 wrapping).",
+    "request": {"headers": {"Content-Type": "application/json"}, "params": {"paths": "required list<rich YPath>", "fetcher_mode": "default from_nodes", "max_chunks_per_node_fetch": "optional", "enable_early_finish": "default true", "enable_read_size_estimation": "default false"}},
+    "response": {"body_schema": "Array<{column_data_weights: Record<col,i64>, legacy_chunks_data_weight: i64, timestamp_total_weight?: i64, column_min_values?: ..., column_max_values?: ..., column_non_null_value_counts?: ..., column_estimated_unique_counts?: ..., chunk_row_count?: i64, legacy_chunk_row_count?: i64, read_size_estimate?: i64}>"},
+    "api_version": "v3",
+    "needed_for_mock": false,
+    "source_refs": [
+      "yt/yt/client/driver/driver.cpp:196",
+      "yt/yt/client/driver/table_commands.cpp:389-505"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "command": "CORS-preflight",
+    "method": "OPTIONS",
+    "path": "/api/v3/*",
+    "description": "Only relevant when ytApiUseCORS is true (browser talks to the cluster proxy directly). Handled before the API handler: if Origin is allowed, replies 200 with Access-Control-Allow-Credentials:true, Access-Control-Allow-Origin:<echoed Origin>, Access-Control-Allow-Methods:'POST, PUT, GET, OPTIONS', Access-Control-Max-Age:3600 and Access-Control-Allow-Headers:<31-entry whitelist>. Non-OPTIONS responses instead carry Access-Control-Expose-Headers with the same whitelist. Allowlist defaults: host_allow_list=[\"localhost\"], host_suffix_allow_list=[\".yandex-team.ru\"], disable_cors_check=false.",
+    "request": {"headers": {"Origin": "http://localhost:3000"}, "params": {}},
+    "response": {"body_schema": "empty body, 200"},
+    "api_version": "v3",
+    "needed_for_mock": false,
+    "source_refs": [
+      "yt/yt/core/http/helpers.cpp:174-206",
+      "yt/yt/core/http/helpers.cpp:249-293",
+      "yt/yt/core/http/config.cpp:100-108",
+      "yt/yt/server/http_proxy/bootstrap.cpp:609-621",
+      "yt/yt/server/http_proxy/config.h:221"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "command": "framing",
+    "method": "POST",
+    "path": "/api/v3/read_table",
+    "description": "Optional response chunk-framing. Enabled purely by the PRESENCE of the X-YT-Accept-Framing request header (value ignored) plus api/framing/enable (default true); signalled back with X-YT-Framing: 1. Wire format: Data frame = 0x01 + ui32 little-endian length + payload (zero-length legal); KeepAlive frame = the single byte 0x02 with no length and no payload. Framing is OUTSIDE compression: frame(compress(data)). Keep-alives start only after the driver emits response parameters, period api/framing/keep_alive_period (default 5 s). The UI/javascript-wrapper NEVER sends X-YT-Accept-Framing, so a mock can ignore this entirely.",
+    "request": {"headers": {"X-YT-Accept-Framing": "1"}, "params": {}},
+    "response": {"body_schema": "octet stream of frames; response header X-YT-Framing: 1"},
+    "api_version": "v3",
+    "needed_for_mock": false,
+    "source_refs": [
+      "yt/yt/server/http_proxy/framing.cpp:12-45",
+      "yt/yt/server/http_proxy/context.cpp:130-133",
+      "yt/yt/server/http_proxy/context.cpp:697-748",
+      "yt/yt/server/http_proxy/config.cpp:121-128",
+      "yt/yt/server/http_proxy/unittests/http_proxy_ut.cpp:19-52"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "command": "error-envelope",
+    "method": "*",
+    "path": "/api/v3/*",
+    "description": "Error contract. Pre-flush: status 400 for EVERY error unless an earlier stage set 401/403/404/415/503; body is the JSON error; headers X-YT-Error (JSON), X-YT-Error-Content-Type, X-YT-Response-Code, X-YT-Response-Message. Post-flush (streaming): status stays 200, the partial body is kept and the same four fields are emitted as HTTP TRAILERS (advertised via 'Trailer: X-YT-Error, X-YT-Response-Code, X-YT-Response-Message' unless X-YT-Omit-Trailers). With the parameter dump_error_into_response:true the pretty JSON error is appended INTO the body between two 80-'=' delimiter lines — this is what the UI parses for read_table.",
+    "request": {"headers": {}, "params": {"dump_error_into_response": "bool"}},
+    "response": {"body_schema": "{\"code\": int64, \"message\": string, \"attributes\": {pid,tid,thread,fid,host,datetime,trace_id,span_id,path,...}, \"inner_errors\": [<same shape>]}"},
+    "api_version": "v3",
+    "needed_for_mock": true,
+    "source_refs": [
+      "yt/yt/core/misc/error.cpp:313-341",
+      "yt/yt/core/misc/error.cpp:362-400",
+      "yt/yt/core/http/helpers.cpp:44-67",
+      "yt/yt/server/http_proxy/context.cpp:832-848",
+      "yt/yt/server/http_proxy/context.cpp:1016-1043",
+      "yt/yt/server/http_proxy/context.cpp:1067-1136",
+      "ytsaurus-ui/packages/ui/src/ui/utils/navigation/content/table/table.js:8-26",
+      "ytsaurus-ui/packages/javascript-wrapper/lib/commands/codes.js:1-14"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "command": "parameter-decoding",
+    "method": "*",
+    "path": "/api/v3/*",
+    "description": "How the proxy assembles command parameters, in increasing precedence: (1) {input_format, output_format} inferred from headers; (2) the query string (i64-looking values become integers; a[b][0][] nesting up to depth 6; a top-level {$value,$attributes} map is unwrapped); (3) X-YT-Parameters verbatim, OR the concatenation of X-YT-Parameters0/1/... or X-YT-Parameters-0/-1/... which is then BASE64-DECODED; (4) the JSON POST body (only when the method is POST and the body is non-empty). The header format for (3) comes from X-YT-Header-Format (default 'json'; the UI sends '<encode_utf8=%false>json'). X-YT-Header-Format itself has NO multi-part support.",
+    "request": {"headers": {"X-YT-Header-Format": "<encode_utf8=%false>json", "X-YT-Parameters-0": "<base64 chunk 0>", "X-YT-Parameters-1": "<base64 chunk 1>"}, "params": {}},
+    "response": {"body_schema": "n/a"},
+    "api_version": "v3",
+    "needed_for_mock": true,
+    "source_refs": [
+      "yt/yt/server/http_proxy/helpers.cpp:30-67",
+      "yt/yt/server/http_proxy/helpers.cpp:69-210",
+      "yt/yt/server/http_proxy/context.cpp:437-486",
+      "yt/yt/server/http_proxy/formats.cpp:109-128",
+      "ytsaurus-ui/packages/javascript-wrapper/lib/core.js:48-81",
+      "ytsaurus-ui/packages/javascript-wrapper/lib/core.js:248-289"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "command": "format-negotiation",
+    "method": "*",
+    "path": "/api/v3/*",
+    "description": "Output format precedence: (1) if OutputType is Null or Binary the format is forced to yson regardless of headers; (2) X-YT-Output-Format header; (3) exact-match on the Accept MIME (application/json -> json; no q= weights, no wildcards); (4) default by data type: Structured -> json, Tabular -> <format=text>yson, Null/Binary -> yson. The output_format command PARAMETER (body/query/X-YT-Parameters) overrides all of this because it is patched on top. Response Content-Type comes from FormatToMime: Json and WebJson both map to application/json.",
+    "request": {"headers": {"Accept": "application/json", "X-YT-Output-Format": "optional"}, "params": {"output_format": "wins over headers"}},
+    "response": {"body_schema": "n/a"},
+    "api_version": "v3",
+    "needed_for_mock": true,
+    "source_refs": [
+      "yt/yt/server/http_proxy/formats.cpp:29-64",
+      "yt/yt/server/http_proxy/formats.cpp:68-107",
+      "yt/yt/server/http_proxy/formats.cpp:130-193",
+      "yt/yt/server/http_proxy/context.cpp:437-443",
+      "yt/yt/core/json/config.cpp:7-51"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "command": "heavy-redirect",
+    "method": "*",
+    "path": "/api/v3/read_table",
+    "description": "A control-role proxy redirects heavy commands with 307 Temporary Redirect to Location '<scheme>://<data-proxy>:<request-port><path>?<rawQuery>' plus Connection: close. Suppressed by the PRESENCE of X-YT-Suppress-Redirect (value ignored), by a Cookie header (treated as a browser request), or when the proxy role is not 'control'. write_table (Tabular input) can never be redirected and gets 503 instead. The UI sets useHeavyProxy:false so the browser always sends X-YT-Suppress-Redirect:1, and the UI Node server adds it too — a mock never needs to redirect.",
+    "request": {"headers": {"X-YT-Suppress-Redirect": "1"}, "params": {}},
+    "response": {"body_schema": "307 with Location header, or 503 'There are no data proxies available' + Retry-After: 60"},
+    "api_version": "v3",
+    "needed_for_mock": false,
+    "source_refs": [
+      "yt/yt/server/http_proxy/context.cpp:290-308",
+      "yt/yt/server/http_proxy/helpers.cpp:298-301",
+      "yt/yt/server/http_proxy/helpers.cpp:359-388",
+      "yt/yt/server/http_proxy/coordinator.cpp:213-216",
+      "ytsaurus-ui/packages/javascript-wrapper/lib/core.js:175-178",
+      "ytsaurus-ui/packages/ui/src/server/controllers/yt-api.ts:119"
+    ]
+  }
+]

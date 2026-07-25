@@ -1,0 +1,584 @@
+[
+  {
+    "layer": "ui-server",
+    "method": "GET",
+    "path": "/",
+    "description": "Root HTML shell (cluster picker). Renders window.YT (clusters from clusters-config.json + parameters) and window.__DATA__ (ConfigData: settings, uiSettings, feature flags). No cluster is selected.",
+    "request": {"params": {}, "query": {}, "headers": {}},
+    "response": {"body_schema": "text/html; inline scripts set window.YT = {clusters: Record<string, ClusterConfig>, isLocalCluster?: boolean, environment?: string, parameters: {interface: {version: string}, login?: string, authWay?: 'oauth'|'passwd'}} and window.__DATA__ = {userSettingsCluster?, settings: {data: Record<string, unknown>, meta: {useRemoteSettings: boolean, errorMessage?: string}}, ytApiUseCORS?, uiSettings?, metrikaCounterId?, allowPasswordAuth?, allowOAuth?, oauthButtonLabel?, allowUserColumnPresets?, odinPageEnabled, allowTabletErrorsAPI, allowPrometheusDashboards}"},
+    "needed_for_mock": true,
+    "source_refs": [
+      "packages/ui/src/server/routes.ts:54",
+      "packages/ui/src/server/controllers/home.ts:12",
+      "packages/ui/src/server/components/layout-config.ts:56",
+      "packages/ui/src/shared/yt-types.d.ts:10",
+      "packages/ui/src/shared/yt-types.d.ts:505"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET",
+    "path": "/:ytAuthCluster/ , /:ytAuthCluster/:page , /:ytAuthCluster/:page/:tab , /:ytAuthCluster/:page/:operation/:tab , /:ytAuthCluster/:page/:operation/:job/:tab , /:ytAuthCluster/:page/:computations/:computation/:partition/:id",
+    "description": "Same HTML shell for every SPA route under a cluster. Unknown cluster id -> redirect to / or a 404 explanation page.",
+    "request": {"params": {"ytAuthCluster": "cluster id from clusters-config.json"}},
+    "response": {"body_schema": "text/html (see GET /)"},
+    "needed_for_mock": true,
+    "source_refs": [
+      "packages/ui/src/server/routes.ts:127",
+      "packages/ui/src/server/controllers/home.ts:28",
+      "packages/ui/src/server/controllers/home.ts:32"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET",
+    "path": "/ping",
+    "description": "Liveness probe of the node server itself. AuthPolicy.disabled.",
+    "request": {},
+    "response": {"body_schema": "{\"result\": \"pong\"}"},
+    "needed_for_mock": false,
+    "source_refs": ["packages/ui/src/server/routes.ts:55", "packages/ui/src/server/controllers/ping.ts:3"]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET",
+    "path": "/api/cluster-info/:ytAuthCluster",
+    "description": "HARD GATE of the cluster boot sequence. Server fans out to proxy GET /auth/whoami and GET /version. If version is missing -> PRELOAD_ERROR.CONNECTION; if token.csrf_token is missing -> PRELOAD_ERROR.AUTHENTICATION; either way the app never renders. On success the browser writes csrf_token into cookie ytfront_<cluster>_xsrf_token.",
+    "request": {"params": {"ytAuthCluster": "cluster id"}},
+    "response": {"body_schema": "{token?: {login: string, realm?: string, real_login?: string, csrf_token: string}, version?: string, tokenError?: {message, code, inner_errors}, versionError?: {message, code, inner_errors}}"},
+    "needed_for_mock": true,
+    "source_refs": [
+      "packages/ui/src/server/routes.ts:56",
+      "packages/ui/src/server/controllers/cluster-info.ts:5",
+      "packages/ui/src/server/components/cluster-queries.ts:122",
+      "packages/ui/src/ui/store/actions/cluster-params.ts:219",
+      "packages/ui/src/ui/store/actions/cluster-params.ts:235",
+      "packages/ui/src/ui/store/actions/cluster-params.ts:249"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET",
+    "path": "/api/cluster-params/:ytAuthCluster",
+    "description": "Second HARD GATE. Server issues two execute_batch calls with the robot setup: (1) list //sys/primary_masters; (2) list //sys/media, get //sys/scheduler/orchid/service/version, get //sys/@ui_config, get //sys/@ui_config_dev_overrides, get //sys/primary_masters/<first>/orchid/service/version. Result is cached (auto-updated-cache). A non-empty mediumList.error aborts cluster init; NODE_DOES_NOT_EXIST (code 500) on ui_config / ui_config_dev_overrides / versions is tolerated.",
+    "request": {"params": {"ytAuthCluster": "cluster id"}},
+    "response": {"body_schema": "{mediumList: {output?: string[], error?: YTError}, schedulerVersion: {output?: string, error?: YTError}, uiConfig: {output?: ClusterUiConfig, error?: YTError}, uiDevConfig: {output?: ClusterUiConfig, error?: YTError}, masterVersion: {output?: string, error?: YTError}}"},
+    "needed_for_mock": true,
+    "source_refs": [
+      "packages/ui/src/server/routes.ts:57",
+      "packages/ui/src/server/controllers/cluster-params.ts:7",
+      "packages/ui/src/server/components/cluster-params.ts:60",
+      "packages/ui/src/server/components/cluster-params.ts:117",
+      "packages/ui/src/server/components/cluster-params.ts:217",
+      "packages/ui/src/ui/store/actions/cluster-params.ts:77",
+      "packages/ui/src/ui/store/actions/cluster-params.ts:101"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET/POST/PUT",
+    "path": "/api/yt/:ytAuthCluster/api/:version/:command",
+    "description": "The YT API tunnel: everything the browser does with data goes through here. Command name is validated against the javascript-wrapper command table (400 on unknown). For heavy commands (read_file, write_file, read_table, write_table, select_rows, insert_rows) the server first resolves a heavy host via GET <proxy>/hosts unless clusterConfig.disableHeavyProxies or local mode. Request body and headers are piped through; JSON/urlencoded body parsers are disabled for this prefix so raw bodies survive.",
+    "request": {"params": {"ytAuthCluster": "cluster id", "version": "v3|v4", "command": "YT command name"}, "headers": {"X-YT-Parameters-0..N": "base64 JSON chunks (<=64KiB each) when useEncodedParameters", "X-YT-Header-Format": "<encode_utf8=%false>json", "X-Csrf-Token": "value of cookie ytfront_<cluster>_xsrf_token", "Content-Type": "application/json for POST/PUT"}, "body": "JSON parameters for commands with useBodyForParameters (get, list, exists, read_table, execute_batch, ...), otherwise the command payload"},
+    "response": {"body_schema": "streamed verbatim from the proxy; normally the YT command result. Errors carry X-YT-Error / X-YT-Response-Code / X-YT-Response-Message"},
+    "needed_for_mock": true,
+    "source_refs": [
+      "packages/ui/src/server/routes.ts:82",
+      "packages/ui/src/server/controllers/yt-api.ts:31",
+      "packages/ui/src/server/controllers/yt-api.ts:51",
+      "packages/ui/src/server/controllers/yt-api.ts:92",
+      "packages/ui/src/server/controllers/yt-api.ts:104",
+      "packages/ui/src/server/configs/common.ts:13",
+      "packages/ui/src/ui/store/selectors/global/cluster.ts:40"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET",
+    "path": "/api/clusters/versions",
+    "description": "Cluster menu decoration: calls GET <proxy>/version for every cluster in the config, in parallel, and extracts the first \\d+.\\d+.\\d+ match. Failures degrade to {id} without version.",
+    "request": {},
+    "response": {"body_schema": "Array<{id: string, version?: string}>"},
+    "needed_for_mock": false,
+    "source_refs": [
+      "packages/ui/src/server/routes.ts:58",
+      "packages/ui/src/server/controllers/clusters.ts:6",
+      "packages/ui/src/server/components/cluster-queries.ts:88",
+      "packages/ui/src/ui/store/actions/clusters-menu.ts:32"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET",
+    "path": "/api/clusters/auth-status",
+    "description": "Per-cluster authorization state for the cluster menu. Without allowPasswordAuth every cluster is reported as authorized: true; with it, presence of the <cluster>_YTCypressCookie cookie decides.",
+    "request": {},
+    "response": {"body_schema": "Record<clusterId, {authorized: boolean}>"},
+    "needed_for_mock": false,
+    "source_refs": [
+      "packages/ui/src/server/routes.ts:59",
+      "packages/ui/src/server/controllers/clusters.ts:16",
+      "packages/ui/src/ui/store/actions/clusters-menu.ts:48"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET",
+    "path": "/api/yt-proxy/:ytAuthCluster/:command",
+    "description": "Whitelisted passthrough to non-/api proxy endpoints. Only two commands are allowed: 'hosts-all' -> <proxy>/hosts/all (System > HTTP proxies page) and 'internal-discover_versions' -> <proxy>/internal/discover_versions/v2 (Components > Versions). Anything else throws.",
+    "request": {"params": {"ytAuthCluster": "cluster id", "command": "hosts-all | internal-discover_versions"}, "query": "forwarded verbatim"},
+    "response": {"body_schema": "streamed from proxy; hosts-all -> Array<{host,name,role,banned,ban_message,dead,liveness}>; internal-discover_versions -> {summary, details}"},
+    "needed_for_mock": false,
+    "source_refs": [
+      "packages/ui/src/server/routes.ts:86",
+      "packages/ui/src/server/controllers/yt-proxy-api.ts:21",
+      "packages/ui/src/server/controllers/yt-proxy-api.ts:48",
+      "packages/ui/src/ui/store/actions/system/proxies.ts:40",
+      "packages/ui/src/ui/store/actions/components/versions/versions_v2.ts:37"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET",
+    "path": "/api/settings/:ytAuthCluster/:username",
+    "description": "Read the whole user-settings document from Cypress (yt.v3.get of <mapNodePath>/<username>). ONLY reachable when config.userSettingsConfig is set; otherwise the browser uses the localStorage provider and never calls this.",
+    "request": {"params": {"ytAuthCluster": "cluster id", "username": "login"}},
+    "response": {"body_schema": "Record<settingKey, unknown> (JSON of the document)"},
+    "needed_for_mock": false,
+    "source_refs": [
+      "packages/ui/src/server/routes.ts:93",
+      "packages/ui/src/server/controllers/settings.ts:19",
+      "packages/ui/src/server/components/settings.ts:57",
+      "packages/ui/src/server/components/settings.ts:27",
+      "packages/ui/src/ui/store/reducers/settings.ts:37"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "POST",
+    "path": "/api/settings/:ytAuthCluster/:username",
+    "description": "Idempotently create the user's settings document (yt.v3.create type=document, ignore_existing=true, attributes.value={}).",
+    "request": {"params": {"ytAuthCluster": "cluster id", "username": "login"}},
+    "response": {"body_schema": "YT create result (node id string) as JSON"},
+    "needed_for_mock": false,
+    "source_refs": ["packages/ui/src/server/routes.ts:94", "packages/ui/src/server/components/settings.ts:38"]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET",
+    "path": "/api/settings/:ytAuthCluster/:username/:path",
+    "description": "Read one setting (yt.v3.get of <mapNodePath>/<username>/<path>).",
+    "request": {"params": {"path": "setting key, e.g. global::theme"}},
+    "response": {"body_schema": "the setting value as JSON"},
+    "needed_for_mock": false,
+    "source_refs": ["packages/ui/src/server/routes.ts:95", "packages/ui/src/server/components/settings.ts:80"]
+  },
+  {
+    "layer": "ui-server",
+    "method": "PUT",
+    "path": "/api/settings/:ytAuthCluster/:username/:path",
+    "description": "Write one setting (yt.v3.set). Body is {value: <any>}; value === undefined is turned into a DELETE by the client provider.",
+    "request": {"body": "{\"value\": any}"},
+    "response": {"body_schema": "YT set result as JSON (empty)"},
+    "needed_for_mock": false,
+    "source_refs": [
+      "packages/ui/src/server/routes.ts:96",
+      "packages/ui/src/server/controllers/settings.ts:39",
+      "packages/ui/src/ui/common/utils/settings-remote-provider.ts:51"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "DELETE",
+    "path": "/api/settings/:ytAuthCluster/:username/:path",
+    "description": "Remove one setting (yt.v3.remove).",
+    "request": {"params": {"path": "setting key"}},
+    "response": {"body_schema": "YT remove result as JSON (empty)"},
+    "needed_for_mock": false,
+    "source_refs": ["packages/ui/src/server/routes.ts:97", "packages/ui/src/server/components/settings.ts:123"]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET",
+    "path": "/api/pool-names/:ytAuthCluster",
+    "description": "Pool-tree name suggestions for scheduling dialogs. Reads //sys/scheduler/config/pool_trees_root and walks the tree. Not part of the boot path.",
+    "request": {"params": {"ytAuthCluster": "cluster id"}, "query": {"poolTree": "optional tree name"}},
+    "response": {"body_schema": "{tree: PoolTree, names: string[]}"},
+    "needed_for_mock": false,
+    "source_refs": [
+      "packages/ui/src/server/routes.ts:60",
+      "packages/ui/src/server/controllers/scheduling-pools.ts:13",
+      "packages/ui/src/ui/containers/Dialog/controls/PoolSuggestControl/PoolSuggestControl.tsx:169"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "POST",
+    "path": "/api/markdown-to-html",
+    "description": "Server-side markdown rendering for annotations/descriptions (@diplodoc/transform).",
+    "request": {"body": "{text: string, ...}"},
+    "response": {"body_schema": "{html: string} (diplodoc transform result)"},
+    "needed_for_mock": false,
+    "source_refs": ["packages/ui/src/server/routes.ts:80", "packages/ui/src/server/controllers/markdown-to-html.ts:5"]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET/POST",
+    "path": "/api/table-column-preset/:ytAuthCluster[/:hash]",
+    "description": "Shareable table column presets, stored in a dynamic table. Gated by config.userColumnPresets -> ConfigData.allowUserColumnPresets; absent by default.",
+    "request": {"params": {"hash": "preset hash (GET only)"}, "body": "{columns: string[]} (POST)"},
+    "response": {"body_schema": "GET -> {columns: string[]}; POST -> {hash: string}"},
+    "needed_for_mock": false,
+    "source_refs": [
+      "packages/ui/src/server/routes.ts:102",
+      "packages/ui/src/server/controllers/table-column-preset.ts:52",
+      "packages/ui/src/@types/core.d.ts:78"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "POST",
+    "path": "/api/remote-copy",
+    "description": "Starts a remote-copy operation between clusters.",
+    "request": {"body": "remote copy spec"},
+    "response": {"body_schema": "{operation_id: string} or YT error"},
+    "needed_for_mock": false,
+    "source_refs": ["packages/ui/src/server/routes.ts:78", "packages/ui/src/server/controllers/remote-copy.ts:15"]
+  },
+  {
+    "layer": "ui-server",
+    "method": "POST",
+    "path": "/api/yt/:ytAuthCluster/login",
+    "description": "YT password login. Forwards Basic auth to proxy POST /login and re-emits the YTCypressCookie also as <cluster>_YTCypressCookie; strips Secure when ytAuthAllowInsecure and the origin is http://. Only mounted meaningfully when ALLOW_PASSWORD_AUTH is set.",
+    "request": {"body": "{\"username\": string, \"password\": string} (raw JSON string; body parsers are disabled on /api/yt/)"},
+    "response": {"body_schema": "proxy response piped through, plus Set-Cookie: YTCypressCookie=...; <cluster>_YTCypressCookie=..."},
+    "needed_for_mock": false,
+    "source_refs": [
+      "packages/ui/src/server/routes.ts:61",
+      "packages/ui/src/server/controllers/login.ts:23",
+      "packages/ui/src/server/utils/index.ts:234"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET",
+    "path": "/api/yt/logout",
+    "description": "Clears YTCypressCookie and every <cluster>_YTCypressCookie.",
+    "request": {},
+    "response": {"body_schema": "redirect / empty, with Set-Cookie deletions"},
+    "needed_for_mock": false,
+    "source_refs": ["packages/ui/src/server/routes.ts:62", "packages/ui/src/server/components/yt-auth.ts:11"]
+  },
+  {
+    "layer": "ui-server",
+    "method": "POST",
+    "path": "/api/yt/:ytAuthCluster/change-password",
+    "description": "Changes the YT password via yt.v4.set_user_password using the csrf token from /auth/whoami.",
+    "request": {"body": "{\"newPassword\": string, \"currentPassword\": string}"},
+    "response": {"body_schema": "{result: unknown}"},
+    "needed_for_mock": false,
+    "source_refs": ["packages/ui/src/server/routes.ts:77", "packages/ui/src/server/controllers/login.ts:120"]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET",
+    "path": "/oauth/login , /api/oauth/callback , /api/oauth/logout/callback",
+    "description": "OpenID Connect flow. Only active when config.ytOAuthSettings is present (surfaces as ConfigData.allowOAuth).",
+    "request": {},
+    "response": {"body_schema": "redirects / cookie set (yt_oauth_access_token, yt_oauth_refresh_token)"},
+    "needed_for_mock": false,
+    "source_refs": [
+      "packages/ui/src/server/routes.ts:64",
+      "packages/ui/src/server/controllers/oauth-login.ts:9",
+      "packages/ui/src/@types/core.d.ts:86"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET",
+    "path": "/api/odin/proxy/:action/:ytAuthCluster? , /api/odin/clusters/availability",
+    "description": "Odin availability monitoring. Gated by config.odinBaseUrl -> ConfigData.odinPageEnabled.",
+    "request": {"query": {"period": "number", "target": "metric"}},
+    "response": {"body_schema": "odin service response passed through"},
+    "needed_for_mock": false,
+    "source_refs": [
+      "packages/ui/src/server/routes.ts:88",
+      "packages/ui/src/server/controllers/availability.ts:7",
+      "packages/ui/src/@types/core.d.ts:53"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "POST",
+    "path": "/api/:ytAuthCluster/prometheus/chart-data , /api/:ytAuthCluster/prometheus/discover-values",
+    "description": "Prometheus dashboards proxy. Gated by PROMETHEUS_BASE_URL -> ConfigData.allowPrometheusDashboards.",
+    "request": {"body": "{query, start, end, step, ...}"},
+    "response": {"body_schema": "Prometheus query_range / label values response"},
+    "needed_for_mock": false,
+    "source_refs": [
+      "packages/ui/src/server/routes.ts:99",
+      "packages/ui/src/server/controllers/prometheus/prometheus-view-range.ts:11",
+      "packages/ui/src/server/utils/configs/apply-app-env-to-config.ts:23"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "POST",
+    "path": "/api/tablet-errors/:ytAuthCluster/:action",
+    "description": "Tablet errors manager proxy. Gated by config.tabletErrorsBaseUrl -> ConfigData.allowTabletErrorsAPI.",
+    "request": {"params": {"action": "manager action"}},
+    "response": {"body_schema": "tablet-errors service response"},
+    "needed_for_mock": false,
+    "source_refs": ["packages/ui/src/server/routes.ts:107", "packages/ui/src/@types/core.d.ts:143"]
+  },
+  {
+    "layer": "ui-server",
+    "method": "POST",
+    "path": "/api/strawberry/:engine/:ytAuthCluster/:action",
+    "description": "CHYT / SPYT controller proxy. Base URLs come from //sys/@ui_config chyt_controller_base_url / livy_controller_base_url.",
+    "request": {"params": {"engine": "chyt|spyt", "action": "controller action"}},
+    "response": {"body_schema": "strawberry controller response"},
+    "needed_for_mock": false,
+    "source_refs": ["packages/ui/src/server/routes.ts:91", "packages/ui/src/shared/yt-types.d.ts:31"]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET/POST/DELETE",
+    "path": "/api/vcs , /api/vcs/file , /api/vcs/repositories , /api/vcs/branches , /api/vcs/tokens-availability , /api/vcs/token",
+    "description": "GitHub/GitLab browsing for the query editor. Requires uiSettings.vcsSettings; without it the controller answers 'vcsSettings is not found in UISettings'.",
+    "request": {"query": {"vcsId": "configured vcs id", "repository": "...", "branch": "..."}},
+    "response": {"body_schema": "VCS listings / file contents"},
+    "needed_for_mock": false,
+    "source_refs": [
+      "packages/ui/src/server/routes.ts:71",
+      "packages/ui/src/server/controllers/vcs.ts:15",
+      "packages/ui/src/shared/ui-settings.ts:219"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "POST/GET/DELETE",
+    "path": "/api/code-assistant/*",
+    "description": "AI chat / code assistant. Requires ServerFactory.getAuthHeaders('aiChat') to be overridden; the OSS default returns undefined.",
+    "request": {},
+    "response": {"body_schema": "conversation objects"},
+    "needed_for_mock": false,
+    "source_refs": ["packages/ui/src/server/routes.ts:109", "packages/ui/src/server/ServerFactory.ts:64"]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET/POST",
+    "path": "/api/access-log/:ytAuthCluster/check-available , /api/access-log/:ytAuthCluster/:action , /api/accounts-usage/:ytAuthCluster/check-available , /api/accounts-usage/:ytAuthCluster/:action",
+    "description": "Access-log and accounts-usage services. The UI probes check-available first and hides the feature on failure.",
+    "request": {},
+    "response": {"body_schema": "service specific; check-available -> boolean-ish"},
+    "needed_for_mock": false,
+    "source_refs": ["packages/ui/src/server/routes.ts:118", "packages/ui/src/server/routes.ts:122"]
+  },
+
+  {
+    "layer": "proxy",
+    "method": "GET",
+    "path": "/version",
+    "description": "Proxy version string. Called by the node server from /api/cluster-info/:c and /api/clusters/versions. The UI extracts /(\\d+)\\.(\\d+)\\.(\\d+)/ from the body; a missing/failed response yields PRELOAD_ERROR.CONNECTION and the app never renders.",
+    "request": {},
+    "response": {"body_schema": "raw plain-text version string (NOT JSON-quoted), status 200, no Content-Type set by the real proxy"},
+    "needed_for_mock": true,
+    "source_refs": [
+      "yt/yt/server/http_proxy/bootstrap.cpp:638",
+      "yt/yt/server/http_proxy/bootstrap.cpp:480",
+      "packages/ui/src/server/components/cluster-queries.ts:72",
+      "packages/ui/src/server/components/cluster-queries.ts:83"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "GET",
+    "path": "/auth/whoami",
+    "description": "Identity + CSRF token mint. Called by the node server for /api/cluster-info/:c and (with password auth) by the auth middleware on every request. The UI stores csrf_token in cookie ytfront_<cluster>_xsrf_token and sends it back as X-Csrf-Token. Missing csrf_token => PRELOAD_ERROR.AUTHENTICATION and the app never renders.",
+    "request": {"headers": {"Authorization": "OAuth <token> | Bearer <token> (optional)", "Cookie": "YTCypressCookie=... | Session_id=... | access_token=... (optional)"}},
+    "response": {"body_schema": "{login: string, realm: string, real_login: string, csrf_token: string}; on failure 401/503 with X-YT-Error / X-YT-Response-Code / X-YT-Response-Message headers and a JSON TError body"},
+    "needed_for_mock": true,
+    "source_refs": [
+      "yt/yt/server/http_proxy/bootstrap.cpp:625",
+      "yt/yt/server/http_proxy/http_authenticator.cpp:67",
+      "packages/ui/src/server/components/cluster-queries.ts:52",
+      "packages/ui/src/ui/store/actions/cluster-params.ts:262"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "GET",
+    "path": "/hosts",
+    "description": "Heavy-proxy discovery. The node server calls it before proxying any heavy command and uses res.data[0] as the target host. Skipped when clusterConfig.disableHeavyProxies or local mode. Real proxy: filters by role (default from coordinator/default_role_filter, itself defaulting to 'data'), drops banned/dead, sorts by a fitness function and shuffles the best half. Always 200.",
+    "request": {"query": {"role": "proxy role, default 'data'"}, "headers": {"Accept": "exactly 'text/plain' switches to newline-separated plaintext; anything else => JSON"}},
+    "response": {"body_schema": "JSON array of hostname strings, e.g. [\"localhost:8000\"]; ports are included only when coordinator/show_ports is true"},
+    "needed_for_mock": true,
+    "source_refs": [
+      "yt/yt/server/http_proxy/bootstrap.cpp:627",
+      "yt/yt/server/http_proxy/coordinator.cpp:543",
+      "yt/yt/server/http_proxy/coordinator.cpp:593",
+      "yt/yt/server/http_proxy/coordinator.cpp:218",
+      "packages/ui/src/server/controllers/yt-api.ts:92",
+      "packages/ui/node_modules/@ytsaurus/javascript-wrapper/lib/core.js:321",
+      "packages/ui/scripts/dev.localmode-env.sh:25"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "GET",
+    "path": "/hosts/all",
+    "description": "Full proxy inventory including dead and banned, all roles. Consumed by the UI System > HTTP proxies page via /api/yt-proxy/:c/hosts-all and mapped to {name, state: dead?'offline':'online', role, banned}.",
+    "request": {},
+    "response": {"body_schema": "Array<{host: string, name: string, role: string, banned: boolean, ban_message: string|null, dead: boolean, liveness: {updated_at, load_average, network_coef, user_cpu, system_cpu, cpu_wait, concurrent_requests}}>"},
+    "needed_for_mock": false,
+    "source_refs": [
+      "yt/yt/server/http_proxy/coordinator.cpp:575",
+      "packages/ui/src/server/controllers/yt-proxy-api.ts:22",
+      "packages/ui/src/ui/store/actions/system/proxies.ts:20"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "GET",
+    "path": "/ping",
+    "description": "Proxy liveness. NOT used by the UI. Real proxy returns 503 when the coordinator considers itself unavailable (no liveness, banned, or registration older than death_age), else 200; body is always empty.",
+    "request": {},
+    "response": {"body_schema": "empty body; status 200 or 503"},
+    "needed_for_mock": false,
+    "source_refs": [
+      "yt/yt/server/http_proxy/bootstrap.cpp:629",
+      "yt/yt/server/http_proxy/coordinator.cpp:656",
+      "yt/yt/server/http_proxy/coordinator.cpp:476"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "GET",
+    "path": "/api",
+    "description": "API version discovery. Not used by the UI (the wrapper hardcodes v3/v4).",
+    "request": {},
+    "response": {"body_schema": "[\"v3\", \"v4\"]"},
+    "needed_for_mock": false,
+    "source_refs": ["yt/yt/server/http_proxy/bootstrap.cpp:626", "yt/yt/server/http_proxy/context.cpp:140"]
+  },
+  {
+    "layer": "proxy",
+    "method": "GET",
+    "path": "/api/v3 , /api/v4",
+    "description": "Command-descriptor discovery for the given driver version. Not used by the UI.",
+    "request": {},
+    "response": {"body_schema": "Array<{name: string, input_type: 'null'|'binary'|'structured'|'tabular', output_type: same, is_volatile: boolean, is_heavy: boolean}>"},
+    "needed_for_mock": false,
+    "source_refs": [
+      "yt/yt/server/http_proxy/context.cpp:162",
+      "yt/yt/client/driver/driver.cpp:73",
+      "yt/yt/client/driver/driver.h:98"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "POST",
+    "path": "/api/v4/discover_proxies",
+    "description": "Driver command (v4 only) that lists proxies from //sys/{http,rpc,grpc}_proxies or the 'balancers' attribute. Exempt from authentication and executed as root. Not used by the UI.",
+    "request": {"parameters": {"kind": "rpc|http|grpc (alias 'type'), default rpc", "role": "default 'data' for http, 'default' otherwise", "address_type": "default 'http' for kind=http", "network_name": "default network", "ignore_balancers": "boolean, default false"}},
+    "response": {"body_schema": "{\"proxies\": [\"host:port\", ...]}"},
+    "needed_for_mock": false,
+    "source_refs": [
+      "yt/yt/client/driver/driver.cpp:340",
+      "yt/yt/client/driver/etc_commands.cpp:476",
+      "yt/yt/client/driver/etc_commands.cpp:491",
+      "yt/yt/server/http_proxy/context.cpp:208"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "POST",
+    "path": "/api/v3/execute_batch",
+    "description": "Batched Cypress requests. The node server uses it for /api/cluster-params (two calls: //sys/primary_masters, then //sys/media + scheduler version + //sys/@ui_config + //sys/@ui_config_dev_overrides + master version). Parameters travel in the request BODY (useBodyForParameters).",
+    "request": {"body": "{\"requests\": [{\"command\": string, \"parameters\": object}], \"suppress_transaction_coordinator_sync\": true, \"suppress_upstream_sync\": true}"},
+    "response": {"body_schema": "Array<{output?: any, error?: YTError}> in the same order as requests"},
+    "needed_for_mock": true,
+    "source_refs": [
+      "packages/ui/src/server/components/cluster-params.ts:61",
+      "packages/ui/src/server/components/cluster-params.ts:118",
+      "packages/ui/node_modules/@ytsaurus/javascript-wrapper/lib/commands/v3.js:334"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "POST",
+    "path": "/api/v3/get , /api/v3/list , /api/v3/exists , /api/v4/get , /api/v4/list , /api/v4/exists",
+    "description": "Core Cypress reads driving the Navigation page. Sent by the browser through the node-server tunnel /api/yt/:c/api/:v/:cmd. Parameters are in the JSON body (useBodyForParameters), and also duplicated as base64 X-YT-Parameters-* headers by the wrapper.",
+    "request": {"body": "{\"path\": string, \"attributes\"?: string[]|{keys,paths}, \"output_format\"?: string|{$value,$attributes}, \"suppress_access_tracking\"?: 'true', \"suppress_transaction_coordinator_sync\"?: true, \"suppress_upstream_sync\"?: true}"},
+    "response": {"body_schema": "v3: the raw value (optionally {$attributes,$value}); v4: wrapped as {\"value\": ...}"},
+    "needed_for_mock": true,
+    "source_refs": [
+      "packages/ui/node_modules/@ytsaurus/javascript-wrapper/lib/commands/v3.js:35",
+      "packages/ui/node_modules/@ytsaurus/javascript-wrapper/lib/commands/v3.js:42",
+      "packages/ui/node_modules/@ytsaurus/javascript-wrapper/lib/commands/v3.js:49",
+      "/shared/ytsaurus4/iceberg-viewer/mock-backend/server.js:329"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "POST",
+    "path": "/api/v3/read_table",
+    "description": "Heavy command; the node server resolves a host via /hosts first unless disableHeavyProxies. output_format defaults to 'json'; the UI normally asks for web_json. Parameters are in the JSON body.",
+    "request": {"body": "{\"path\": string|{$value,$attributes:{ranges}}, \"output_format\": string|{$value:'web_json',$attributes:{column_limit,...}}, \"suppress_access_tracking\"?: 'true'}"},
+    "response": {"body_schema": "format-dependent stream; for web_json a single JSON object {rows, yql_type_registry, incomplete_columns, incomplete_all_column_names, all_column_names}"},
+    "needed_for_mock": true,
+    "source_refs": [
+      "packages/ui/node_modules/@ytsaurus/javascript-wrapper/lib/commands/v3.js:94",
+      "packages/ui/src/server/controllers/yt-api.ts:92",
+      "/shared/ytsaurus4/iceberg-viewer/mock-backend/server.js:211"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "GET",
+    "path": "/internal/discover_versions/v2",
+    "description": "Component version inventory, surfaced on Components > Versions via /api/yt-proxy/:c/internal-discover_versions.",
+    "request": {},
+    "response": {"body_schema": "{summary: Record<version|'total'|'error', Record<componentType, {total: number, banned: number, offline: number}>>, details: Array<instance>}"},
+    "needed_for_mock": false,
+    "source_refs": [
+      "yt/yt/server/http_proxy/bootstrap.cpp:634",
+      "yt/yt/server/http_proxy/coordinator.cpp:697",
+      "packages/ui/src/server/controllers/yt-proxy-api.ts:23"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "POST",
+    "path": "/login",
+    "description": "Cypress-cookie password login. Only mounted when the proxy has auth/cypress_cookie_manager configured. Reached from the UI only with ALLOW_PASSWORD_AUTH, via POST /api/yt/:c/login which converts the JSON body into an Authorization: Basic header.",
+    "request": {"headers": {"Authorization": "Basic base64(username:password)"}},
+    "response": {"body_schema": "empty body + Set-Cookie: YTCypressCookie=<secret>; ...; 401 on bad credentials"},
+    "needed_for_mock": false,
+    "source_refs": [
+      "yt/yt/server/http_proxy/bootstrap.cpp:630",
+      "packages/ui/src/server/controllers/login.ts:33"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "GET",
+    "path": "/cluster_connection",
+    "description": "Serves //sys/@cluster_connection. Not used by the UI.",
+    "request": {},
+    "response": {"body_schema": "JSON of the cluster_connection attribute; 404 with empty body for any deeper path"},
+    "needed_for_mock": false,
+    "source_refs": ["yt/yt/server/http_proxy/bootstrap.cpp:628", "yt/yt/server/http_proxy/coordinator.cpp:631"]
+  },
+  {
+    "layer": "proxy",
+    "method": "GET",
+    "path": "/service",
+    "description": "Proxy start time + version. Not used by the UI.",
+    "request": {},
+    "response": {"body_schema": "{\"start_time\": <instant>, \"version\": string}"},
+    "needed_for_mock": false,
+    "source_refs": ["yt/yt/server/http_proxy/bootstrap.cpp:639", "yt/yt/server/http_proxy/bootstrap.cpp:472"]
+  }
+]

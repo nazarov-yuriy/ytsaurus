@@ -1,0 +1,2758 @@
+[
+ {
+  "signature": "[proxy] POST /api/v3/get @user_attributes",
+  "count": 1,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:04.863Z",
+   "method": "POST",
+   "path": "/api/v3/get",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "*/*"
+   },
+   "request_body": {
+    "path": "//home/iceberg/warehouse/trips/@user_attributes"
+   },
+   "status": 200,
+   "response_body": {}
+  }
+ },
+ {
+  "signature": "[proxy] GET /auth/whoami",
+  "count": 6,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:09.137Z",
+   "method": "GET",
+   "path": "/auth/whoami",
+   "query": "",
+   "request_headers": {
+    "accept": "application/json, text/plain, */*",
+    "x-yt-correlation-id": "6af55814-cea1-4612-bcef-a9cd8278c582.getXSRFToken"
+   },
+   "request_body": null,
+   "status": 200,
+   "response_body": {
+    "login": "iceberg",
+    "realm": "mock",
+    "real_login": "iceberg",
+    "csrf_token": "csrf-iceberg"
+   }
+  }
+ },
+ {
+  "signature": "[proxy] GET /version",
+  "count": 7,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:09.138Z",
+   "method": "GET",
+   "path": "/version",
+   "query": "",
+   "request_headers": {
+    "accept": "application/json, text/plain, */*"
+   },
+   "request_body": null,
+   "status": 200,
+   "response_body": "mock-proxy-1.0.0"
+  }
+ },
+ {
+  "signature": "[proxy] POST /api/v3/execute_batch batch[check_permission_by_acl]",
+  "count": 6,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:09.166Z",
+   "method": "POST",
+   "path": "/api/v3/execute_batch",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "application/json",
+    "x-yt-correlation-id": "2ef9a637-e9c9-43f9-810a-83280c31d536",
+    "x-yt-suppress-redirect": "1"
+   },
+   "request_body": {
+    "requests": [
+     {
+      "command": "check_permission_by_acl",
+      "parameters": {
+       "acl": [
+        {
+         "permissions": [
+          "write"
+         ],
+         "subjects": [
+          "admins"
+         ],
+         "action": "allow"
+        }
+       ],
+       "user": "iceberg",
+       "permission": "write"
+      }
+     }
+    ]
+   },
+   "status": 200,
+   "response_body": [
+    {
+     "output": {
+      "action": "allow",
+      "subject_id": "0-0-0-1",
+      "subject_name": "iceberg",
+      "missing_subjects": []
+     }
+    }
+   ]
+  }
+ },
+ {
+  "signature": "[proxy] GET /api/v3/get_supported_features",
+  "count": 6,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:09.210Z",
+   "method": "GET",
+   "path": "/api/v3/get_supported_features",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "application/json",
+    "x-yt-correlation-id": "4582d514-ba6b-4ab7-81c3-5a86f5c1fc5a",
+    "x-yt-header-format": "<encode_utf8=%false>json",
+    "x-yt-suppress-redirect": "1"
+   },
+   "request_body": {},
+   "status": 200,
+   "response_body": {
+    "features": {
+     "compression_codecs": [
+      "none",
+      "lz4"
+     ],
+     "erasure_codecs": [
+      "none"
+     ],
+     "primitive_types": [
+      "int64",
+      "uint64",
+      "double",
+      "boolean",
+      "string",
+      "any"
+     ]
+    }
+   }
+  }
+ },
+ {
+  "signature": "[proxy] POST /api/v3/execute_batch batch[get:@dynamic,get:@type]",
+  "count": 8,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:09.422Z",
+   "method": "POST",
+   "path": "/api/v3/execute_batch",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "application/json",
+    "x-yt-correlation-id": "b49e35b2-230a-44df-b913-e340adf95624",
+    "x-yt-suppress-redirect": "1"
+   },
+   "request_body": {
+    "requests": [
+     {
+      "command": "get",
+      "parameters": {
+       "path": "//@type"
+      }
+     },
+     {
+      "command": "get",
+      "parameters": {
+       "path": "//@dynamic"
+      }
+     }
+    ]
+   },
+   "status": 200,
+   "response_body": [
+    {
+     "output": "map_node"
+    },
+    {
+     "error": {
+      "code": 500,
+      "message": "Attribute \"dynamic\" is not found",
+      "attributes": {
+       "code": 500
+      },
+      "inner_errors": []
+     }
+    }
+   ]
+  }
+ },
+ {
+  "signature": "[proxy] POST /api/v3/execute_batch batch[get:@(all)]",
+  "count": 14,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:09.422Z",
+   "method": "POST",
+   "path": "/api/v3/execute_batch",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "application/json",
+    "x-yt-correlation-id": "7c73495b-4a2f-4a14-80c3-6c1b18397b9b",
+    "x-yt-suppress-redirect": "1"
+   },
+   "request_body": {
+    "requests": [
+     {
+      "command": "get",
+      "parameters": {
+       "path": "//@",
+       "attributes": [
+        "_format",
+        "_read_schema",
+        "_restore_path",
+        "_yql_key_meta",
+        "_yql_op_id",
+        "_yql_runner",
+        "_yql_row_spec",
+        "_yql_subkey_meta",
+        "_yql_type",
+        "_yql_value_meta",
+        "access_time",
+        "account",
+        "acl",
+        "atomicity",
+        "broken",
+        "chunk_count",
+        "chunk_row_count",
+        "cluster_name",
+        "compressed_data_size",
+        "compression_codec",
+        "compression_ratio",
+        "creation_time",
+        "data_weight",
+        "default_disk_space",
+        "disk_space",
+        "dynamic",
+        "effective_expiration",
+        "enable_dynamic_store_read",
+        "erasure_codec",
+        "expiration_time",
+        "expiration_timeout",
+        "id",
+        "in_memory_mode",
+        "key",
+        "key_columns",
+        "leader_controller_address",
+        "lock_count",
+        "lock_mode",
+        "locks",
+        "mode",
+        "modification_time",
+        "monitoring_cluster",
+        "monitoring_project",
+        "optimize_for",
+        "owner",
+        "path",
+        "pipeline_format_version",
+        "primary_medium",
+        "queue_static_export_destination",
+        "remount_needed_tablet_count",
+        "replica_path",
+        "replicated_table_options",
+        "replication_factor",
+        "resource_usage",
+        "schema",
+        "schema_mode",
+        "security_tags",
+        "sorted",
+        "sorted_by",
+        "start_time",
+        "state",
+        "tablet_cell_bundle",
+        "tablet_count",
+        "tablet_error_count",
+        "tablet_state",
+        "target_path",
+        "timeout",
+        "title",
+        "treat_as_queue_consumer",
+        "type",
+        "uncompressed_data_size"
+       ]
+      }
+     }
+    ],
+    "output_format": {
+     "$value": "json",
+     "$attributes": {
+      "stringify": true,
+      "annotate_with_types": true
+     }
+    }
+   },
+   "status": 200,
+   "response_body": [
+    {
+     "output": {
+      "id": {
+       "$type": "string",
+       "$value": "0-1-10191-abc1"
+      },
+      "type": {
+       "$type": "string",
+       "$value": "map_node"
+      },
+      "creation_time": {
+       "$type": "string",
+       "$value": "2026-07-25T10:00:00.000000Z"
+      },
+      "modification_time": {
+       "$type": "string",
+       "$value": "2026-07-25T10:00:00.000000Z"
+      },
+      "access_time": {
+       "$type": "string",
+       "$value": "2026-07-25T10:00:00.000000Z"
+      },
+      "account": {
+       "$type": "string",
+       "$value": "default"
+      },
+      "owner": {
+       "$type": "string",
+       "$value": "iceberg"
+      },
+      "acl": [],
+      "inherit_acl": {
+       "$type": "boolean",
+       "$value": "true"
+      },
+      "effective_acl": [],
+      "revision": {
+       "$type": "int64",
+       "$value": "1"
+      },
+      "attribute_revision": {
+       "$type": "int64",
+       "$value": "1"
+      },
+      "content_revision": {
+       "$type": "int64",
+       "$value": "1"
+      },
+      "opaque": {
+       "$type": "boolean",
+       "$value": "false"
+      },
+      "has_row_level_ace": {
+       "$type": "boolean",
+       "$value": "false"
+      },
+      "path": {
+       "$type": "string",
+       "$value": "/"
+      }
+     }
+    }
+   ]
+  }
+ },
+ {
+  "signature": "[proxy] POST /api/v3/exists params(suppress_access_tracking)",
+  "count": 7,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:09.423Z",
+   "method": "POST",
+   "path": "/api/v3/exists",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "application/json",
+    "x-yt-correlation-id": "c62db643-a054-4da2-b04b-8dc436dc6d0e",
+    "x-yt-suppress-redirect": "1"
+   },
+   "request_body": {
+    "path": "//sys/scheduler/config/pool_trees_root",
+    "suppress_access_tracking": "true"
+   },
+   "status": 200,
+   "response_body": false
+  }
+ },
+ {
+  "signature": "[proxy] POST /api/v3/get @default_tree params(suppress_access_tracking)",
+  "count": 6,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:09.427Z",
+   "method": "POST",
+   "path": "/api/v3/get",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "application/json",
+    "x-yt-correlation-id": "0b61574f-d9f6-4546-8401-321b34d18a26",
+    "x-yt-suppress-redirect": "1"
+   },
+   "request_body": {
+    "path": "//sys/pool_trees/@default_tree",
+    "suppress_access_tracking": "true"
+   },
+   "status": 200,
+   "response_body": "physical"
+  }
+ },
+ {
+  "signature": "[proxy] POST /api/v3/execute_batch batch[get:@mount_config]",
+  "count": 7,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:09.468Z",
+   "method": "POST",
+   "path": "/api/v3/execute_batch",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "application/json",
+    "x-yt-correlation-id": "b94e5db4-58e2-4d6b-b024-558ab777194e",
+    "x-yt-suppress-redirect": "1"
+   },
+   "request_body": {
+    "requests": [
+     {
+      "command": "get",
+      "parameters": {
+       "path": "//@mount_config"
+      }
+     }
+    ]
+   },
+   "status": 200,
+   "response_body": [
+    {
+     "error": {
+      "code": 500,
+      "message": "Attribute \"mount_config\" is not found",
+      "attributes": {
+       "code": 500
+      },
+      "inner_errors": []
+     }
+    }
+   ]
+  }
+ },
+ {
+  "signature": "[proxy] POST /api/v3/execute_batch batch[get:@path]",
+  "count": 7,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:09.468Z",
+   "method": "POST",
+   "path": "/api/v3/execute_batch",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "application/json",
+    "x-yt-correlation-id": "c45d70ad-413d-46c5-bf63-803ea84f9d73",
+    "x-yt-suppress-redirect": "1"
+   },
+   "request_body": {
+    "requests": [
+     {
+      "command": "get",
+      "parameters": {
+       "path": "#undefined/@path"
+      }
+     }
+    ]
+   },
+   "status": 200,
+   "response_body": [
+    {
+     "error": {
+      "code": 500,
+      "message": "Error resolving path #undefined/@path",
+      "attributes": {
+       "path": "#undefined/@path",
+       "code": 500
+      },
+      "inner_errors": []
+     }
+    }
+   ]
+  }
+ },
+ {
+  "signature": "[proxy] POST /api/v3/execute_batch batch[check_permission]",
+  "count": 8,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:09.474Z",
+   "method": "POST",
+   "path": "/api/v3/execute_batch",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "application/json",
+    "x-yt-correlation-id": "d9cea939-ca96-40e3-bed5-a3cfcfcee9c9",
+    "x-yt-suppress-redirect": "1"
+   },
+   "request_body": {
+    "requests": [
+     {
+      "command": "check_permission",
+      "parameters": {
+       "path": "/",
+       "user": "iceberg",
+       "permission": "write"
+      }
+     },
+     {
+      "command": "check_permission",
+      "parameters": {
+       "path": "//sys/accounts/default",
+       "user": "iceberg",
+       "permission": "use"
+      }
+     }
+    ]
+   },
+   "status": 200,
+   "response_body": [
+    {
+     "output": {
+      "action": "allow",
+      "object_id": "0-0-0-0",
+      "object_name": "/",
+      "subject_id": "0-0-0-1",
+      "subject_name": "iceberg"
+     }
+    },
+    {
+     "output": {
+      "action": "allow",
+      "object_id": "0-0-0-0",
+      "object_name": "//sys/accounts/default",
+      "subject_id": "0-0-0-1",
+      "subject_name": "iceberg"
+     }
+    }
+   ]
+  }
+ },
+ {
+  "signature": "[proxy] POST /api/v3/list params(attributes,suppress_access_tracking)",
+  "count": 3,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:09.475Z",
+   "method": "POST",
+   "path": "/api/v3/list",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "application/json",
+    "x-yt-correlation-id": "95526557-c016-44ac-83d5-e3f39a21ee5e",
+    "x-yt-suppress-redirect": "1"
+   },
+   "request_body": {
+    "attributes": [
+     "type",
+     "dynamic",
+     "row_count",
+     "unmerged_row_count",
+     "chunk_row_count",
+     "modification_time",
+     "creation_time",
+     "resource_usage",
+     "sorted",
+     "data_weight",
+     "account",
+     "target_path",
+     "broken",
+     "lock_count",
+     "tablet_state",
+     "_restore_path",
+     "expiration_time",
+     "expiration_timeout",
+     "effective_expiration",
+     "treat_as_queue_consumer",
+     "treat_as_queue_producer",
+     "path",
+     "pipeline_format_version"
+    ],
+    "path": "/",
+    "suppress_access_tracking": "true"
+   },
+   "status": 200,
+   "response_body": [
+    {
+     "$value": "home",
+     "$attributes": {
+      "type": "map_node",
+      "modification_time": "2026-07-25T10:00:00.000000Z",
+      "creation_time": "2026-07-25T10:00:00.000000Z",
+      "account": "default",
+      "path": "//home"
+     }
+    },
+    {
+     "$value": "tmp",
+     "$attributes": {
+      "type": "map_node",
+      "modification_time": "2026-07-25T10:00:00.000000Z",
+      "creation_time": "2026-07-25T10:00:00.000000Z",
+      "account": "default",
+      "path": "//tmp"
+     }
+    },
+    {
+     "$value": "sys",
+     "$attributes": {
+      "type": "map_node",
+      "modification_time": "2026-07-25T10:00:00.000000Z",
+      "creation_time": "2026-07-25T10:00:00.000000Z",
+      "account": "default",
+      "path": "//sys"
+     }
+    }
+   ]
+  }
+ },
+ {
+  "signature": "[proxy] POST /api/v3/check_permission params(permission,user)",
+  "count": 3,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:18.826Z",
+   "method": "POST",
+   "path": "/api/v3/check_permission",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "application/json",
+    "x-yt-correlation-id": "307d4ad9-4d26-4663-b121-2dd9c2a7f2ab",
+    "x-yt-suppress-redirect": "1"
+   },
+   "request_body": {
+    "path": "//home/iceberg/warehouse/trips",
+    "permission": "full_read",
+    "user": "iceberg"
+   },
+   "status": 200,
+   "response_body": {
+    "action": "allow",
+    "object_id": "0-0-0-0",
+    "object_name": "//home/iceberg/warehouse/trips",
+    "subject_id": "0-0-0-1",
+    "subject_name": "iceberg"
+   }
+  }
+ },
+ {
+  "signature": "[proxy] POST /api/v4/get @has_row_level_ace",
+  "count": 3,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:18.828Z",
+   "method": "POST",
+   "path": "/api/v4/get",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "application/json",
+    "x-yt-correlation-id": "f7278dcf-b0a2-4ef8-ad91-7afc340e766d",
+    "x-yt-suppress-redirect": "1"
+   },
+   "request_body": {
+    "path": "//home/iceberg/warehouse/trips/@has_row_level_ace"
+   },
+   "status": 200,
+   "response_body": {
+    "value": false
+   }
+  }
+ },
+ {
+  "signature": "[proxy] POST /api/v3/read_table params(dump_error_into_response,omit_inaccessible_columns,omit_inaccessible_rows,output_format,suppress_access_tracking,table_reader) of=web_json",
+  "count": 9,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:18.830Z",
+   "method": "POST",
+   "path": "/api/v3/read_table",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "application/json",
+    "x-yt-correlation-id": "e56dfa0a-e37e-4a4e-bb97-a72c2eba7e1a",
+    "x-yt-suppress-redirect": "1"
+   },
+   "request_body": {
+    "table_reader": {
+     "workload_descriptor": {
+      "category": "user_interactive"
+     }
+    },
+    "output_format": {
+     "$value": "web_json",
+     "$attributes": {
+      "field_weight_limit": 1024,
+      "max_selected_column_count": 50,
+      "max_all_column_names_count": 3000,
+      "column_names": []
+     }
+    },
+    "path": "//home/iceberg/warehouse/trips[#0:#0]",
+    "dump_error_into_response": true,
+    "omit_inaccessible_columns": true,
+    "omit_inaccessible_rows": true,
+    "suppress_access_tracking": "true"
+   },
+   "status": 200,
+   "response_body": {
+    "rows": [],
+    "incomplete_columns": "true",
+    "incomplete_all_column_names": "false",
+    "all_column_names": [
+     "city",
+     "distance_km",
+     "is_completed",
+     "started_at",
+     "trip_id"
+    ]
+   }
+  }
+ },
+ {
+  "signature": "[proxy] POST /api/v3/get @path params(suppress_access_tracking)",
+  "count": 1,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:22.841Z",
+   "method": "POST",
+   "path": "/api/v3/get",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "application/json",
+    "x-yt-correlation-id": "2d8a652f-e49d-4b98-9ab7-119b9e2ee225",
+    "x-yt-suppress-redirect": "1"
+   },
+   "request_body": {
+    "path": "//home/iceberg/warehouse/trips/@path",
+    "suppress_access_tracking": "true"
+   },
+   "status": 200,
+   "response_body": "//home/iceberg/warehouse/trips"
+  }
+ },
+ {
+  "signature": "[proxy] POST /api/v3/get @(all) params(output_format,suppress_access_tracking) of=json",
+  "count": 2,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:24.388Z",
+   "method": "POST",
+   "path": "/api/v3/get",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "application/json",
+    "x-yt-correlation-id": "61340407-33db-4497-bce0-1370d6ff1f9b",
+    "x-yt-suppress-redirect": "1"
+   },
+   "request_body": {
+    "path": "//home/iceberg/warehouse/trips/@",
+    "output_format": {
+     "$value": "json",
+     "$attributes": {
+      "stringify": true,
+      "annotate_with_types": true
+     }
+    },
+    "suppress_access_tracking": "true"
+   },
+   "status": 200,
+   "response_body": {
+    "id": {
+     "$type": "string",
+     "$value": "0-5-10191-abc5"
+    },
+    "type": {
+     "$type": "string",
+     "$value": "table"
+    },
+    "creation_time": {
+     "$type": "string",
+     "$value": "2026-07-25T10:00:00.000000Z"
+    },
+    "modification_time": {
+     "$type": "string",
+     "$value": "2026-07-25T10:00:00.000000Z"
+    },
+    "access_time": {
+     "$type": "string",
+     "$value": "2026-07-25T10:00:00.000000Z"
+    },
+    "account": {
+     "$type": "string",
+     "$value": "default"
+    },
+    "owner": {
+     "$type": "string",
+     "$value": "iceberg"
+    },
+    "acl": [],
+    "inherit_acl": {
+     "$type": "boolean",
+     "$value": "true"
+    },
+    "effective_acl": [],
+    "revision": {
+     "$type": "int64",
+     "$value": "1"
+    },
+    "attribute_revision": {
+     "$type": "int64",
+     "$value": "1"
+    },
+    "content_revision": {
+     "$type": "int64",
+     "$value": "1"
+    },
+    "opaque": {
+     "$type": "boolean",
+     "$value": "false"
+    },
+    "has_row_level_ace": {
+     "$type": "boolean",
+     "$value": "false"
+    },
+    "path": {
+     "$type": "string",
+     "$value": "//home/iceberg/warehouse/trips"
+    },
+    "dynamic": {
+     "$type": "boolean",
+     "$value": "false"
+    },
+    "sorted": {
+     "$type": "boolean",
+     "$value": "true"
+    },
+    "key_columns": [
+     {
+      "$type": "string",
+      "$value": "trip_id"
+     }
+    ],
+    "sorted_by": [
+     {
+      "$type": "string",
+      "$value": "trip_id"
+     }
+    ],
+    "schema_mode": {
+     "$type": "string",
+     "$value": "strong"
+    },
+    "row_count": {
+     "$type": "int64",
+     "$value": "250"
+    },
+    "chunk_count": {
+     "$type": "int64",
+     "$value": "1"
+    },
+    "chunk_row_count": {
+     "$type": "int64",
+     "$value": "250"
+    },
+    "data_weight": {
+     "$type": "int64",
+     "$value": "16000"
+    },
+    "compressed_data_size": {
+     "$type": "int64",
+     "$value": "8000"
+    },
+    "uncompressed_data_size": {
+     "$type": "int64",
+     "$value": "16000"
+    },
+    "resource_usage": {
+     "disk_space": {
+      "$type": "int64",
+      "$value": "16000"
+     },
+     "chunk_count": {
+      "$type": "int64",
+      "$value": "1"
+     },
+     "node_count": {
+      "$type": "int64",
+      "$value": "1"
+     }
+    },
+    "compression_codec": {
+     "$type": "string",
+     "$value": "lz4"
+    },
+    "erasure_codec": {
+     "$type": "string",
+     "$value": "none"
+    },
+    "optimize_for": {
+     "$type": "string",
+     "$value": "scan"
+    },
+    "in_memory_mode": {
+     "$type": "string",
+     "$value": "none"
+    },
+    "tablet_state": {
+     "$type": "string",
+     "$value": "none"
+    },
+    "schema": {
+     "$attributes": {
+      "strict": {
+       "$type": "boolean",
+       "$value": "true"
+      },
+      "unique_keys": {
+       "$type": "boolean",
+       "$value": "false"
+      }
+     },
+     "$value": [
+      {
+       "name": {
+        "$type": "string",
+        "$value": "trip_id"
+       },
+       "type": {
+        "$type": "string",
+        "$value": "int64"
+       },
+       "type_v3": {
+        "type_name": {
+         "$type": "string",
+         "$value": "optional"
+        },
+        "item": {
+         "$type": "string",
+         "$value": "int64"
+        }
+       },
+       "sort_order": {
+        "$type": "string",
+        "$value": "ascending"
+       }
+      },
+      {
+       "name": {
+        "$type": "string",
+        "$value": "city"
+       },
+       "type": {
+        "$type": "string",
+        "$value": "string"
+       },
+       "type_v3": {
+        "type_name": {
+         "$type": "string",
+         "$value": "optional"
+        },
+        "item": {
+         "$type": "string",
+         "$value": "string"
+        }
+       }
+      },
+      {
+       "name": {
+        "$type": "string",
+        "$value": "distance_km"
+       },
+       "type": {
+        "$type": "string",
+        "$value": "double"
+       },
+       "type_v3": {
+        "type_name": {
+         "$type": "string",
+         "$value": "optional"
+        },
+        "item": {
+         "$type": "string",
+         "$value": "double"
+        }
+       }
+      },
+      {
+       "name": {
+        "$type": "string",
+        "$value": "started_at"
+       },
+       "type": {
+        "$type": "string",
+        "$value": "string"
+       },
+       "type_v3": {
+        "type_name": {
+         "$type": "string",
+         "$value": "optional"
+        },
+        "item": {
+         "$type": "string",
+         "$value": "string"
+        }
+       }
+      },
+      {
+       "name": {
+        "$type": "string",
+        "$value": "is_completed"
+       },
+       "type": {
+        "$type": "string",
+        "$value": "boolean"
+       },
+       "type_v3": {
+        "type_name": {
+         "$type": "string",
+         "$value": "optional"
+        },
+        "item": {
+         "$type": "string",
+         "$value": "bool"
+        }
+       }
+      }
+     ]
+    }
+   }
+  }
+ },
+ {
+  "signature": "[proxy] POST /api/v3/get @opaque_attribute_keys params(suppress_access_tracking)",
+  "count": 2,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:24.389Z",
+   "method": "POST",
+   "path": "/api/v3/get",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "application/json",
+    "x-yt-correlation-id": "3f64681e-7f9d-43b3-8836-846105ffe3c9",
+    "x-yt-suppress-redirect": "1"
+   },
+   "request_body": {
+    "path": "//home/iceberg/warehouse/trips/@opaque_attribute_keys",
+    "suppress_access_tracking": "true"
+   },
+   "status": 200,
+   "response_body": []
+  }
+ },
+ {
+  "signature": "[proxy] POST /api/v3/execute_batch batch[list]",
+  "count": 1,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:25.173Z",
+   "method": "POST",
+   "path": "/api/v3/execute_batch",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "application/json",
+    "x-yt-correlation-id": "136a38cb-f4e8-4f4f-8cca-b9024edb3ea7.fetchClusterParams.masterList",
+    "x-yt-suppress-redirect": "1"
+   },
+   "request_body": {
+    "requests": [
+     {
+      "command": "list",
+      "parameters": {
+       "path": "//sys/primary_masters",
+       "suppress_transaction_coordinator_sync": true,
+       "suppress_upstream_sync": true
+      }
+     }
+    ]
+   },
+   "status": 200,
+   "response_body": [
+    {
+     "output": []
+    }
+   ]
+  }
+ },
+ {
+  "signature": "[proxy] POST /api/v3/execute_batch batch[get,get:@ui_config,get:@ui_config_dev_overrides,list]",
+  "count": 1,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:25.176Z",
+   "method": "POST",
+   "path": "/api/v3/execute_batch",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "application/json",
+    "x-yt-correlation-id": "136a38cb-f4e8-4f4f-8cca-b9024edb3ea7.fetchClusterParams",
+    "x-yt-suppress-redirect": "1"
+   },
+   "request_body": {
+    "requests": [
+     {
+      "command": "list",
+      "parameters": {
+       "path": "//sys/media",
+       "suppress_transaction_coordinator_sync": true,
+       "suppress_upstream_sync": true
+      }
+     },
+     {
+      "command": "get",
+      "parameters": {
+       "path": "//sys/scheduler/orchid/service/version",
+       "suppress_transaction_coordinator_sync": true,
+       "suppress_upstream_sync": true
+      }
+     },
+     {
+      "command": "get",
+      "parameters": {
+       "path": "//sys/@ui_config",
+       "suppress_transaction_coordinator_sync": true,
+       "suppress_upstream_sync": true
+      }
+     },
+     {
+      "command": "get",
+      "parameters": {
+       "path": "//sys/@ui_config_dev_overrides",
+       "suppress_transaction_coordinator_sync": true,
+       "suppress_upstream_sync": true
+      }
+     }
+    ]
+   },
+   "status": 200,
+   "response_body": [
+    {
+     "output": [
+      "default"
+     ]
+    },
+    {
+     "error": {
+      "code": 500,
+      "message": "Error resolving path //sys/scheduler/orchid/service/version",
+      "attributes": {
+       "path": "//sys/scheduler/orchid/service/version",
+       "code": 500
+      },
+      "inner_errors": []
+     }
+    },
+    {
+     "error": {
+      "code": 500,
+      "message": "Attribute \"ui_config\" is not found",
+      "attributes": {
+       "code": 500
+      },
+      "inner_errors": []
+     }
+    },
+    {
+     "error": {
+      "code": 500,
+      "message": "Attribute \"ui_config_dev_overrides\" is not found",
+      "attributes": {
+       "code": 500
+      },
+      "inner_errors": []
+     }
+    }
+   ]
+  }
+ },
+ {
+  "signature": "[proxy] POST /api/v3/get @user_attributes params(output_format,suppress_access_tracking) of=json",
+  "count": 1,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:25.930Z",
+   "method": "POST",
+   "path": "/api/v3/get",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "application/json",
+    "x-yt-correlation-id": "6b5bbba3-60a2-4b54-a499-cc7530a74433",
+    "x-yt-suppress-redirect": "1"
+   },
+   "request_body": {
+    "path": "//home/iceberg/warehouse/trips/@user_attributes",
+    "output_format": {
+     "$value": "json",
+     "$attributes": {
+      "stringify": true,
+      "annotate_with_types": true
+     }
+    },
+    "suppress_access_tracking": "true"
+   },
+   "status": 200,
+   "response_body": {}
+  }
+ },
+ {
+  "signature": "[proxy] POST /api/v3/execute_batch batch[get:@acl,get:@effective_acl,get:@revision]",
+  "count": 1,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:27.482Z",
+   "method": "POST",
+   "path": "/api/v3/execute_batch",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "application/json",
+    "x-yt-correlation-id": "7240ad6a-1f8d-4646-b7f6-b9cfa5a1bb07",
+    "x-yt-suppress-redirect": "1"
+   },
+   "request_body": {
+    "requests": [
+     {
+      "command": "get",
+      "parameters": {
+       "path": "//home/iceberg/warehouse/trips/@effective_acl"
+      }
+     },
+     {
+      "command": "get",
+      "parameters": {
+       "path": "//home/iceberg/warehouse/trips/@acl"
+      }
+     },
+     {
+      "command": "get",
+      "parameters": {
+       "path": "//home/iceberg/warehouse/trips/@revision"
+      }
+     }
+    ]
+   },
+   "status": 200,
+   "response_body": [
+    {
+     "output": []
+    },
+    {
+     "output": []
+    },
+    {
+     "output": 1
+    }
+   ]
+  }
+ },
+ {
+  "signature": "[proxy] POST /api/v3/get @inherit_acl params(suppress_access_tracking)",
+  "count": 1,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:27.483Z",
+   "method": "POST",
+   "path": "/api/v3/get",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "application/json",
+    "x-yt-correlation-id": "25bc9935-8415-4c36-98bd-2d045788be7d",
+    "x-yt-suppress-redirect": "1"
+   },
+   "request_body": {
+    "path": "//home/iceberg/warehouse/trips/@inherit_acl",
+    "suppress_access_tracking": "true"
+   },
+   "status": 200,
+   "response_body": true
+  }
+ },
+ {
+  "signature": "[proxy] POST /api/v3/execute_batch batch[]",
+  "count": 1,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:27.489Z",
+   "method": "POST",
+   "path": "/api/v3/execute_batch",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "application/json",
+    "x-yt-correlation-id": "41f855cb-e82e-4264-a8e3-4adf4e659d9f",
+    "x-yt-suppress-redirect": "1"
+   },
+   "request_body": {
+    "requests": []
+   },
+   "status": 200,
+   "response_body": []
+  }
+ },
+ {
+  "signature": "[proxy] POST /login",
+  "count": 1,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:56.302Z",
+   "method": "POST",
+   "path": "/login",
+   "query": "",
+   "request_headers": {
+    "authorization": "Basic aWNlYmVyZzppY2ViZXJn",
+    "content-type": "application/x-www-form-urlencoded",
+    "accept": "application/json, text/plain, */*"
+   },
+   "request_body": null,
+   "status": 200,
+   "response_body": null
+  }
+ },
+ {
+  "signature": "[proxy] GET /hosts/all",
+  "count": 2,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:32:56.374Z",
+   "method": "GET",
+   "path": "/hosts/all",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "application/json, text/plain, */*"
+   },
+   "request_body": {},
+   "status": 200,
+   "response_body": []
+  }
+ },
+ {
+  "signature": "[proxy] GET /hosts",
+  "count": 1,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:33:04.886Z",
+   "method": "GET",
+   "path": "/hosts",
+   "query": "",
+   "request_headers": {
+    "accept": "*/*"
+   },
+   "request_body": null,
+   "status": 200,
+   "response_body": [
+    "localhost:8000"
+   ]
+  }
+ },
+ {
+  "signature": "[proxy] GET /ping",
+  "count": 1,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:33:04.898Z",
+   "method": "GET",
+   "path": "/ping",
+   "query": "",
+   "request_headers": {
+    "accept": "*/*"
+   },
+   "request_body": null,
+   "status": 200,
+   "response_body": {}
+  }
+ },
+ {
+  "signature": "[proxy] GET /api",
+  "count": 1,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:33:04.902Z",
+   "method": "GET",
+   "path": "/api",
+   "query": "",
+   "request_headers": {
+    "accept": "*/*"
+   },
+   "request_body": null,
+   "status": 200,
+   "response_body": [
+    "v3",
+    "v4"
+   ]
+  }
+ },
+ {
+  "signature": "[proxy] POST /api/v3/get_table_columnar_statistics params(paths)",
+  "count": 1,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:33:04.906Z",
+   "method": "POST",
+   "path": "/api/v3/get_table_columnar_statistics",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "*/*"
+   },
+   "request_body": {
+    "paths": [
+     "//home/iceberg/warehouse/trips"
+    ]
+   },
+   "status": 200,
+   "response_body": [
+    {
+     "column_data_weights": {},
+     "timestamp_total_weight": 0,
+     "legacy_chunks_data_weight": 0
+    }
+   ]
+  }
+ },
+ {
+  "signature": "[proxy] POST /api/v4/list",
+  "count": 1,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:33:04.910Z",
+   "method": "POST",
+   "path": "/api/v4/list",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "*/*"
+   },
+   "request_body": {
+    "path": "//home/iceberg/warehouse"
+   },
+   "status": 200,
+   "response_body": {
+    "value": [
+     "trips",
+     "events"
+    ]
+   }
+  }
+ },
+ {
+  "signature": "[proxy] POST /api/v4/exists",
+  "count": 1,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "ts": "2026-07-25T15:33:04.914Z",
+   "method": "POST",
+   "path": "/api/v4/exists",
+   "query": "",
+   "request_headers": {
+    "content-type": "application/json",
+    "accept": "*/*"
+   },
+   "request_body": {
+    "path": "//home/iceberg/warehouse/trips"
+   },
+   "status": 200,
+   "response_body": {
+    "value": true
+   }
+  }
+ },
+ {
+  "signature": "[browser] GET /api/cluster-info/mock",
+  "count": 6,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "GET",
+   "path": "/api/cluster-info/mock",
+   "query": "",
+   "request_body": null,
+   "status": 200,
+   "response_body": {
+    "token": {
+     "login": "iceberg",
+     "realm": "mock",
+     "real_login": "iceberg",
+     "csrf_token": "csrf-iceberg"
+    },
+    "version": "mock-proxy-1.0.0"
+   }
+  }
+ },
+ {
+  "signature": "[browser] GET /api/cluster-params/mock",
+  "count": 6,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "GET",
+   "path": "/api/cluster-params/mock",
+   "query": "",
+   "request_body": null,
+   "status": 200,
+   "response_body": {
+    "mediumList": {
+     "output": [
+      "default"
+     ]
+    },
+    "schedulerVersion": {
+     "output": "0.0.0-unknown"
+    },
+    "uiConfig": {
+     "error": {
+      "code": 500,
+      "message": "Attribute \"ui_config\" is not found",
+      "attributes": {
+       "code": 500
+      },
+      "inner_errors": []
+     }
+    },
+    "uiDevConfig": {},
+    "masterVersion": {
+     "output": []
+    }
+   }
+  }
+ },
+ {
+  "signature": "[browser] POST /api/yt/mock/api/v3/execute_batch batch[check_permission_by_acl]",
+  "count": 6,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "POST",
+   "path": "/api/yt/mock/api/v3/execute_batch",
+   "query": "",
+   "request_body": {
+    "requests": [
+     {
+      "command": "check_permission_by_acl",
+      "parameters": {
+       "acl": [
+        {
+         "permissions": [
+          "write"
+         ],
+         "subjects": [
+          "admins"
+         ],
+         "action": "allow"
+        }
+       ],
+       "user": "iceberg",
+       "permission": "write"
+      }
+     }
+    ]
+   },
+   "status": 200,
+   "response_body": [
+    {
+     "output": {
+      "action": "allow",
+      "subject_id": "0-0-0-1",
+      "subject_name": "iceberg",
+      "missing_subjects": []
+     }
+    }
+   ]
+  }
+ },
+ {
+  "signature": "[browser] GET /api/yt/mock/api/v3/get_supported_features",
+  "count": 6,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "GET",
+   "path": "/api/yt/mock/api/v3/get_supported_features",
+   "query": "",
+   "request_body": null,
+   "status": 200,
+   "response_body": {
+    "features": {
+     "compression_codecs": [
+      "none",
+      "lz4"
+     ],
+     "erasure_codecs": [
+      "none"
+     ],
+     "primitive_types": [
+      "int64",
+      "uint64",
+      "double",
+      "boolean",
+      "string",
+      "any"
+     ]
+    }
+   }
+  }
+ },
+ {
+  "signature": "[browser] GET /api/access-log/mock/check-available",
+  "count": 6,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "GET",
+   "path": "/api/access-log/mock/check-available",
+   "query": "",
+   "request_body": null,
+   "status": 200,
+   "response_body": {
+    "is_access_log_available": false
+   }
+  }
+ },
+ {
+  "signature": "[browser] POST /api/yt/mock/api/v3/execute_batch batch[get:@dynamic,get:@type]",
+  "count": 8,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "POST",
+   "path": "/api/yt/mock/api/v3/execute_batch",
+   "query": "",
+   "request_body": {
+    "requests": [
+     {
+      "command": "get",
+      "parameters": {
+       "path": "//@type"
+      }
+     },
+     {
+      "command": "get",
+      "parameters": {
+       "path": "//@dynamic"
+      }
+     }
+    ]
+   },
+   "status": 200,
+   "response_body": [
+    {
+     "output": "map_node"
+    },
+    {
+     "error": {
+      "code": 500,
+      "message": "Attribute \"dynamic\" is not found",
+      "attributes": {
+       "code": 500
+      },
+      "inner_errors": []
+     }
+    }
+   ]
+  }
+ },
+ {
+  "signature": "[browser] POST /api/yt/mock/api/v3/execute_batch batch[get:@(all)]",
+  "count": 14,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "POST",
+   "path": "/api/yt/mock/api/v3/execute_batch",
+   "query": "",
+   "request_body": {
+    "requests": [
+     {
+      "command": "get",
+      "parameters": {
+       "path": "//@",
+       "attributes": [
+        "_format",
+        "_read_schema",
+        "_restore_path",
+        "_yql_key_meta",
+        "_yql_op_id",
+        "_yql_runner",
+        "_yql_row_spec",
+        "_yql_subkey_meta",
+        "_yql_type",
+        "_yql_value_meta",
+        "access_time",
+        "account",
+        "acl",
+        "atomicity",
+        "broken",
+        "chunk_count",
+        "chunk_row_count",
+        "cluster_name",
+        "compressed_data_size",
+        "compression_codec",
+        "compression_ratio",
+        "creation_time",
+        "data_weight",
+        "default_disk_space",
+        "disk_space",
+        "dynamic",
+        "effective_expiration",
+        "enable_dynamic_store_read",
+        "erasure_codec",
+        "expiration_time",
+        "expiration_timeout",
+        "id",
+        "in_memory_mode",
+        "key",
+        "key_columns",
+        "leader_controller_address",
+        "lock_count",
+        "lock_mode",
+        "locks",
+        "mode",
+        "modification_time",
+        "monitoring_cluster",
+        "monitoring_project",
+        "optimize_for",
+        "owner",
+        "path",
+        "pipeline_format_version",
+        "primary_medium",
+        "queue_static_export_destination",
+        "remount_needed_tablet_count",
+        "replica_path",
+        "replicated_table_options",
+        "replication_factor",
+        "resource_usage",
+        "schema",
+        "schema_mode",
+        "security_tags",
+        "sorted",
+        "sorted_by",
+        "start_time",
+        "state",
+        "tablet_cell_bundle",
+        "tablet_count",
+        "tablet_error_count",
+        "tablet_state",
+        "target_path",
+        "timeout",
+        "title",
+        "treat_as_queue_consumer",
+        "type",
+        "uncompressed_data_size"
+       ]
+      }
+     }
+    ],
+    "output_format": {
+     "$value": "json",
+     "$attributes": {
+      "stringify": true,
+      "annotate_with_types": true
+     }
+    }
+   },
+   "status": 200,
+   "response_body": [
+    {
+     "output": {
+      "id": {
+       "$type": "string",
+       "$value": "0-1-10191-abc1"
+      },
+      "type": {
+       "$type": "string",
+       "$value": "map_node"
+      },
+      "creation_time": {
+       "$type": "string",
+       "$value": "2026-07-25T10:00:00.000000Z"
+      },
+      "modification_time": {
+       "$type": "string",
+       "$value": "2026-07-25T10:00:00.000000Z"
+      },
+      "access_time": {
+       "$type": "string",
+       "$value": "2026-07-25T10:00:00.000000Z"
+      },
+      "account": {
+       "$type": "string",
+       "$value": "default"
+      },
+      "owner": {
+       "$type": "string",
+       "$value": "iceberg"
+      },
+      "acl": [],
+      "inherit_acl": {
+       "$type": "boolean",
+       "$value": "true"
+      },
+      "effective_acl": [],
+      "revision": {
+       "$type": "int64",
+       "$value": "1"
+      },
+      "attribute_revision": {
+       "$type": "int64",
+       "$value": "1"
+      },
+      "content_revision": {
+       "$type": "int64",
+       "$value": "1"
+      },
+      "opaque": {
+       "$type": "boolean",
+       "$value": "false"
+      },
+      "has_row_level_ace": {
+       "$type": "boolean",
+       "$value": "false"
+      },
+      "path": {
+       "$type": "string",
+       "$value": "/"
+      }
+     }
+    }
+   ]
+  }
+ },
+ {
+  "signature": "[browser] POST /api/yt/mock/api/v3/exists params(suppress_access_tracking)",
+  "count": 7,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "POST",
+   "path": "/api/yt/mock/api/v3/exists",
+   "query": "",
+   "request_body": {
+    "path": "//sys/scheduler/config/pool_trees_root",
+    "suppress_access_tracking": "true"
+   },
+   "status": 200,
+   "response_body": false
+  }
+ },
+ {
+  "signature": "[browser] POST /api/yt/mock/api/v3/get @default_tree params(suppress_access_tracking)",
+  "count": 6,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "POST",
+   "path": "/api/yt/mock/api/v3/get",
+   "query": "",
+   "request_body": {
+    "path": "//sys/pool_trees/@default_tree",
+    "suppress_access_tracking": "true"
+   },
+   "status": 200,
+   "response_body": "physical"
+  }
+ },
+ {
+  "signature": "[browser] POST /api/yt/mock/api/v3/execute_batch batch[get:@mount_config]",
+  "count": 7,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "POST",
+   "path": "/api/yt/mock/api/v3/execute_batch",
+   "query": "",
+   "request_body": {
+    "requests": [
+     {
+      "command": "get",
+      "parameters": {
+       "path": "//@mount_config"
+      }
+     }
+    ]
+   },
+   "status": 200,
+   "response_body": [
+    {
+     "error": {
+      "code": 500,
+      "message": "Attribute \"mount_config\" is not found",
+      "attributes": {
+       "code": 500
+      },
+      "inner_errors": []
+     }
+    }
+   ]
+  }
+ },
+ {
+  "signature": "[browser] POST /api/yt/mock/api/v3/execute_batch batch[get:@path]",
+  "count": 7,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "POST",
+   "path": "/api/yt/mock/api/v3/execute_batch",
+   "query": "",
+   "request_body": {
+    "requests": [
+     {
+      "command": "get",
+      "parameters": {
+       "path": "#undefined/@path"
+      }
+     }
+    ]
+   },
+   "status": 200,
+   "response_body": [
+    {
+     "error": {
+      "code": 500,
+      "message": "Error resolving path #undefined/@path",
+      "attributes": {
+       "path": "#undefined/@path",
+       "code": 500
+      },
+      "inner_errors": []
+     }
+    }
+   ]
+  }
+ },
+ {
+  "signature": "[browser] POST /api/yt/mock/api/v3/execute_batch batch[check_permission]",
+  "count": 8,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "POST",
+   "path": "/api/yt/mock/api/v3/execute_batch",
+   "query": "",
+   "request_body": {
+    "requests": [
+     {
+      "command": "check_permission",
+      "parameters": {
+       "path": "/",
+       "user": "iceberg",
+       "permission": "write"
+      }
+     },
+     {
+      "command": "check_permission",
+      "parameters": {
+       "path": "//sys/accounts/default",
+       "user": "iceberg",
+       "permission": "use"
+      }
+     }
+    ]
+   },
+   "status": 200,
+   "response_body": [
+    {
+     "output": {
+      "action": "allow",
+      "object_id": "0-0-0-0",
+      "object_name": "/",
+      "subject_id": "0-0-0-1",
+      "subject_name": "iceberg"
+     }
+    },
+    {
+     "output": {
+      "action": "allow",
+      "object_id": "0-0-0-0",
+      "object_name": "//sys/accounts/default",
+      "subject_id": "0-0-0-1",
+      "subject_name": "iceberg"
+     }
+    }
+   ]
+  }
+ },
+ {
+  "signature": "[browser] POST /api/yt/mock/api/v3/list params(attributes,suppress_access_tracking)",
+  "count": 3,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "POST",
+   "path": "/api/yt/mock/api/v3/list",
+   "query": "",
+   "request_body": {
+    "attributes": [
+     "type",
+     "dynamic",
+     "row_count",
+     "unmerged_row_count",
+     "chunk_row_count",
+     "modification_time",
+     "creation_time",
+     "resource_usage",
+     "sorted",
+     "data_weight",
+     "account",
+     "target_path",
+     "broken",
+     "lock_count",
+     "tablet_state",
+     "_restore_path",
+     "expiration_time",
+     "expiration_timeout",
+     "effective_expiration",
+     "treat_as_queue_consumer",
+     "treat_as_queue_producer",
+     "path",
+     "pipeline_format_version"
+    ],
+    "path": "/",
+    "suppress_access_tracking": "true"
+   },
+   "status": 200,
+   "response_body": [
+    {
+     "$value": "home",
+     "$attributes": {
+      "type": "map_node",
+      "modification_time": "2026-07-25T10:00:00.000000Z",
+      "creation_time": "2026-07-25T10:00:00.000000Z",
+      "account": "default",
+      "path": "//home"
+     }
+    },
+    {
+     "$value": "tmp",
+     "$attributes": {
+      "type": "map_node",
+      "modification_time": "2026-07-25T10:00:00.000000Z",
+      "creation_time": "2026-07-25T10:00:00.000000Z",
+      "account": "default",
+      "path": "//tmp"
+     }
+    },
+    {
+     "$value": "sys",
+     "$attributes": {
+      "type": "map_node",
+      "modification_time": "2026-07-25T10:00:00.000000Z",
+      "creation_time": "2026-07-25T10:00:00.000000Z",
+      "account": "default",
+      "path": "//sys"
+     }
+    }
+   ]
+  }
+ },
+ {
+  "signature": "[browser] POST /api/yt/mock/api/v3/check_permission params(permission,user)",
+  "count": 3,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "POST",
+   "path": "/api/yt/mock/api/v3/check_permission",
+   "query": "",
+   "request_body": {
+    "path": "//home/iceberg/warehouse/trips",
+    "permission": "full_read",
+    "user": "iceberg"
+   },
+   "status": 200,
+   "response_body": {
+    "action": "allow",
+    "object_id": "0-0-0-0",
+    "object_name": "//home/iceberg/warehouse/trips",
+    "subject_id": "0-0-0-1",
+    "subject_name": "iceberg"
+   }
+  }
+ },
+ {
+  "signature": "[browser] POST /api/yt/mock/api/v4/get @has_row_level_ace",
+  "count": 3,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "POST",
+   "path": "/api/yt/mock/api/v4/get",
+   "query": "",
+   "request_body": {
+    "path": "//home/iceberg/warehouse/trips/@has_row_level_ace"
+   },
+   "status": 200,
+   "response_body": {
+    "value": false
+   }
+  }
+ },
+ {
+  "signature": "[browser] POST /api/yt/mock/api/v3/read_table params(dump_error_into_response,omit_inaccessible_columns,omit_inaccessible_rows,output_format,suppress_access_tracking,table_reader) of=web_json",
+  "count": 9,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "POST",
+   "path": "/api/yt/mock/api/v3/read_table",
+   "query": "",
+   "request_body": {
+    "table_reader": {
+     "workload_descriptor": {
+      "category": "user_interactive"
+     }
+    },
+    "output_format": {
+     "$value": "web_json",
+     "$attributes": {
+      "field_weight_limit": 1024,
+      "max_selected_column_count": 50,
+      "max_all_column_names_count": 3000,
+      "column_names": []
+     }
+    },
+    "path": "//home/iceberg/warehouse/trips[#0:#0]",
+    "dump_error_into_response": true,
+    "omit_inaccessible_columns": true,
+    "omit_inaccessible_rows": true,
+    "suppress_access_tracking": "true"
+   },
+   "status": 200,
+   "response_body": {
+    "rows": [],
+    "incomplete_columns": "true",
+    "incomplete_all_column_names": "false",
+    "all_column_names": [
+     "city",
+     "distance_km",
+     "is_completed",
+     "started_at",
+     "trip_id"
+    ]
+   }
+  }
+ },
+ {
+  "signature": "[browser] POST /api/yt/mock/api/v3/get @path params(suppress_access_tracking)",
+  "count": 1,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "POST",
+   "path": "/api/yt/mock/api/v3/get",
+   "query": "",
+   "request_body": {
+    "path": "//home/iceberg/warehouse/trips/@path",
+    "suppress_access_tracking": "true"
+   },
+   "status": 200,
+   "response_body": "//home/iceberg/warehouse/trips"
+  }
+ },
+ {
+  "signature": "[browser] POST /api/yt/mock/api/v3/get @(all) params(output_format,suppress_access_tracking) of=json",
+  "count": 2,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "POST",
+   "path": "/api/yt/mock/api/v3/get",
+   "query": "",
+   "request_body": {
+    "path": "//home/iceberg/warehouse/trips/@",
+    "output_format": {
+     "$value": "json",
+     "$attributes": {
+      "stringify": true,
+      "annotate_with_types": true
+     }
+    },
+    "suppress_access_tracking": "true"
+   },
+   "status": 200,
+   "response_body": {
+    "id": {
+     "$type": "string",
+     "$value": "0-5-10191-abc5"
+    },
+    "type": {
+     "$type": "string",
+     "$value": "table"
+    },
+    "creation_time": {
+     "$type": "string",
+     "$value": "2026-07-25T10:00:00.000000Z"
+    },
+    "modification_time": {
+     "$type": "string",
+     "$value": "2026-07-25T10:00:00.000000Z"
+    },
+    "access_time": {
+     "$type": "string",
+     "$value": "2026-07-25T10:00:00.000000Z"
+    },
+    "account": {
+     "$type": "string",
+     "$value": "default"
+    },
+    "owner": {
+     "$type": "string",
+     "$value": "iceberg"
+    },
+    "acl": [],
+    "inherit_acl": {
+     "$type": "boolean",
+     "$value": "true"
+    },
+    "effective_acl": [],
+    "revision": {
+     "$type": "int64",
+     "$value": "1"
+    },
+    "attribute_revision": {
+     "$type": "int64",
+     "$value": "1"
+    },
+    "content_revision": {
+     "$type": "int64",
+     "$value": "1"
+    },
+    "opaque": {
+     "$type": "boolean",
+     "$value": "false"
+    },
+    "has_row_level_ace": {
+     "$type": "boolean",
+     "$value": "false"
+    },
+    "path": {
+     "$type": "string",
+     "$value": "//home/iceberg/warehouse/trips"
+    },
+    "dynamic": {
+     "$type": "boolean",
+     "$value": "false"
+    },
+    "sorted": {
+     "$type": "boolean",
+     "$value": "true"
+    },
+    "key_columns": [
+     {
+      "$type": "string",
+      "$value": "trip_id"
+     }
+    ],
+    "sorted_by": [
+     {
+      "$type": "string",
+      "$value": "trip_id"
+     }
+    ],
+    "schema_mode": {
+     "$type": "string",
+     "$value": "strong"
+    },
+    "row_count": {
+     "$type": "int64",
+     "$value": "250"
+    },
+    "chunk_count": {
+     "$type": "int64",
+     "$value": "1"
+    },
+    "chunk_row_count": {
+     "$type": "int64",
+     "$value": "250"
+    },
+    "data_weight": {
+     "$type": "int64",
+     "$value": "16000"
+    },
+    "compressed_data_size": {
+     "$type": "int64",
+     "$value": "8000"
+    },
+    "uncompressed_data_size": {
+     "$type": "int64",
+     "$value": "16000"
+    },
+    "resource_usage": {
+     "disk_space": {
+      "$type": "int64",
+      "$value": "16000"
+     },
+     "chunk_count": {
+      "$type": "int64",
+      "$value": "1"
+     },
+     "node_count": {
+      "$type": "int64",
+      "$value": "1"
+     }
+    },
+    "compression_codec": {
+     "$type": "string",
+     "$value": "lz4"
+    },
+    "erasure_codec": {
+     "$type": "string",
+     "$value": "none"
+    },
+    "optimize_for": {
+     "$type": "string",
+     "$value": "scan"
+    },
+    "in_memory_mode": {
+     "$type": "string",
+     "$value": "none"
+    },
+    "tablet_state": {
+     "$type": "string",
+     "$value": "none"
+    },
+    "schema": {
+     "$attributes": {
+      "strict": {
+       "$type": "boolean",
+       "$value": "true"
+      },
+      "unique_keys": {
+       "$type": "boolean",
+       "$value": "false"
+      }
+     },
+     "$value": [
+      {
+       "name": {
+        "$type": "string",
+        "$value": "trip_id"
+       },
+       "type": {
+        "$type": "string",
+        "$value": "int64"
+       },
+       "type_v3": {
+        "type_name": {
+         "$type": "string",
+         "$value": "optional"
+        },
+        "item": {
+         "$type": "string",
+         "$value": "int64"
+        }
+       },
+       "sort_order": {
+        "$type": "string",
+        "$value": "ascending"
+       }
+      },
+      {
+       "name": {
+        "$type": "string",
+        "$value": "city"
+       },
+       "type": {
+        "$type": "string",
+        "$value": "string"
+       },
+       "type_v3": {
+        "type_name": {
+         "$type": "string",
+         "$value": "optional"
+        },
+        "item": {
+         "$type": "string",
+         "$value": "string"
+        }
+       }
+      },
+      {
+       "name": {
+        "$type": "string",
+        "$value": "distance_km"
+       },
+       "type": {
+        "$type": "string",
+        "$value": "double"
+       },
+       "type_v3": {
+        "type_name": {
+         "$type": "string",
+         "$value": "optional"
+        },
+        "item": {
+         "$type": "string",
+         "$value": "double"
+        }
+       }
+      },
+      {
+       "name": {
+        "$type": "string",
+        "$value": "started_at"
+       },
+       "type": {
+        "$type": "string",
+        "$value": "string"
+       },
+       "type_v3": {
+        "type_name": {
+         "$type": "string",
+         "$value": "optional"
+        },
+        "item": {
+         "$type": "string",
+         "$value": "string"
+        }
+       }
+      },
+      {
+       "name": {
+        "$type": "string",
+        "$value": "is_completed"
+       },
+       "type": {
+        "$type": "string",
+        "$value": "boolean"
+       },
+       "type_v3": {
+        "type_name": {
+         "$type": "string",
+         "$value": "optional"
+        },
+        "item": {
+         "$type": "string",
+         "$value": "bool"
+        }
+       }
+      }
+     ]
+    }
+   }
+  }
+ },
+ {
+  "signature": "[browser] POST /api/yt/mock/api/v3/get @opaque_attribute_keys params(suppress_access_tracking)",
+  "count": 2,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "POST",
+   "path": "/api/yt/mock/api/v3/get",
+   "query": "",
+   "request_body": {
+    "path": "//home/iceberg/warehouse/trips/@opaque_attribute_keys",
+    "suppress_access_tracking": "true"
+   },
+   "status": 200,
+   "response_body": []
+  }
+ },
+ {
+  "signature": "[browser] POST /api/yt/mock/api/v3/get @user_attributes params(output_format,suppress_access_tracking) of=json",
+  "count": 1,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "POST",
+   "path": "/api/yt/mock/api/v3/get",
+   "query": "",
+   "request_body": {
+    "path": "//home/iceberg/warehouse/trips/@user_attributes",
+    "output_format": {
+     "$value": "json",
+     "$attributes": {
+      "stringify": true,
+      "annotate_with_types": true
+     }
+    },
+    "suppress_access_tracking": "true"
+   },
+   "status": 200,
+   "response_body": {}
+  }
+ },
+ {
+  "signature": "[browser] POST /api/yt/mock/api/v3/execute_batch batch[get:@acl,get:@effective_acl,get:@revision]",
+  "count": 1,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "POST",
+   "path": "/api/yt/mock/api/v3/execute_batch",
+   "query": "",
+   "request_body": {
+    "requests": [
+     {
+      "command": "get",
+      "parameters": {
+       "path": "//home/iceberg/warehouse/trips/@effective_acl"
+      }
+     },
+     {
+      "command": "get",
+      "parameters": {
+       "path": "//home/iceberg/warehouse/trips/@acl"
+      }
+     },
+     {
+      "command": "get",
+      "parameters": {
+       "path": "//home/iceberg/warehouse/trips/@revision"
+      }
+     }
+    ]
+   },
+   "status": 200,
+   "response_body": [
+    {
+     "output": []
+    },
+    {
+     "output": []
+    },
+    {
+     "output": 1
+    }
+   ]
+  }
+ },
+ {
+  "signature": "[browser] POST /api/yt/mock/api/v3/get @inherit_acl params(suppress_access_tracking)",
+  "count": 1,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "POST",
+   "path": "/api/yt/mock/api/v3/get",
+   "query": "",
+   "request_body": {
+    "path": "//home/iceberg/warehouse/trips/@inherit_acl",
+    "suppress_access_tracking": "true"
+   },
+   "status": 200,
+   "response_body": true
+  }
+ },
+ {
+  "signature": "[browser] POST /api/yt/mock/api/v3/execute_batch batch[]",
+  "count": 1,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "POST",
+   "path": "/api/yt/mock/api/v3/execute_batch",
+   "query": "",
+   "request_body": {
+    "requests": []
+   },
+   "status": 200,
+   "response_body": []
+  }
+ },
+ {
+  "signature": "[browser] POST /api/yt/mock/login params(password,username)",
+  "count": 1,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "POST",
+   "path": "/api/yt/mock/login",
+   "query": "",
+   "request_body": {
+    "username": "iceberg",
+    "password": "iceberg"
+   },
+   "status": 200,
+   "response_body": null
+  }
+ },
+ {
+  "signature": "[browser] GET /api/clusters/versions",
+  "count": 1,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "GET",
+   "path": "/api/clusters/versions",
+   "query": "",
+   "request_body": null,
+   "status": 200,
+   "response_body": null
+  }
+ },
+ {
+  "signature": "[browser] GET /api/clusters/auth-status",
+  "count": 1,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "GET",
+   "path": "/api/clusters/auth-status",
+   "query": "",
+   "request_body": null,
+   "status": 200,
+   "response_body": null
+  }
+ },
+ {
+  "signature": "[browser] POST /api/yt/logout",
+  "count": 1,
+  "statuses": [
+   404
+  ],
+  "example": {
+   "method": "POST",
+   "path": "/api/yt/logout",
+   "query": "",
+   "request_body": null,
+   "status": 404,
+   "response_body": null
+  }
+ },
+ {
+  "signature": "[browser] GET /api/yt-proxy/mock/hosts-all",
+  "count": 1,
+  "statuses": [
+   200
+  ],
+  "example": {
+   "method": "GET",
+   "path": "/api/yt-proxy/mock/hosts-all",
+   "query": "",
+   "request_body": null,
+   "status": 200,
+   "response_body": null
+  }
+ }
+]

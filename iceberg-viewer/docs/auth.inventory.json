@@ -1,0 +1,609 @@
+[
+  {
+    "layer": "ui-server",
+    "method": "POST",
+    "path": "/api/yt/:ytAuthCluster/login",
+    "description": "Password login. Browser posts JSON credentials; the Node server converts them to HTTP Basic and forwards to the cluster proxy's /login. Relays the proxy's Set-Cookie and additionally duplicates YTCypressCookie under the per-cluster name <cluster>_YTCypressCookie. Route is flagged ui:true so an auth failure never turns into a 401 redirect.",
+    "request": {
+      "headers": {"Content-Type": "application/json", "Origin": "http://ui.example.com"},
+      "params": {"ytAuthCluster": "cluster id from clusters-config.json"},
+      "body": "{\"username\": \"admin\", \"password\": \"secret\"} - raw Buffer, body parsers are disabled for /api/yt/* (configs/common.ts:13-41), handler does JSON.parse(req.body)"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "Set-Cookie": ["YTCypressCookie=<64 hex>; Expires=<RFC822>; HttpOnly; [Secure]; Path=/", "<cluster>_YTCypressCookie=<64 hex>; Expires=<RFC822>; HttpOnly; [Secure]; Path=/"],
+        "Content-Type": "application/json"
+      },
+      "body_schema": "empty body on success (the proxy replies with no payload). On failure the proxy's YT-error JSON is piped through: {code:int, message:string, attributes:object, inner_errors:array}. UI server maps proxy 401 -> 400 at login.ts:80-83, but pipeAxiosErrorOrFalse usually streams the proxy status/body verbatim."
+    },
+    "cookies": ["YTCypressCookie", "<ytAuthCluster>_YTCypressCookie"],
+    "needed_for_mock": true,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/server/routes.ts:61",
+      "ytsaurus-ui/packages/ui/src/server/controllers/login.ts:23-87",
+      "ytsaurus-ui/packages/ui/src/server/controllers/login.ts:57-63",
+      "ytsaurus-ui/packages/ui/src/server/utils/index.ts:234-236",
+      "ytsaurus-ui/packages/ui/src/ui/containers/Login/LoginFormPage/LoginFormPage.tsx:176-189",
+      "ytsaurus-ui/packages/ui/src/server/configs/common.ts:13-41"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "POST",
+    "path": "/api/yt/:ytAuthCluster/change-password",
+    "description": "Changes the current user's YT password. SHA-256s both passwords server-side, fetches login+csrf_token from the proxy's /auth/whoami, then calls the v4 driver command set_user_password with X-Csrf-Token.",
+    "request": {
+      "headers": {"Content-Type": "application/json"},
+      "params": {"ytAuthCluster": "cluster id"},
+      "body": "{\"newPassword\": \"...\", \"currentPassword\": \"...\"} - raw Buffer, JSON.parse'd at login.ts:128"
+    },
+    "response": {
+      "status": 200,
+      "headers": {"Content-Type": "application/json"},
+      "body_schema": "{\"result\": <driver result, empty for set_user_password>}; errors: {message:string} or YT error JSON with status 500"
+    },
+    "cookies": ["<ytAuthCluster>_YTCypressCookie (read to build the upstream Cookie header)"],
+    "needed_for_mock": false,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/server/routes.ts:77",
+      "ytsaurus-ui/packages/ui/src/server/controllers/login.ts:120-168",
+      "ytsaurus-ui/packages/ui/src/ui/containers/Login/ChangePasswordFormPage/ChangePasswordFormPage.tsx:159-172"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET",
+    "path": "/api/yt/logout",
+    "description": "Logout. If OAuth is configured and the user has OAuth cookies, redirects to the IdP logout URL; otherwise (when allowPasswordAuth is on) deletes YTCypressCookie and every <cluster>_YTCypressCookie, then redirects to /. The cluster-side session is NOT revoked - the proxy has no /logout endpoint.",
+    "request": {"headers": {}, "params": {}, "body": "none"},
+    "response": {
+      "status": 302,
+      "headers": {
+        "Location": "/",
+        "Set-Cookie": ["YTCypressCookie=deleted; Path=/; Max-Age=0;", "<cluster>_YTCypressCookie=deleted; Path=/; Max-Age=0;"]
+      },
+      "body_schema": "empty (redirect)"
+    },
+    "cookies": ["YTCypressCookie", "<cluster>_YTCypressCookie", "yt_oauth_access_token", "yt_oauth_refresh_token"],
+    "needed_for_mock": false,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/server/routes.ts:62",
+      "ytsaurus-ui/packages/ui/src/server/controllers/logout.ts:5-12",
+      "ytsaurus-ui/packages/ui/src/server/components/yt-auth.ts:11-22",
+      "ytsaurus-ui/packages/ui/src/ui/containers/AppNavigation/AppNavigationComponent.tsx:192"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET",
+    "path": "/api/cluster-info/:ytAuthCluster",
+    "description": "The endpoint through which the browser learns who it is and gets the CSRF token. Server-side it runs GET <proxy>/auth/whoami and GET <proxy>/version concurrently (Promise.allSettled). The client stores token.csrf_token in the JS cookie ytfront_<cluster>_xsrf_token and sets global.login from token.login. A missing csrf_token or a tokenError makes the client render PRELOAD_ERROR.AUTHENTICATION and refuse the cluster page.",
+    "request": {
+      "headers": {"Cookie": "<cluster>_YTCypressCookie=<value>"},
+      "params": {"ytAuthCluster": "cluster id"},
+      "body": "none"
+    },
+    "response": {
+      "status": 200,
+      "headers": {"Content-Type": "application/json", "x-yt-ui-cluster-name": "<cluster> (set by the auth middleware)"},
+      "body_schema": "{token?: {login: string, csrf_token: string, realm?: string, real_login?: string}, version?: string, tokenError?: {message,code,inner_errors}, versionError?: {message,code,inner_errors}}"
+    },
+    "cookies": ["<ytAuthCluster>_YTCypressCookie (in)", "ytfront_<cluster>_xsrf_token (set later by client JS)"],
+    "needed_for_mock": true,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/server/routes.ts:56",
+      "ytsaurus-ui/packages/ui/src/server/controllers/cluster-info.ts:5-20",
+      "ytsaurus-ui/packages/ui/src/server/components/cluster-queries.ts:122-155",
+      "ytsaurus-ui/packages/ui/src/ui/store/actions/cluster-params.ts:216-273",
+      "ytsaurus-ui/packages/ui/src/ui/utils/index.ts:252-254"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET",
+    "path": "/api/clusters/auth-status",
+    "description": "Per-cluster authorization badge for the clusters menu. Pure cookie-presence check with no upstream call. When allowPasswordAuth is off every cluster is hard-coded to authorized:true.",
+    "request": {"headers": {"Cookie": "<cluster>_YTCypressCookie=<value>"}, "params": {}, "body": "none"},
+    "response": {
+      "status": 200,
+      "headers": {"Content-Type": "application/json"},
+      "body_schema": "{\"<clusterId>\": {\"authorized\": boolean}, ...}"
+    },
+    "cookies": ["<cluster>_YTCypressCookie"],
+    "needed_for_mock": false,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/server/routes.ts:59",
+      "ytsaurus-ui/packages/ui/src/server/controllers/clusters.ts:16-42",
+      "ytsaurus-ui/packages/ui/src/ui/store/actions/clusters-menu.ts:43-57",
+      "ytsaurus-ui/packages/ui/src/ui/containers/ClustersMenu/ClustersMenuBody.tsx:41,107"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET",
+    "path": "/oauth/login",
+    "description": "Starts the OIDC authorization-code flow. Sets a cookie named state_<uuid> containing {retPath: <pathname+search of Referer>} and 302s to the IdP authorization endpoint. Only wired when ytOAuthSettings is fully configured (baseURL, authPath, tokenPath, clientId, clientSecret).",
+    "request": {"headers": {"Referer": "<current UI url>"}, "params": {}, "body": "none"},
+    "response": {
+      "status": 302,
+      "headers": {
+        "Location": "<baseURL><authPath>?response_type=code&client_id=..&scope=..&redirect_uri=<base>/api/oauth/callback&state=state_<uuid>",
+        "Set-Cookie": ["state_<uuid>=j:{\"retPath\":\"/cluster/navigation\"}; Path=/"]
+      },
+      "body_schema": "empty (redirect)"
+    },
+    "cookies": ["state_<uuid>"],
+    "needed_for_mock": false,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/server/routes.ts:64",
+      "ytsaurus-ui/packages/ui/src/server/controllers/oauth-login.ts:9-11",
+      "ytsaurus-ui/packages/ui/src/server/components/oauth.ts:82-103"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET",
+    "path": "/api/oauth/callback",
+    "description": "OIDC redirect target. Exchanges ?code for tokens via POST <baseURL><tokenPath> (grant_type=authorization_code), stores them in HttpOnly Secure cookies and redirects to the retPath saved under the state cookie.",
+    "request": {
+      "headers": {},
+      "params": {"code": "authorization code (query)", "state": "state_<uuid> (query, optional)"},
+      "body": "none"
+    },
+    "response": {
+      "status": 302,
+      "headers": {
+        "Location": "<retPath or />",
+        "Set-Cookie": ["yt_oauth_access_token=<jwt>; Max-Age=<expires_in>; HttpOnly; Secure", "yt_oauth_refresh_token=<jwt>; Max-Age=<refresh_expires_in>; HttpOnly; Secure"]
+      },
+      "body_schema": "empty (redirect); on failure 500 with the error message as text/plain"
+    },
+    "cookies": ["yt_oauth_access_token", "yt_oauth_refresh_token"],
+    "needed_for_mock": false,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/server/routes.ts:65",
+      "ytsaurus-ui/packages/ui/src/server/controllers/oauth-login.ts:18-41",
+      "ytsaurus-ui/packages/ui/src/server/components/oauth.ts:66-79,146-170",
+      "ytsaurus-ui/packages/ui/src/shared/constants/index.ts:5-6"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET",
+    "path": "/api/oauth/logout/callback",
+    "description": "Post-logout redirect target for the IdP. Clears both OAuth cookies and redirects to /.",
+    "request": {"headers": {}, "params": {}, "body": "none"},
+    "response": {
+      "status": 302,
+      "headers": {"Location": "/", "Set-Cookie": ["yt_oauth_access_token=; Expires=Thu, 01 Jan 1970 00:00:00 GMT", "yt_oauth_refresh_token=; Expires=Thu, 01 Jan 1970 00:00:00 GMT"]},
+      "body_schema": "empty (redirect)"
+    },
+    "cookies": ["yt_oauth_access_token", "yt_oauth_refresh_token"],
+    "needed_for_mock": false,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/server/routes.ts:66",
+      "ytsaurus-ui/packages/ui/src/server/controllers/oauth-login.ts:13-16",
+      "ytsaurus-ui/packages/ui/src/server/components/oauth.ts:61-64"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET|POST|PUT",
+    "path": "/api/yt/:ytAuthCluster/api/:version/:command",
+    "description": "Generic authenticated pass-through to the cluster proxy's /api/<version>/<command>. Strips the browser's host/cookie/X-Custom-Request-Id headers, forwards everything else (including X-Csrf-Token), and injects the credential header built by the auth middleware (Cookie: YTCypressCookie=<secret> or Cookie: access_token=<oauth>, or nothing when the cluster's authentication is 'none'). Adds X-YT-Correlation-Id and X-YT-Suppress-Redirect: 1. Heavy commands are first routed via GET <proxy>/hosts.",
+    "request": {
+      "headers": {
+        "Cookie": "<cluster>_YTCypressCookie=<value> (browser side; replaced upstream)",
+        "X-Csrf-Token": "<csrf_token> - set by axios from cookie ytfront_<cluster>_xsrf_token, forwarded verbatim",
+        "X-Custom-Request-Id": "optional, consumed by the UI server for stats and NOT forwarded",
+        "X-YT-Parameters / X-YT-Input-Format / X-YT-Output-Format": "forwarded as-is"
+      },
+      "params": {"ytAuthCluster": "cluster id", "version": "v3|v4", "command": "driver command name, validated against the javascript-wrapper command table + {get_job_stderr,get_job_input,get_job_fail_context}"},
+      "body": "raw passthrough (Buffer)"
+    },
+    "response": {
+      "status": 200,
+      "headers": {"(all proxy headers except content-length, vary, www-authenticate)": "", "x-yt-ui-cluster-name": "<cluster>"},
+      "body_schema": "streamed proxy response verbatim; on auth failure the UI server answers 401 {message:string} before ever contacting the proxy"
+    },
+    "cookies": ["<ytAuthCluster>_YTCypressCookie", "ytfront_<cluster>_xsrf_token"],
+    "needed_for_mock": true,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/server/routes.ts:82-84",
+      "ytsaurus-ui/packages/ui/src/server/controllers/yt-api.ts:27-141",
+      "ytsaurus-ui/packages/ui/src/server/controllers/yt-api.ts:104,107-121",
+      "ytsaurus-ui/packages/ui/src/ui/store/selectors/global/cluster.ts:40-46",
+      "javascript-wrapper/lib/core.js:197-211,248-272"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET",
+    "path": "/api/yt-proxy/:ytAuthCluster/:command",
+    "description": "Whitelisted pass-through to two non-/api proxy routes, with the user's credential header attached. command must be 'hosts-all' (-> /hosts/all) or 'internal-discover_versions' (-> /internal/discover_versions/v2).",
+    "request": {"headers": {"Cookie": "<cluster>_YTCypressCookie=<value>"}, "params": {"ytAuthCluster": "cluster id", "command": "hosts-all | internal-discover_versions"}, "body": "none"},
+    "response": {"status": 200, "headers": {}, "body_schema": "streamed proxy response verbatim; unknown command -> 500 {message:'Error: Unexpected action <cmd>'}"},
+    "cookies": ["<ytAuthCluster>_YTCypressCookie"],
+    "needed_for_mock": false,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/server/routes.ts:86",
+      "ytsaurus-ui/packages/ui/src/server/controllers/yt-proxy-api.ts:21-61"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET",
+    "path": "/api/cluster-params/:ytAuthCluster",
+    "description": "Preloaded cluster parameters. Uses the ROBOT credentials (Authorization: OAuth <ytInterfaceSecret.oauthToken or $YT_TOKEN>) or none when the cluster's authentication is 'none'. Issues a v3 execute_batch for //sys/media, //sys/scheduler/orchid/service/version, //sys/@ui_config, //sys/@ui_config_dev_overrides and the primary master version.",
+    "request": {"headers": {"Authorization": "OAuth <robot token> (omitted when authentication==='none')"}, "params": {"ytAuthCluster": "cluster id"}, "body": "none"},
+    "response": {"status": 200, "headers": {"Content-Type": "application/json"}, "body_schema": "{mediumList, schedulerVersion, masterVersion, uiConfig, uiDevConfig}"},
+    "cookies": [],
+    "needed_for_mock": true,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/server/routes.ts:57",
+      "ytsaurus-ui/packages/ui/src/server/controllers/cluster-params.ts:7-15",
+      "ytsaurus-ui/packages/ui/src/server/components/cluster-params.ts:37,60-180",
+      "ytsaurus-ui/packages/ui/src/server/components/requestsSetup.ts:84-111"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET",
+    "path": "/api/clusters/versions",
+    "description": "Fetches GET <proxy>/version for every configured cluster. No credentials are attached.",
+    "request": {"headers": {}, "params": {}, "body": "none"},
+    "response": {"status": 200, "headers": {"Content-Type": "application/json"}, "body_schema": "[{id: string, version?: string}]"},
+    "cookies": [],
+    "needed_for_mock": true,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/server/routes.ts:58",
+      "ytsaurus-ui/packages/ui/src/server/controllers/clusters.ts:6-12",
+      "ytsaurus-ui/packages/ui/src/server/components/cluster-queries.ts:72-100"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET|POST|PUT|DELETE",
+    "path": "/api/settings/:ytAuthCluster/:username[/:path]",
+    "description": "Remote user settings stored in Cypress. Uses the ROBOT credentials, not the user's. Inactive unless userSettingsConfig is set in the UI config; the client then falls back to localStorage.",
+    "request": {"headers": {"content-type": "application/json"}, "params": {"ytAuthCluster": "cluster id", "username": "login from /auth/whoami", "path": "settings key"}, "body": "{\"value\": <any>} for PUT"},
+    "response": {"status": 200, "headers": {"Content-Type": "application/json"}, "body_schema": "settings document or the driver result; errors as {message} / YT error JSON"},
+    "cookies": [],
+    "needed_for_mock": false,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/server/routes.ts:93-97",
+      "ytsaurus-ui/packages/ui/src/server/controllers/settings.ts:9-59",
+      "ytsaurus-ui/packages/ui/src/server/components/settings.ts:23-30",
+      "ytsaurus-ui/packages/ui/src/ui/common/utils/settings-remote-provider.ts:17-45"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET",
+    "path": "/ping",
+    "description": "Health check. The only route with authPolicy: AuthPolicy.disabled, i.e. it never runs the auth middleware.",
+    "request": {"headers": {}, "params": {}, "body": "none"},
+    "response": {"status": 200, "headers": {"Content-Type": "application/json"}, "body_schema": "{\"result\": \"pong\"}"},
+    "cookies": [],
+    "needed_for_mock": false,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/server/routes.ts:55",
+      "ytsaurus-ui/packages/ui/src/server/controllers/ping.ts:3-5"
+    ]
+  },
+  {
+    "layer": "ui-server",
+    "method": "GET",
+    "path": "/ , /:ytAuthCluster/* , /:ytAuthCluster/change-password/",
+    "description": "HTML entry points (ui:true). The rendered page inlines window.YT.parameters = {interface:{version}, login, authWay} and a __DATA__ JSON blob with allowPasswordAuth/allowOAuth/oauthButtonLabel. login comes from req.yt.login which the auth middleware filled from the proxy's /auth/whoami; in local-cluster mode it is hard-coded to 'root'. authWay is 'oauth' | 'passwd' | undefined. The client shows the login form iff allowPasswordAuth && (!login || showLoginDialog) (plus a ytAuthCluster requirement when authWay is set).",
+    "request": {"headers": {"Cookie": "<cluster>_YTCypressCookie=<value>"}, "params": {"ytAuthCluster": "cluster id"}, "body": "none"},
+    "response": {
+      "status": 200,
+      "headers": {"Content-Type": "text/html", "x-yt-ui-cluster-name": "<cluster>"},
+      "body_schema": "HTML with <script>window.YT = {...,{parameters:{interface:{version},login,authWay}}}</script> and <script id=\"__DATA__\">{allowPasswordAuth, allowOAuth, oauthButtonLabel, ytApiUseCORS, uiSettings, settings, ...}</script>"
+    },
+    "cookies": ["<ytAuthCluster>_YTCypressCookie"],
+    "needed_for_mock": true,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/server/routes.ts:50,53,54,127-132",
+      "ytsaurus-ui/packages/ui/src/server/controllers/home.ts:12-92",
+      "ytsaurus-ui/packages/ui/src/server/components/layout-config.ts:34-84",
+      "ytsaurus-ui/packages/ui/src/ui/store/selectors/global/index.ts:117-133",
+      "ytsaurus-ui/packages/ui/src/ui/containers/App/App.tsx:64,72-73"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "POST",
+    "path": "/login",
+    "description": "Cypress cookie login. Registered only when auth/cypress_cookie_manager is configured, and deliberately NOT wrapped in CORS. Accepts any HTTP method and branches purely on the presence of the Authorization header. Verifies sha256_hex(salt + sha256_hex(password)) against //sys/users/<user>/@hashed_password, then stores a session at //sys/cypress_cookies/<value>.",
+    "request": {
+      "headers": {"Authorization": "Basic base64(username:password)"},
+      "params": {},
+      "body": "none - no JSON body is ever parsed"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "Set-Cookie": "YTCypressCookie=<64 hex chars>; Expires=<RFC822>; Secure; HttpOnly; [Domain=<d>; ]Path=/ (Secure and HttpOnly default true; Domain only if configured; NO SameSite ever)",
+        "Location": "<redirect_url> only when cookie_generator/redirect_url is set, together with status 301"
+      },
+      "body_schema": "empty on success. Missing Authorization -> 401 + 'WWW-Authenticate: Basic', empty body. Malformed header -> 400 with YT error JSON. Wrong credentials -> 401 + 'WWW-Authenticate: Basic' + {\"code\":1,\"message\":\"Incorrect login or password\",\"attributes\":{...},\"inner_errors\":[]}"
+    },
+    "cookies": ["YTCypressCookie"],
+    "needed_for_mock": true,
+    "source_refs": [
+      "yt/yt/server/http_proxy/bootstrap.cpp:630-632",
+      "yt/yt/server/http_proxy/bootstrap.cpp:282-297",
+      "yt/yt/library/auth_server/cypress_cookie_login.cpp:35-243",
+      "yt/yt/library/auth_server/cypress_cookie_login.cpp:98-131,137-164,166-222,224-228",
+      "yt/yt/library/auth_server/cypress_cookie.cpp:15-33,47-53",
+      "yt/yt/library/auth_server/public.h:139",
+      "yt/yt/library/auth_server/cypress_login_authenticator.cpp:39-64",
+      "yt/yt/core/crypto/crypto.cpp:260-270",
+      "yt/yt/library/auth_server/config.cpp:443-460",
+      "yt/yt/tests/integration/proxies/test_cypress_cookie_auth.py:56-59,110-129"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "GET",
+    "path": "/auth/whoami",
+    "description": "The identity + CSRF-token endpoint. Authenticates with disableCsrfTokenCheck=true, so no X-Csrf-Token is required. This is the single gate the UI Node server uses to decide whether a session is valid; the UI reads only 'login' and 'csrf_token' from the response.",
+    "request": {
+      "headers": {
+        "Cookie": "YTCypressCookie=<value> (or Session_id/sessionid2/sessguard/access_token/yc_session)",
+        "Authorization": "OAuth <token> | Bearer <token> - alternative to the cookie",
+        "X-YT-Correlation-Id": "<requestId>.getXSRFToken - set by the UI server, purely for tracing"
+      },
+      "params": {},
+      "body": "none"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "Content-Type": "application/json",
+        "Pragma": "nocache",
+        "Expires": "Thu, 01 Jan 1970 00:00:01 GMT",
+        "Cache-Control": "max-age=0, must-revalidate, proxy-revalidate, no-cache, no-store, private",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "SAMEORIGIN",
+        "X-DNS-Prefetch-Control": "off"
+      },
+      "body_schema": "{\"login\": string, \"realm\": string, \"real_login\": string, \"csrf_token\": string}. csrf_token = hex(hmac_sha256(csrf_secret, \"<login>:<unixtime>\")) + \":\" + <unixtime>. On failure: 401 for InvalidCredentials(111)/InvalidCsrfToken(110)/AuthenticationError(900), otherwise 503, with X-YT-Error/X-YT-Response-Code/X-YT-Response-Message headers and a serialized TError JSON body. No WWW-Authenticate."
+    },
+    "cookies": ["YTCypressCookie"],
+    "needed_for_mock": true,
+    "source_refs": [
+      "yt/yt/server/http_proxy/bootstrap.cpp:625",
+      "yt/yt/server/http_proxy/http_authenticator.cpp:67-94",
+      "yt/yt/server/http_proxy/http_authenticator.cpp:293-307",
+      "yt/yt/library/auth_server/helpers.cpp:160-164",
+      "yt/yt/library/auth_server/credentials.cpp:11-14",
+      "yt/yt/core/http/helpers.cpp:321-331",
+      "yt/yt/library/auth_server/config.cpp:519-528",
+      "ytsaurus-ui/packages/ui/src/server/components/cluster-queries.ts:25-70"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "GET|POST|PUT",
+    "path": "/api/:version/:command",
+    "description": "The driver command endpoint (version is v3 or v4, one handler for the whole /api/ subtree). Credential resolution order: (1) if auth/require_authentication is false -> user is 'root' or whatever X-YT-User-Name says, no credential is inspected; (2) Authorization: OAuth|Bearer <token>; (3) Cookie (YTCypressCookie / Session_id / sessionid2 / sessguard / access_token / yc_session) - and for non-GET methods an X-Csrf-Token header is REQUIRED and validated; (4) X-Ya-User-Ticket; (5) X-Ya-Service-Ticket; otherwise InvalidCredentials 'Client is missing credentials'. Bare /api returns [\"v3\",\"v4\"]; /api/v4/ with an empty command dumps the command descriptors; command names must match [A-Za-z_]+.",
+    "request": {
+      "headers": {
+        "Cookie": "YTCypressCookie=<value>",
+        "Authorization": "OAuth <token> | Bearer <token>",
+        "X-Csrf-Token": "<csrf_token from /auth/whoami> - required only for cookie auth on non-GET",
+        "X-YT-User-Name": "impersonation (needs superuser/whitelist) or free user selection when authentication is disabled",
+        "X-YT-Suppress-Redirect": "1 - set by both the UI server and the javascript-wrapper",
+        "X-YT-Parameters / X-YT-Input-Format / X-YT-Output-Format": "command parameters and formats"
+      },
+      "params": {"version": "v3|v4", "command": "driver command name"},
+      "body": "command input (JSON/YSON) for POST/PUT"
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "X-YT-Error": "<compact TError JSON> (on error, or in trailers if the body was already streaming)",
+        "X-YT-Error-Content-Type": "application/json",
+        "X-YT-Response-Code": "<int>",
+        "X-YT-Response-Message": "<escaped message>",
+        "Trailer": "X-YT-Error, X-YT-Response-Code, X-YT-Response-Message",
+        "Set-Cookie": "refreshed YTCypressCookie when within cookie_renewal_period of expiry"
+      },
+      "body_schema": "command output. 401 for InvalidCredentials/InvalidCsrfToken/AuthenticationError; 403 'User validation failed' or 'User %Qv is not allowed to access proxy with role %Qv'; 400 for generic command errors (TContext::Finalize forces 400); 503 for any other auth-layer error including 'Malformed CSRF token'."
+    },
+    "cookies": ["YTCypressCookie", "access_token", "Session_id", "sessionid2", "sessguard", "yc_session"],
+    "needed_for_mock": true,
+    "source_refs": [
+      "yt/yt/server/http_proxy/bootstrap.cpp:626",
+      "yt/yt/server/http_proxy/context.cpp:138-197",
+      "yt/yt/server/http_proxy/context.cpp:199-254",
+      "yt/yt/server/http_proxy/http_authenticator.cpp:96-280",
+      "yt/yt/server/http_proxy/http_authenticator.cpp:101-113,126-199,201-237,277-279",
+      "yt/yt/server/http_proxy/http_authenticator.cpp:214-232",
+      "yt/yt/library/auth_server/helpers.cpp:166-193",
+      "yt/yt/library/auth_server/public.h:136-141",
+      "yt/yt/library/auth_server/cypress_cookie_authenticator.cpp:71-80,120-132,139-184",
+      "yt/yt/core/http/helpers.cpp:51-74",
+      "yt/yt/core/misc/error.cpp:329,363-373",
+      "yt/yt/server/http_proxy/context.cpp:846,1104-1135"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "GET|POST",
+    "path": "/api/v4/get_current_user",
+    "description": "Driver whoami command, registered for both v3 and v4. Returns only the authenticated user name, no CSRF token. NOT used by the YTsaurus UI - the UI uses /auth/whoami instead because that is the only endpoint that mints a CSRF token.",
+    "request": {"headers": {"Cookie": "YTCypressCookie=<value>"}, "params": {}, "body": "none"},
+    "response": {"status": 200, "headers": {"Content-Type": "application/json"}, "body_schema": "{\"user\": \"<name>\"}"},
+    "cookies": ["YTCypressCookie"],
+    "needed_for_mock": false,
+    "source_refs": [
+      "yt/yt/client/driver/driver.cpp:370",
+      "yt/yt/client/driver/etc_commands.h:36-48",
+      "yt/yt/client/api/security_client.cpp:9-16",
+      "yt/yt/ytlib/api/native/client_security_impl.cpp:45-49"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "POST",
+    "path": "/api/v4/set_user_password",
+    "description": "Changes a user's password. Called by the UI server's change-password handler with X-Csrf-Token set from /auth/whoami. Passwords are always SHA-256 hex, never plaintext.",
+    "request": {
+      "headers": {"Cookie": "YTCypressCookie=<value>", "X-Csrf-Token": "<csrf_token>", "Content-Type": "application/json"},
+      "params": {"user": "required", "current_password_sha256": "default \"\"", "new_password_sha256": "required", "password_is_temporary": "bool, default false"},
+      "body": "{\"user\":\"admin\",\"new_password_sha256\":\"<hex>\",\"current_password_sha256\":\"<hex>\"}"
+    },
+    "response": {"status": 200, "headers": {"Content-Type": "application/json"}, "body_schema": "empty output"},
+    "cookies": ["YTCypressCookie"],
+    "needed_for_mock": false,
+    "source_refs": [
+      "yt/yt/client/driver/driver.cpp:372",
+      "yt/yt/client/driver/authentication_commands.cpp:13-36",
+      "ytsaurus-ui/packages/ui/src/server/controllers/login.ts:133-164",
+      "ytsaurus-ui/packages/ui/tests/init-cluster-e2e/utils/add.user.sh:23-31"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "GET",
+    "path": "/api/v4/issue_token",
+    "description": "Issues a new YT token for a user. Declared as method GET in the javascript-wrapper command table, so it never triggers the proxy's cookie-auth CSRF requirement. Used by the UI 'Manage tokens' dialog.",
+    "request": {"headers": {"Cookie": "YTCypressCookie=<value>"}, "params": {"user": "required", "password_sha256": "default \"\"", "description": "optional"}, "body": "none"},
+    "response": {"status": 200, "headers": {"Content-Type": "application/json"}, "body_schema": "the token string as a JSON/YSON scalar"},
+    "cookies": ["YTCypressCookie"],
+    "needed_for_mock": false,
+    "source_refs": [
+      "yt/yt/client/driver/driver.cpp:373",
+      "yt/yt/client/driver/authentication_commands.cpp:41-62",
+      "javascript-wrapper/lib/commands/v4.js:169-174",
+      "ytsaurus-ui/packages/ui/src/ui/store/actions/manage-tokens/index.ts:57-73"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "GET",
+    "path": "/api/v4/revoke_token",
+    "description": "Revokes a previously issued token by its SHA-256 hash.",
+    "request": {"headers": {"Cookie": "YTCypressCookie=<value>"}, "params": {"user": "required", "password_sha256": "default \"\"", "token_sha256": "required"}, "body": "none"},
+    "response": {"status": 200, "headers": {"Content-Type": "application/json"}, "body_schema": "empty output"},
+    "cookies": ["YTCypressCookie"],
+    "needed_for_mock": false,
+    "source_refs": [
+      "yt/yt/client/driver/driver.cpp:374",
+      "yt/yt/client/driver/authentication_commands.cpp:67-84",
+      "javascript-wrapper/lib/commands/v4.js:165-168",
+      "ytsaurus-ui/packages/ui/src/ui/store/actions/manage-tokens/index.ts:75-98"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "GET",
+    "path": "/api/v4/list_user_tokens",
+    "description": "Lists a user's token hashes, optionally with metadata. Requires the user's password_sha256, which the UI obtains through the ManageTokens password modal (it re-validates the password by POSTing /api/yt/<cluster>/login first).",
+    "request": {"headers": {"Cookie": "YTCypressCookie=<value>"}, "params": {"user": "required", "password_sha256": "default \"\"", "with_metadata": "bool, default false"}, "body": "none"},
+    "response": {"status": 200, "headers": {"Content-Type": "application/json"}, "body_schema": "list of sha256 hex strings, or {\"<sha256>\": <metadata yson>} when with_metadata is true"},
+    "cookies": ["YTCypressCookie"],
+    "needed_for_mock": false,
+    "source_refs": [
+      "yt/yt/client/driver/driver.cpp:375",
+      "yt/yt/client/driver/authentication_commands.cpp:89-114",
+      "javascript-wrapper/lib/commands/v4.js:160-164",
+      "ytsaurus-ui/packages/ui/src/ui/store/actions/manage-tokens/index.ts:32-55",
+      "ytsaurus-ui/packages/ui/src/ui/containers/ManageTokens/ManageTokensPasswordModal/password-strategies.ts:6-16"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "POST",
+    "path": "/api/v3/execute_batch",
+    "description": "Batch command endpoint used by the UI server for cluster-params (with robot credentials) and by the browser for most page data. Not auth-specific, but a mock must serve it for any page to render.",
+    "request": {
+      "headers": {"Authorization": "OAuth <robot token> (server-side) or Cookie: YTCypressCookie=<value> (browser via the UI proxy)", "X-Csrf-Token": "<csrf_token> - required by the proxy for cookie auth because this is a POST"},
+      "params": {},
+      "body": "{\"requests\": [{\"command\": \"list\", \"parameters\": {\"path\": \"//sys/media\", ...}}, ...]}"
+    },
+    "response": {"status": 200, "headers": {"Content-Type": "application/json"}, "body_schema": "[{output?: any, error?: {code,message,attributes,inner_errors}}]"},
+    "cookies": ["YTCypressCookie"],
+    "needed_for_mock": true,
+    "source_refs": [
+      "ytsaurus-ui/packages/ui/src/server/components/cluster-params.ts:60-180",
+      "yt/yt/server/http_proxy/http_authenticator.cpp:214-232"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "GET",
+    "path": "/version",
+    "description": "Plain-text proxy version. Called without credentials by getVersions and getClusterInfo. A missing or unparseable version makes the client render PRELOAD_ERROR.CONNECTION and never reach the auth check.",
+    "request": {"headers": {}, "params": {}, "body": "none"},
+    "response": {"status": 200, "headers": {"Content-Type": "text/plain"}, "body_schema": "raw version string, matched by the client against /(\\d+)\\.(\\d+)\\.(\\d+)/"},
+    "cookies": [],
+    "needed_for_mock": true,
+    "source_refs": [
+      "yt/yt/server/http_proxy/bootstrap.cpp:638",
+      "yt/yt/server/http_proxy/bootstrap.cpp:467-484",
+      "ytsaurus-ui/packages/ui/src/server/components/cluster-queries.ts:72-100"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "GET",
+    "path": "/hosts",
+    "description": "Heavy-proxy discovery. The UI server calls it before forwarding any command whose javascript-wrapper descriptor has heavy:true, and uses res.data[0] as the target host. Skipped for local clusters or when disableHeavyProxies is set on the cluster config.",
+    "request": {"headers": {}, "params": {}, "body": "none"},
+    "response": {"status": 200, "headers": {"Content-Type": "application/json"}, "body_schema": "[\"host:port\", ...]"},
+    "cookies": [],
+    "needed_for_mock": true,
+    "source_refs": [
+      "yt/yt/server/http_proxy/bootstrap.cpp:627",
+      "ytsaurus-ui/packages/ui/src/server/controllers/yt-api.ts:92-101"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "GET",
+    "path": "/hosts/all",
+    "description": "Full proxy list, reachable from the browser only through the UI server's /api/yt-proxy/<cluster>/hosts-all whitelist. Used by the Components pages.",
+    "request": {"headers": {"Cookie": "YTCypressCookie=<value>"}, "params": {}, "body": "none"},
+    "response": {"status": 200, "headers": {"Content-Type": "application/json"}, "body_schema": "[{name, role, banned, ...}]"},
+    "cookies": ["YTCypressCookie"],
+    "needed_for_mock": false,
+    "source_refs": [
+      "yt/yt/server/http_proxy/bootstrap.cpp:627",
+      "ytsaurus-ui/packages/ui/src/server/controllers/yt-proxy-api.ts:21-24"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "GET",
+    "path": "/internal/discover_versions/v2",
+    "description": "Component versions, reachable through /api/yt-proxy/<cluster>/internal-discover_versions.",
+    "request": {"headers": {"Cookie": "YTCypressCookie=<value>"}, "params": {}, "body": "none"},
+    "response": {"status": 200, "headers": {"Content-Type": "application/json"}, "body_schema": "{details: [{address, type, version, start_time, ...}], summary: {...}}"},
+    "cookies": ["YTCypressCookie"],
+    "needed_for_mock": false,
+    "source_refs": [
+      "yt/yt/server/http_proxy/bootstrap.cpp:634",
+      "ytsaurus-ui/packages/ui/src/server/controllers/yt-proxy-api.ts:21-24"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "GET",
+    "path": "/ping",
+    "description": "Proxy liveness. Returns 503 when the coordinator marks the proxy unavailable. Not used by the UI.",
+    "request": {"headers": {}, "params": {}, "body": "none"},
+    "response": {"status": 200, "headers": {}, "body_schema": "empty; 503 ServiceUnavailable when the proxy is not available"},
+    "cookies": [],
+    "needed_for_mock": false,
+    "source_refs": [
+      "yt/yt/server/http_proxy/bootstrap.cpp:629",
+      "yt/yt/server/http_proxy/coordinator.cpp:660-670"
+    ]
+  }
+]

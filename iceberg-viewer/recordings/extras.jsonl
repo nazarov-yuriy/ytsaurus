@@ -1,0 +1,5 @@
+{"method": "POST", "path": "/api/yt/mock/login", "query": "", "request_body": {"username": "iceberg", "password": "iceberg"}, "status": 200, "response_body": null}
+{"method": "GET", "path": "/api/clusters/versions", "query": "", "request_body": null, "status": 200, "response_body": null}
+{"method": "GET", "path": "/api/clusters/auth-status", "query": "", "request_body": null, "status": 200, "response_body": null}
+{"method": "POST", "path": "/api/yt/logout", "query": "", "request_body": null, "status": 404, "response_body": null}
+{"method": "GET", "path": "/api/yt-proxy/mock/hosts-all", "query": "", "request_body": null, "status": 200, "response_body": null}

@@ -1,0 +1,10 @@
+# Shallow clone of https://github.com/ytsaurus/ytsaurus-ui — not ours to vendor.
+# Re-create with: git clone --depth 1 https://github.com/ytsaurus/ytsaurus-ui.git
+ytsaurus-ui/
+
+# Regenerable from docs/*.inventory.json + recordings/ via db/sync.py load and
+# recordings/analyze.py
+db/api_catalog.sqlite
+
+# Raw Playwright HAR (huge; the extracted browser-traffic.jsonl is committed instead)
+recordings/*.har

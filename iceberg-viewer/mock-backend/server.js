@@ -1,0 +1,444 @@
+// Mock YTsaurus HTTP proxy serving in-RAM fake data to ytsaurus-ui.
+// Run: node server.js [port]   (default 8000)
+//
+// Implements the minimal command surface for: login, navigation browsing and
+// static-table viewing. Unknown requests are logged loudly (watch the console
+// while clicking around the UI to discover missing endpoints).
+
+'use strict';
+
+const http = require('http');
+const fs = require('fs');
+const {URL} = require('url');
+const {CLUSTER_ID, resolve, users} = require('./data');
+const {annotated, typedAnnotate, webJsonBody} = require('./webjson');
+
+const PORT = Number(process.argv[2] || 8000);
+const HOST = process.env.MOCK_HOST || `localhost:${PORT}`;
+// When MOCK_RECORD is set, every request/response pair is appended as JSONL.
+const RECORD_PATH = process.env.MOCK_RECORD || null;
+
+function record(entry) {
+  if (!RECORD_PATH) return;
+  fs.appendFileSync(RECORD_PATH, JSON.stringify(entry) + '\n');
+}
+
+// ---- helpers --------------------------------------------------------------
+
+function ytError(code, message, attributes = {}) {
+  return {code, message, attributes, inner_errors: []};
+}
+
+function sendJson(res, status, body, extraHeaders = {}) {
+  const data = JSON.stringify(body);
+  res.writeHead(status, {
+    'Content-Type': 'application/json',
+    'Content-Length': Buffer.byteLength(data),
+    ...extraHeaders,
+  });
+  res.end(data);
+}
+
+function sendYtError(res, status, err, extraHeaders = {}) {
+  sendJson(res, status, err, {
+    'X-YT-Error': JSON.stringify(err),
+    'X-YT-Response-Code': String(err.code),
+    'X-YT-Response-Message': err.message,
+    ...extraHeaders,
+  });
+}
+
+function corsHeaders(req) {
+  const origin = req.headers.origin;
+  if (!origin) return {};
+  return {
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Credentials': 'true',
+    'Access-Control-Allow-Methods': 'POST, PUT, GET, OPTIONS',
+    'Access-Control-Allow-Headers': [
+      'Content-Type', 'Accept', 'Authorization', 'Origin', 'Referer',
+      'X-Csrf-Token', 'X-YT-Parameters', 'X-YT-Parameters-0', 'X-YT-Parameters-1',
+      'X-YT-Response-Parameters', 'X-YT-Input-Format', 'X-YT-Output-Format',
+      'X-YT-Header-Format', 'X-YT-Suppress-Redirect', 'X-YT-Omit-Trailers',
+      'X-YT-Request-Format-Options', 'X-YT-Response-Format-Options',
+      'X-YT-Request-Id', 'X-YT-Correlation-Id', 'X-YT-Trace-Id', 'X-YT-User-Tag',
+    ].join(', '),
+    'Access-Control-Expose-Headers': [
+      'Content-Type', 'X-YT-Error', 'X-YT-Response-Code', 'X-YT-Response-Message',
+      'X-YT-Request-Id', 'X-YT-Proxy', 'X-YT-Trace-Id',
+    ].join(', '),
+    'Access-Control-Max-Age': '3600',
+  };
+}
+
+function readBody(req) {
+  return new Promise((resolveBody) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => resolveBody(Buffer.concat(chunks)));
+  });
+}
+
+// Merge command parameters from query string, X-YT-Parameters header and JSON body.
+function collectParams(req, url, bodyBuf) {
+  const params = {};
+  for (const [k, v] of url.searchParams) params[k] = v;
+  const hdr = req.headers['x-yt-parameters'];
+  if (hdr) {
+    try {
+      Object.assign(params, JSON.parse(hdr));
+    } catch (e) {
+      log(`  !! failed to parse X-YT-Parameters as JSON: ${hdr.slice(0, 200)}`);
+    }
+  }
+  if (bodyBuf && bodyBuf.length) {
+    const ct = req.headers['content-type'] || '';
+    if (ct.includes('json') || !ct) {
+      try {
+        const body = JSON.parse(bodyBuf.toString('utf8'));
+        if (body && typeof body === 'object') Object.assign(params, body);
+      } catch (e) {
+        /* raw data body (e.g. write_table) — ignore */
+      }
+    }
+  }
+  return params;
+}
+
+function log(...args) {
+  console.log(new Date().toISOString().slice(11, 23), ...args);
+}
+
+// ---- auth -----------------------------------------------------------------
+
+const sessions = new Map(); // cookie value -> username
+
+function makeCookie(user) {
+  const value = `mock-${user}-${Math.random().toString(36).slice(2)}`;
+  sessions.set(value, user);
+  return value;
+}
+
+function csrfTokenFor(user) {
+  return `csrf-${user}`;
+}
+
+function authenticate(req) {
+  // Cookie-based (password login flow)
+  const cookies = Object.fromEntries(
+    (req.headers.cookie || '').split(';').map((p) => p.trim().split('=').map(decodeURIComponent))
+  );
+  const yc = cookies['YTCypressCookie'];
+  if (yc && sessions.has(yc)) return {user: sessions.get(yc), viaCookie: true};
+  // Token-based
+  const auth = req.headers.authorization || '';
+  if (auth.startsWith('OAuth ')) {
+    const token = auth.slice(6).trim();
+    if (token) return {user: token in users ? token : 'iceberg', viaCookie: false};
+  }
+  // Anonymous access: with `authentication: "none"` the UI node server sends no
+  // credentials at all (mirrors require_authentication=false → root login).
+  return {user: 'iceberg', viaCookie: false, anonymous: true};
+}
+
+function checkCsrf(req, auth) {
+  if (!auth || !auth.viaCookie) return true; // token auth needs no CSRF
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return true;
+  return req.headers['x-csrf-token'] === csrfTokenFor(auth.user);
+}
+
+// ---- command implementations ---------------------------------------------
+
+function attributesFor(node, requested) {
+  const all = node.attrs;
+  if (!requested) return {};
+  const keys = Array.isArray(requested) ? requested : requested.keys || [];
+  const out = {};
+  for (const k of keys) {
+    if (k in all && all[k] !== null && all[k] !== undefined) out[k] = all[k];
+  }
+  return out;
+}
+
+function nodeValue(node, params) {
+  // Structured value of a node for `get` (map children as dict, tables as entity).
+  if (node.kind === 'map_node') {
+    const out = {};
+    for (const [name, child] of Object.entries(node.children)) {
+      out[name] = {
+        $attributes: attributesFor(child, params.attributes),
+        $value: child.kind === 'map_node' && Object.keys(child.children).length === 0 ? {} : null,
+      };
+      if (child.kind === 'map_node') {
+        out[name].$value = {}; // do not expand deeply; UI lists children via `list`
+      }
+    }
+    return out;
+  }
+  return null; // tables/files are entities
+}
+
+const commands = {
+  get(params, auth) {
+    const r = resolve(params.path);
+    if (!r) throw {status: 400, err: ytError(500, `Error resolving path ${params.path}`, {path: params.path, code: 500})};
+    const {node, attrPath} = r;
+    if (attrPath !== null) {
+      if (attrPath === '') {
+        return {...node.attrs};
+      }
+      // Virtual attributes every Cypress node has (UI reads them on Attributes tabs).
+      const VIRTUAL = {opaque_attribute_keys: [], user_attributes: {}, user_attribute_keys: []};
+      const [head, ...rest] = attrPath.split('/');
+      let v = head in VIRTUAL && !(head in node.attrs) ? VIRTUAL[head] : node.attrs[head];
+      for (const k of rest) {
+        if (v && typeof v === 'object') v = ('$value' in v ? v.$value : v)[k];
+      }
+      if (v === undefined) {
+        throw {status: 400, err: ytError(500, `Attribute "${head}" is not found`, {code: 500})};
+      }
+      return v;
+    }
+    const value = nodeValue(node, params);
+    const attrs = attributesFor(node, params.attributes);
+    if (Object.keys(attrs).length) return {$attributes: attrs, $value: value};
+    return value;
+  },
+
+  list(params, auth) {
+    const r = resolve(params.path);
+    if (!r || r.node.kind !== 'map_node') {
+      throw {status: 400, err: ytError(500, `Error resolving path ${params.path}`, {path: params.path, code: 500})};
+    }
+    return Object.entries(r.node.children).map(([name, child]) => {
+      const attrs = attributesFor(child, params.attributes);
+      return Object.keys(attrs).length ? {$attributes: attrs, $value: name} : name;
+    });
+  },
+
+  exists(params) {
+    return Boolean(resolve(params.path));
+  },
+
+  read_table(params, auth) {
+    const r = resolve(stripRanges(params.path));
+    if (!r || r.node.kind !== 'table') {
+      throw {status: 400, err: ytError(500, `Error resolving path ${params.path}`, {code: 500})};
+    }
+    const {start, limit} = rangeOf(params.path);
+    const of = params.output_format;
+    const ofName = typeof of === 'string' ? of : of && of.$value;
+    const ofAttrs = (of && of.$attributes) || {};
+    const schema = r.node.attrs.schema.$value;
+    if (ofName === 'web_json') {
+      return webJsonBody(schema, r.node.rows, {
+        startRow: start,
+        rowLimit: limit ?? 50,
+        // column_names, when present, fully replaces max_selected_column_count.
+        columnNames: ofAttrs.column_names,
+        maxSelectedColumnCount: Number(ofAttrs.max_selected_column_count) || 50,
+        maxAllColumnNamesCount: Number(ofAttrs.max_all_column_names_count) || 2000,
+      });
+    }
+    // json format fallback: newline-delimited rows
+    return r.node.rows.slice(start, start + (limit ?? 50));
+  },
+
+  get_table_columnar_statistics(params) {
+    const paths = params.paths || [];
+    return paths.map(() => ({column_data_weights: {}, timestamp_total_weight: 0, legacy_chunks_data_weight: 0}));
+  },
+
+  // Authentication-ish commands
+  whoami(params, auth) {
+    return {login: auth.user, realm: 'mock'};
+  },
+
+  // Permission probes: allow everything (failures only produce error toasts anyway).
+  check_permission(params, auth) {
+    return {action: 'allow', object_id: '0-0-0-0', object_name: params.path, subject_id: '0-0-0-1', subject_name: auth.user};
+  },
+  check_permission_by_acl(params, auth) {
+    return {action: 'allow', subject_id: '0-0-0-1', subject_name: auth.user, missing_subjects: []};
+  },
+  get_supported_features() {
+    return {features: {compression_codecs: ['none', 'lz4'], erasure_codecs: ['none'], primitive_types: ['int64', 'uint64', 'double', 'boolean', 'string', 'any']}};
+  },
+
+  // Runs subrequests [{command, parameters}] and returns one result object each.
+  execute_batch(params, auth) {
+    return (params.requests || []).map((r) => {
+      const impl = commands[r.command];
+      if (!impl) {
+        return {error: ytError(1, `Command ${r.command} is not registered in batch`)};
+      }
+      try {
+        const output = impl(r.parameters || {}, auth);
+        return {output};
+      } catch (e) {
+        if (e && e.err) return {error: e.err};
+        return {error: ytError(1, String(e && e.message || e))};
+      }
+    });
+  },
+};
+
+// "//path[#10:#60]" → {path: "//path", start, limit}
+function stripRanges(p) {
+  return typeof p === 'object' && p !== null ? p.$value ?? p : String(p).replace(/\[.*\]$/, '');
+}
+function rangeOf(p) {
+  if (typeof p === 'object' && p !== null && p.$attributes && p.$attributes.ranges) {
+    const range = p.$attributes.ranges[0] || {};
+    const start = range.lower_limit && range.lower_limit.row_index != null ? range.lower_limit.row_index : 0;
+    const end = range.upper_limit && range.upper_limit.row_index != null ? range.upper_limit.row_index : undefined;
+    return {start, limit: end === undefined ? undefined : end - start};
+  }
+  const m = String(p).match(/\[#(\d+):#(\d+)\]$/);
+  if (m) return {start: Number(m[1]), limit: Number(m[2]) - Number(m[1])};
+  return {start: 0, limit: undefined};
+}
+
+// ---- HTTP server ----------------------------------------------------------
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, `http://${HOST}`);
+  const cors = corsHeaders(req);
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(200, cors);
+    res.end();
+    return;
+  }
+
+  const bodyBuf = await readBody(req);
+  const p = url.pathname;
+  log(req.method, p + (url.search || ''), bodyBuf.length ? `body=${bodyBuf.slice(0, 300)}` : '');
+
+  if (RECORD_PATH) {
+    const INTERESTING = ['authorization', 'cookie', 'x-csrf-token', 'content-type', 'accept', 'x-yt-correlation-id', 'x-yt-parameters', 'x-yt-input-format', 'x-yt-output-format', 'x-yt-header-format', 'x-yt-suppress-redirect'];
+    const reqHeaders = {};
+    for (const h of INTERESTING) if (req.headers[h]) reqHeaders[h] = req.headers[h];
+    let reqBody = null;
+    if (bodyBuf.length) {
+      const text = bodyBuf.toString('utf8');
+      try { reqBody = JSON.parse(text); } catch { reqBody = text.slice(0, 4000); }
+    }
+    const origEnd = res.end.bind(res);
+    res.end = (data) => {
+      let respBody = null;
+      if (data) {
+        const text = String(data);
+        try { respBody = JSON.parse(text); } catch { respBody = text.slice(0, 4000); }
+      }
+      record({
+        ts: new Date().toISOString(),
+        method: req.method,
+        path: p,
+        query: url.search || '',
+        request_headers: reqHeaders,
+        request_body: reqBody,
+        status: res.statusCode,
+        response_body: respBody,
+      });
+      return origEnd(data);
+    };
+  }
+
+  try {
+    // ---- infrastructure endpoints ----
+    if (p === '/ping') return void sendJson(res, 200, {}, cors);
+    if (p === '/version' || p === '/service/version') {
+      res.writeHead(200, {'Content-Type': 'text/plain', ...cors});
+      return void res.end('mock-proxy-1.0.0');
+    }
+    if (p === '/hosts/all') {
+      // System page expects objects here; empty list keeps it from crashing.
+      return void sendJson(res, 200, [], cors);
+    }
+    if (p === '/hosts' || p.startsWith('/hosts/')) {
+      return void sendJson(res, 200, [HOST], cors);
+    }
+    if (p === '/api' || p === '/api/') {
+      return void sendJson(res, 200, ['v3', 'v4'], cors);
+    }
+
+    // ---- password login: HTTP Basic auth to /login, per cypress_cookie_login.cpp.
+    // Real proxy replies with empty 200 + Set-Cookie: YTCypressCookie (no SameSite).
+    if (p === '/login') {
+      const basic = (req.headers.authorization || '').match(/^Basic (.+)$/);
+      const [user, ...pw] = basic
+        ? Buffer.from(basic[1], 'base64').toString('utf8').split(':')
+        : [];
+      const password = pw.join(':');
+      if (!(user in users) || users[user].password !== password) {
+        return void sendYtError(res, 401, ytError(900, 'Invalid username or password'), cors);
+      }
+      const cookie = makeCookie(user);
+      const expires = new Date(Date.now() + 30 * 24 * 3600 * 1000).toUTCString();
+      res.writeHead(200, {
+        ...cors,
+        'Set-Cookie': `YTCypressCookie=${cookie}; Expires=${expires}; HttpOnly; Path=/`,
+        'Content-Length': '0',
+      });
+      return void res.end();
+    }
+
+    // ---- /auth/whoami: the single auth gate the UI server checks on every request.
+    // Must succeed with a truthy csrf_token even without credentials (auth "none" mode).
+    if (p === '/auth/whoami') {
+      const auth = authenticate(req);
+      const user = auth ? auth.user : 'iceberg';
+      return void sendJson(res, 200, {
+        login: user,
+        realm: auth && auth.viaCookie ? 'cypress_cookie' : 'mock',
+        real_login: user,
+        csrf_token: csrfTokenFor(user),
+      }, cors);
+    }
+
+    // ---- API commands ----
+    const m = p.match(/^\/api\/(v3|v4)\/(\w+)$/);
+    if (m) {
+      const [, version, command] = m;
+      const auth = authenticate(req);
+      if (!auth) {
+        return void sendYtError(res, 401, ytError(900, 'Authentication failed'), cors);
+      }
+      if (!checkCsrf(req, auth)) {
+        return void sendYtError(res, 401, ytError(901, 'CSRF token mismatch'), cors);
+      }
+      const params = collectParams(req, url, bodyBuf);
+      const impl = commands[command];
+      if (!impl) {
+        log(`  !! unimplemented command: ${command} params=${JSON.stringify(params).slice(0, 500)}`);
+        return void sendYtError(res, 404, ytError(1, `Command ${command} is not registered`), cors);
+      }
+      let result;
+      try {
+        result = impl(params, auth);
+      } catch (e) {
+        if (e && e.err) return void sendYtError(res, e.status, e.err, cors);
+        throw e;
+      }
+      const RAW_OUTPUT = new Set(['read_table', 'get_table_columnar_statistics']);
+      // The request's output_format governs the envelope: with annotate_with_types
+      // every scalar in the result (including batch sub-results) is {$type,$value}.
+      const of = params.output_format;
+      const typed = Boolean(of && of.$attributes && of.$attributes.annotate_with_types);
+      let payload = RAW_OUTPUT.has(command) ? result : (typed ? typedAnnotate(result) : annotated(result));
+      if (version === 'v4' && (command === 'get' || command === 'list' || command === 'exists')) {
+        payload = {value: payload};
+      }
+      return void sendJson(res, 200, payload, {...cors, 'X-YT-Proxy': HOST});
+    }
+
+    log(`  !! unhandled route`);
+    sendYtError(res, 404, ytError(1, `No such route: ${p}`), cors);
+  } catch (e) {
+    log('  !! internal error', e);
+    sendYtError(res, 500, ytError(1, String(e && e.message || e)), cors);
+  }
+});
+
+server.listen(PORT, () => log(`mock YT proxy listening on http://${HOST}`));
