@@ -13,12 +13,23 @@ mock backend, as a first step toward serving the UI from an Apache Iceberg catal
   - `table-viewer.md` — navigation & static-table viewing wire protocol (get/list/exists,
     `read_table` with `web_json`, error format).
   - `bootstrap-config.md` — clusters-config.json, UI server routes, how to run the UI.
+  - `coverage-notes.md` — protocol-wide conventions + out-of-scope endpoint rationale.
   - `*.inventory.json` — machine-readable API inventories (source of truth for the DB).
-  - `API-INDEX.md` — generated from the SQLite DB, do not edit.
+  - `API-INDEX.md`, `ENTITIES.md` — generated from the SQLite DB, do not edit.
 - `db/` — structured API catalog:
-  - `schema.sql` — SQLite schema (endpoints, params, schemas, fields, MD coverage).
-  - `sync.py` — `load` (inventory JSON → DB), `export` (DB → API-INDEX.md),
-    `check` (verify every DB endpoint is mentioned in the MD docs), `query "SQL"`.
+  - `schema.sql` — SQLite schema (endpoints, params, entities/fields with
+    support_status, MD coverage, recorded_requests).
+  - `entities.json` — hand-curated payload entities (yt-error, web_json, cluster-info,
+    …) with per-field support status.
+  - `node-attributes.generated.json` — the node-attributes entity (86 fields), computed
+    from the play-session recordings ∪ mock data.
+  - `support-status.json` — ordered rules assigning each endpoint
+    `implemented` (dynamic, reimplement over Iceberg) / `constant` (stubbed, keep) /
+    `unused` (not needed).
+  - `sync.py` — `load` (inventories + entities + statuses → DB), `export`
+    (DB → generated `API-INDEX.md` + `ENTITIES.md`), `check` (fails unless every
+    endpoint is mentioned in a handwritten doc, everything has a status, and the
+    generated MD matches the DB), `query "SQL"`.
 - `mock-backend/` — Node HTTP server mimicking the YT HTTP proxy with in-RAM fake data:
   - `server.js` — routes, auth, command dispatch (run: `node server.js [port]`).
   - `data.js` — fake Cypress tree + tables (the layer to reimplement over Iceberg).

@@ -1,0 +1,609 @@
+{
+ "entry_type": "schema",
+ "name": "node-attributes",
+ "description": "Cypress node attributes: union of what the UI requests (navigation ~70-attribute get <path>/@ batch, tabs, probes) and what the mock provides. Virtual attributes included.",
+ "fields": [
+  {
+   "name": "_format",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "_read_schema",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "_restore_path",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "_yql_key_meta",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "_yql_op_id",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "_yql_row_spec",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "_yql_runner",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "_yql_subkey_meta",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "_yql_type",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "_yql_value_meta",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "access_time",
+   "type": "yson",
+   "required": false,
+   "support_status": "constant",
+   "description": "same fixed value for every node"
+  },
+  {
+   "name": "account",
+   "type": "yson",
+   "required": false,
+   "support_status": "constant",
+   "description": "same fixed value for every node"
+  },
+  {
+   "name": "acl",
+   "type": "yson",
+   "required": false,
+   "support_status": "constant",
+   "description": "same fixed value for every node"
+  },
+  {
+   "name": "annotation",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "annotation_path",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "atomicity",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "attribute_revision",
+   "type": "yson",
+   "required": false,
+   "support_status": "constant",
+   "description": "same fixed value for every node"
+  },
+  {
+   "name": "broken",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "chunk_count",
+   "type": "yson",
+   "required": true,
+   "support_status": "implemented",
+   "description": "computed per node from in-RAM data"
+  },
+  {
+   "name": "chunk_row_count",
+   "type": "yson",
+   "required": true,
+   "support_status": "implemented",
+   "description": "computed per node from in-RAM data"
+  },
+  {
+   "name": "cluster_name",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "compressed_data_size",
+   "type": "yson",
+   "required": true,
+   "support_status": "implemented",
+   "description": "computed per node from in-RAM data"
+  },
+  {
+   "name": "compression_codec",
+   "type": "yson",
+   "required": false,
+   "support_status": "constant",
+   "description": "same fixed value for every node"
+  },
+  {
+   "name": "compression_ratio",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "content_revision",
+   "type": "yson",
+   "required": false,
+   "support_status": "constant",
+   "description": "same fixed value for every node"
+  },
+  {
+   "name": "creation_time",
+   "type": "yson",
+   "required": false,
+   "support_status": "constant",
+   "description": "same fixed value for every node"
+  },
+  {
+   "name": "data_weight",
+   "type": "yson",
+   "required": true,
+   "support_status": "implemented",
+   "description": "computed per node from in-RAM data"
+  },
+  {
+   "name": "default_disk_space",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "disk_space",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "dynamic",
+   "type": "yson",
+   "required": true,
+   "support_status": "implemented",
+   "description": "computed per node from in-RAM data"
+  },
+  {
+   "name": "effective_acl",
+   "type": "yson",
+   "required": false,
+   "support_status": "constant",
+   "description": "same fixed value for every node"
+  },
+  {
+   "name": "effective_expiration",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "enable_dynamic_store_read",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "erasure_codec",
+   "type": "yson",
+   "required": false,
+   "support_status": "constant",
+   "description": "same fixed value for every node"
+  },
+  {
+   "name": "expiration_time",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "expiration_timeout",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "has_row_level_ace",
+   "type": "yson",
+   "required": false,
+   "support_status": "constant",
+   "description": "same fixed value for every node"
+  },
+  {
+   "name": "id",
+   "type": "yson",
+   "required": true,
+   "support_status": "implemented",
+   "description": "computed per node from in-RAM data"
+  },
+  {
+   "name": "in_memory_mode",
+   "type": "yson",
+   "required": false,
+   "support_status": "constant",
+   "description": "same fixed value for every node"
+  },
+  {
+   "name": "inherit_acl",
+   "type": "yson",
+   "required": false,
+   "support_status": "constant",
+   "description": "same fixed value for every node"
+  },
+  {
+   "name": "key",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "key_columns",
+   "type": "yson",
+   "required": true,
+   "support_status": "implemented",
+   "description": "computed per node from in-RAM data"
+  },
+  {
+   "name": "leader_controller_address",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "lock_count",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "lock_mode",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "locks",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "mode",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "modification_time",
+   "type": "yson",
+   "required": false,
+   "support_status": "constant",
+   "description": "same fixed value for every node"
+  },
+  {
+   "name": "monitoring_cluster",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "monitoring_project",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "opaque",
+   "type": "yson",
+   "required": false,
+   "support_status": "constant",
+   "description": "same fixed value for every node"
+  },
+  {
+   "name": "opaque_attribute_keys",
+   "type": "yson",
+   "required": false,
+   "support_status": "constant",
+   "description": "same fixed value for every node"
+  },
+  {
+   "name": "optimize_for",
+   "type": "yson",
+   "required": false,
+   "support_status": "constant",
+   "description": "same fixed value for every node"
+  },
+  {
+   "name": "owner",
+   "type": "yson",
+   "required": false,
+   "support_status": "constant",
+   "description": "same fixed value for every node"
+  },
+  {
+   "name": "path",
+   "type": "yson",
+   "required": true,
+   "support_status": "implemented",
+   "description": "computed per node from in-RAM data"
+  },
+  {
+   "name": "pipeline_format_version",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "primary_medium",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "queue_static_export_destination",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "remount_needed_tablet_count",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "replica_path",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "replicated_table_options",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "replication_factor",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "resource_usage",
+   "type": "yson",
+   "required": true,
+   "support_status": "implemented",
+   "description": "computed per node from in-RAM data"
+  },
+  {
+   "name": "revision",
+   "type": "yson",
+   "required": false,
+   "support_status": "constant",
+   "description": "same fixed value for every node"
+  },
+  {
+   "name": "row_count",
+   "type": "yson",
+   "required": true,
+   "support_status": "implemented",
+   "description": "computed per node from in-RAM data"
+  },
+  {
+   "name": "schema",
+   "type": "yson",
+   "required": true,
+   "support_status": "implemented",
+   "description": "computed per node from in-RAM data"
+  },
+  {
+   "name": "schema_mode",
+   "type": "yson",
+   "required": true,
+   "support_status": "implemented",
+   "description": "computed per node from in-RAM data"
+  },
+  {
+   "name": "security_tags",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "sorted",
+   "type": "yson",
+   "required": true,
+   "support_status": "implemented",
+   "description": "computed per node from in-RAM data"
+  },
+  {
+   "name": "sorted_by",
+   "type": "yson",
+   "required": true,
+   "support_status": "implemented",
+   "description": "computed per node from in-RAM data"
+  },
+  {
+   "name": "start_time",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "state",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "tablet_cell_bundle",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "tablet_count",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "tablet_error_count",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "tablet_state",
+   "type": "yson",
+   "required": false,
+   "support_status": "constant",
+   "description": "same fixed value for every node"
+  },
+  {
+   "name": "target_path",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "timeout",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "title",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "treat_as_queue_consumer",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "treat_as_queue_producer",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "type",
+   "type": "yson",
+   "required": true,
+   "support_status": "implemented",
+   "description": "computed per node from in-RAM data"
+  },
+  {
+   "name": "uncompressed_data_size",
+   "type": "yson",
+   "required": true,
+   "support_status": "implemented",
+   "description": "computed per node from in-RAM data"
+  },
+  {
+   "name": "unmerged_row_count",
+   "type": "yson",
+   "required": false,
+   "support_status": "unused",
+   "description": "requested by UI, absent in mock; per-attribute code-500 error is tolerated"
+  },
+  {
+   "name": "user_attribute_keys",
+   "type": "yson",
+   "required": false,
+   "support_status": "constant",
+   "description": "same fixed value for every node"
+  },
+  {
+   "name": "user_attributes",
+   "type": "yson",
+   "required": false,
+   "support_status": "constant",
+   "description": "same fixed value for every node"
+  }
+ ]
+}

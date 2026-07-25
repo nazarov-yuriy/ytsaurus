@@ -13,6 +13,10 @@ CREATE TABLE IF NOT EXISTS endpoints (
     path            TEXT NOT NULL,                 -- URL path or pattern
     description     TEXT,
     needed_for_mock INTEGER NOT NULL DEFAULT 0,    -- 1 = mock backend must implement it
+    -- implemented = dynamic behavior backed by in-RAM data (reimplement over Iceberg)
+    -- constant    = fixed/stubbed response (keep as-is)
+    -- unused      = not needed for the Iceberg viewer, not implemented in the mock
+    support_status  TEXT CHECK (support_status IN ('implemented', 'constant', 'unused')),
     source_file     TEXT NOT NULL,                 -- which inventory json it came from
     UNIQUE (layer, method, path, command)
 );
@@ -51,6 +55,7 @@ CREATE TABLE IF NOT EXISTS schema_fields (
     name      TEXT NOT NULL,
     type      TEXT,
     required  INTEGER NOT NULL DEFAULT 0,
+    support_status TEXT CHECK (support_status IN ('implemented', 'constant', 'unused')),
     description TEXT,
     UNIQUE (schema_id, name)
 );

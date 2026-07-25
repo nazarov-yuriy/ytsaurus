@@ -24,11 +24,56 @@ def connect() -> sqlite3.Connection:
     return conn
 
 
+def load_entities(conn: sqlite3.Connection) -> None:
+    """Load entity definitions (payload schemas with per-field support status)."""
+    here = Path(__file__).resolve().parent
+    for src in (here / "entities.json", here / "node-attributes.generated.json"):
+        if not src.exists():
+            continue
+        data = json.loads(src.read_text())
+        for e in data if isinstance(data, list) else [data]:
+            cur = conn.execute(
+                "INSERT OR REPLACE INTO schemas (name, description, definition) VALUES (?, ?, ?)",
+                (e["name"], e.get("description"), None))
+            for f in e.get("fields", []):
+                conn.execute(
+                    "INSERT OR REPLACE INTO schema_fields"
+                    " (schema_id, name, type, required, support_status, description)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    (cur.lastrowid, f["name"], f.get("type"),
+                     int(bool(f.get("required"))), f.get("support_status"),
+                     f.get("description")))
+
+
+def apply_support_status(conn: sqlite3.Connection) -> None:
+    """Assign support_status to every endpoint via ordered first-match rules."""
+    cfg = json.loads((Path(__file__).resolve().parent / "support-status.json").read_text())
+    for eid, path, command in conn.execute("SELECT id, path, command FROM endpoints"):
+        status = cfg.get("default", "unused")
+        for rule in cfg["rules"]:
+            if "command" in rule and command == rule["command"]:
+                status = rule["status"]
+                break
+            if "path_prefix_commands" in rule and (command or "").startswith(rule["path_prefix_commands"]):
+                status = rule["status"]
+                break
+            if "path_exact" in rule and path.strip() == rule["path_exact"]:
+                status = rule["status"]
+                break
+            if "path" in rule and path.startswith(rule["path"]):
+                status = rule["status"]
+                break
+        conn.execute("UPDATE endpoints SET support_status = ? WHERE id = ?", (status, eid))
+
+
 def load() -> None:
     conn = connect()
+    # Recreate catalog tables so schema.sql changes take effect (recorded_requests,
+    # populated by recordings/analyze.py, is left untouched).
+    for table in ("md_coverage", "source_refs", "endpoint_params", "schema_fields",
+                  "schemas", "endpoints"):
+        conn.execute(f"DROP TABLE IF EXISTS {table}")
     conn.executescript((Path(__file__).resolve().parent / "schema.sql").read_text())
-    conn.execute("DELETE FROM endpoints")
-    conn.execute("DELETE FROM schemas")
 
     for inv_path in sorted(DOCS.glob("*.inventory.json")):
         entries = json.loads(inv_path.read_text())
@@ -105,11 +150,18 @@ def load() -> None:
             for ref in e.get("source_refs") or []:
                 conn.execute("INSERT OR IGNORE INTO source_refs (endpoint_id, ref) VALUES (?, ?)", (eid, ref))
 
+    load_entities(conn)
+    apply_support_status(conn)
     update_md_coverage(conn)
     conn.commit()
     n = conn.execute("SELECT COUNT(*) FROM endpoints").fetchone()[0]
     m = conn.execute("SELECT COUNT(*) FROM endpoints WHERE needed_for_mock").fetchone()[0]
-    print(f"Loaded {n} endpoints ({m} needed for mock) into {DB_PATH.name}")
+    s = conn.execute("SELECT COUNT(*) FROM schemas").fetchone()[0]
+    f = conn.execute("SELECT COUNT(*) FROM schema_fields").fetchone()[0]
+    by_status = dict(conn.execute(
+        "SELECT support_status, COUNT(*) FROM endpoints GROUP BY support_status"))
+    print(f"Loaded {n} endpoints ({m} needed for mock; status: {by_status}),"
+          f" {s} entities with {f} fields into {DB_PATH.name}")
 
 
 def update_md_coverage(conn: sqlite3.Connection) -> None:
@@ -128,35 +180,60 @@ def update_md_coverage(conn: sqlite3.Connection) -> None:
             )
 
 
+STATUS_BADGE = {"implemented": "🟢 implemented", "constant": "🟡 constant", "unused": "⚪ unused"}
+
+
 def export() -> None:
     conn = connect()
-    out = ["# API Index (generated from db/api_catalog.sqlite — do not edit by hand)", ""]
+    out = ["# API Index (generated from db/api_catalog.sqlite — do not edit by hand)", "",
+           "Support status: 🟢 implemented = dynamic behavior backed by in-RAM data"
+           " (reimplement over an Iceberg catalog); 🟡 constant = fixed/stubbed response"
+           " (keep as-is); ⚪ unused = not needed for the Iceberg viewer.", ""]
     for layer, title in (("ui-server", "UI Node server endpoints (browser → UI server)"),
                          ("proxy", "Cluster HTTP proxy endpoints (UI → proxy)")):
         out += [f"## {title}", "",
-                "| Mock | Method | Path | Command | Ver | Description |",
-                "|------|--------|------|---------|-----|-------------|"]
+                "| Status | Method | Path | Command | Ver | Description |",
+                "|--------|--------|------|---------|-----|-------------|"]
         rows = conn.execute(
-            "SELECT needed_for_mock, method, path, command, api_version, description"
-            " FROM endpoints WHERE layer = ? ORDER BY needed_for_mock DESC, path", (layer,))
-        for mock, method, path, command, ver, desc in rows:
+            "SELECT support_status, method, path, command, api_version, description"
+            " FROM endpoints WHERE layer = ? ORDER BY"
+            " CASE support_status WHEN 'implemented' THEN 0 WHEN 'constant' THEN 1 ELSE 2 END, path",
+            (layer,))
+        for status, method, path, command, ver, desc in rows:
             desc = re.sub(r"\s+", " ", desc or "").strip()
-            out.append(f"| {'✅' if mock else ''} | {method} | `{path}` | {command or ''} | {ver or ''} | {desc} |")
-        out.append("")
-    schemas = conn.execute("SELECT name, description FROM schemas ORDER BY name").fetchall()
-    if schemas:
-        out += ["## Payload schemas / type conventions", ""]
-        for name, desc in schemas:
-            out.append(f"- **{name}** — {re.sub(r'[|]', '/', desc or '')}")
+            out.append(f"| {STATUS_BADGE.get(status, '')} | {method} | `{path}` |"
+                       f" {command or ''} | {ver or ''} | {desc} |")
         out.append("")
     (DOCS / "API-INDEX.md").write_text("\n".join(out))
-    print(f"Wrote {DOCS / 'API-INDEX.md'}")
+
+    ent = ["# Entities (generated from db/api_catalog.sqlite — do not edit by hand)", "",
+           "Every payload entity and every field, with mock support status:"
+           " 🟢 implemented (dynamic, reimplement over Iceberg), 🟡 constant (stubbed,"
+           " keep as-is), ⚪ unused (documented, not needed by the viewer).", ""]
+    for sid, name, desc in conn.execute("SELECT id, name, description FROM schemas ORDER BY name"):
+        ent += [f"## {name}", "", re.sub(r"\s+", " ", desc or "").strip(), "",
+                "| Status | Field | Type | Required | Description |",
+                "|--------|-------|------|----------|-------------|"]
+        for fname, ftype, req, fstatus, fdesc in conn.execute(
+                "SELECT name, type, required, support_status, description FROM schema_fields"
+                " WHERE schema_id = ? ORDER BY"
+                " CASE support_status WHEN 'implemented' THEN 0 WHEN 'constant' THEN 1 ELSE 2 END, name",
+                (sid,)):
+            fdesc = re.sub(r"[|]", "/", re.sub(r"\s+", " ", fdesc or "")).strip()
+            ftype = re.sub(r"[|]", "/", ftype or "")
+            ent.append(f"| {STATUS_BADGE.get(fstatus, '')} | `{fname}` | {ftype} |"
+                       f" {'yes' if req else ''} | {fdesc} |")
+        ent.append("")
+    (DOCS / "ENTITIES.md").write_text("\n".join(ent))
+    print(f"Wrote {DOCS / 'API-INDEX.md'} and {DOCS / 'ENTITIES.md'}")
 
 
 def check() -> None:
     conn = connect()
     update_md_coverage(conn)
     conn.commit()
+    failures = 0
+
     rows = conn.execute(
         "SELECT e.method, e.path, e.command FROM endpoints e"
         " WHERE NOT EXISTS (SELECT 1 FROM md_coverage c WHERE c.endpoint_id = e.id AND c.mentioned = 1)"
@@ -164,9 +241,35 @@ def check() -> None:
     if not rows:
         print("OK: every endpoint in the DB is mentioned in at least one .md doc")
     else:
+        failures += len(rows)
         print(f"{len(rows)} endpoints NOT mentioned in any .md doc:")
         for method, path, command in rows:
             print(f"  {method} {path} {command or ''}")
+
+    missing_status = conn.execute(
+        "SELECT COUNT(*) FROM endpoints WHERE support_status IS NULL").fetchone()[0]
+    missing_field_status = conn.execute(
+        "SELECT COUNT(*) FROM schema_fields WHERE support_status IS NULL").fetchone()[0]
+    if missing_status or missing_field_status:
+        failures += missing_status + missing_field_status
+        print(f"{missing_status} endpoints / {missing_field_status} fields without support_status")
+    else:
+        print("OK: every endpoint and every entity field has a support_status")
+
+    # Generated MD must be in sync with the DB (regenerate-and-compare).
+    import io
+    from contextlib import redirect_stdout
+    before = {p.name: p.read_text() for p in (DOCS / "API-INDEX.md", DOCS / "ENTITIES.md") if p.exists()}
+    with redirect_stdout(io.StringIO()):
+        export()
+    for name, old in before.items():
+        if (DOCS / name).read_text() != old:
+            failures += 1
+            print(f"STALE: {name} was out of date with the DB (now regenerated — commit it)")
+    if before and all((DOCS / n).read_text() == o for n, o in before.items()):
+        print("OK: generated API-INDEX.md and ENTITIES.md match the DB")
+
+    sys.exit(1 if failures else 0)
 
 
 def query(sql: str) -> None:

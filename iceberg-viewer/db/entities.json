@@ -1,0 +1,131 @@
+[
+  {
+    "entry_type": "schema",
+    "name": "yt-error",
+    "description": "YT TError JSON envelope; body of every error response, mirrored in X-YT-Error header; nested via inner_errors.",
+    "fields": [
+      {"name": "code", "type": "int", "required": true, "support_status": "implemented", "description": "YT error code (1 generic, 500 resolve/NODE_DOES_NOT_EXIST, 900/901 auth/CSRF)"},
+      {"name": "message", "type": "string", "required": true, "support_status": "implemented", "description": "human-readable message"},
+      {"name": "attributes", "type": "map", "required": true, "support_status": "implemented", "description": "extra context (path, code, ...)"},
+      {"name": "inner_errors", "type": "list<yt-error>", "required": true, "support_status": "constant", "description": "mock always returns []"}
+    ]
+  },
+  {
+    "entry_type": "schema",
+    "name": "whoami-response",
+    "description": "Body of GET /auth/whoami — the single auth gate the UI server checks per request.",
+    "fields": [
+      {"name": "login", "type": "string", "required": true, "support_status": "implemented", "description": "resolved from cookie/token; 'iceberg' for anonymous"},
+      {"name": "realm", "type": "string", "required": true, "support_status": "implemented", "description": "'cypress_cookie' for cookie auth, 'mock' otherwise"},
+      {"name": "real_login", "type": "string", "required": true, "support_status": "implemented", "description": "same as login in mock"},
+      {"name": "csrf_token", "type": "string", "required": true, "support_status": "implemented", "description": "must be truthy or UI blocks with PRELOAD_ERROR.AUTHENTICATION; re-sent as X-Csrf-Token"}
+    ]
+  },
+  {
+    "entry_type": "schema",
+    "name": "web-json-response",
+    "description": "read_table response body in output_format web_json (the table viewer format).",
+    "fields": [
+      {"name": "rows", "type": "list<map<column, web-json-cell>>", "required": true, "support_status": "implemented", "description": "row slice per requested range"},
+      {"name": "incomplete_columns", "type": "string", "required": true, "support_status": "implemented", "description": "STRING 'true'/'false', not boolean"},
+      {"name": "incomplete_all_column_names", "type": "string", "required": true, "support_status": "implemented", "description": "STRING 'true'/'false'"},
+      {"name": "all_column_names", "type": "list<string>", "required": true, "support_status": "implemented", "description": "sorted ascending; drives the column selector"},
+      {"name": "yql_type_registry", "type": "list", "required": false, "support_status": "unused", "description": "only with value_format: yql; UI works without it (schemaless mode)"}
+    ]
+  },
+  {
+    "entry_type": "schema",
+    "name": "web-json-cell",
+    "description": "Scalar cell encoding inside web_json rows (value_format schemaless).",
+    "fields": [
+      {"name": "$type", "type": "string", "required": true, "support_status": "implemented", "description": "int64|uint64|double|boolean|string|any"},
+      {"name": "$value", "type": "string", "required": true, "support_status": "implemented", "description": "stringified value; JSON-encoded for 'any'"},
+      {"name": "$incomplete", "type": "bool", "required": false, "support_status": "unused", "description": "set when value truncated by field_weight_limit; mock never truncates"},
+      {"name": "$tag", "type": "string", "required": false, "support_status": "unused", "description": "yql value_format only"},
+      {"name": "b64", "type": "bool", "required": false, "support_status": "unused", "description": "yql value_format only (val/inc/b64 convention)"}
+    ]
+  },
+  {
+    "entry_type": "schema",
+    "name": "table-schema-column",
+    "description": "One column in the @schema attribute ({$attributes: {strict, unique_keys}, $value: [columns]}).",
+    "fields": [
+      {"name": "name", "type": "string", "required": true, "support_status": "implemented", "description": "column name"},
+      {"name": "type", "type": "string", "required": true, "support_status": "implemented", "description": "legacy type (int64, string, double, boolean, any)"},
+      {"name": "type_v3", "type": "map", "required": true, "support_status": "implemented", "description": "e.g. {type_name: optional, item: int64}"},
+      {"name": "sort_order", "type": "string", "required": false, "support_status": "implemented", "description": "'ascending' on key columns; drives key icons and @key_columns"},
+      {"name": "required", "type": "bool", "required": false, "support_status": "unused", "description": "UI renders it when present; mock omits"},
+      {"name": "expression", "type": "string", "required": false, "support_status": "unused", "description": "computed columns (dynamic tables)"},
+      {"name": "aggregate", "type": "string", "required": false, "support_status": "unused", "description": "dynamic tables only"},
+      {"name": "group", "type": "string", "required": false, "support_status": "unused", "description": "column groups"}
+    ]
+  },
+  {
+    "entry_type": "schema",
+    "name": "cluster-info-response",
+    "description": "Body of GET /api/cluster-info/:cluster (UI server; fans out to proxy /auth/whoami + /version). Both version and token.csrf_token must be valid or the page never mounts.",
+    "fields": [
+      {"name": "token", "type": "whoami-response", "required": true, "support_status": "implemented", "description": "proxied /auth/whoami body"},
+      {"name": "version", "type": "string", "required": true, "support_status": "constant", "description": "proxy /version text; must contain \\d+.\\d+.\\d+ ('mock-proxy-1.0.0')"},
+      {"name": "tokenError", "type": "yt-error", "required": false, "support_status": "unused", "description": "set when whoami fails -> PRELOAD_ERROR.AUTHENTICATION"},
+      {"name": "versionError", "type": "yt-error", "required": false, "support_status": "unused", "description": "set when version fails -> PRELOAD_ERROR.CONNECTION"}
+    ]
+  },
+  {
+    "entry_type": "schema",
+    "name": "cluster-params-response",
+    "description": "Body of GET /api/cluster-params/:cluster (UI server; two execute_batch calls against the proxy). Each field is a batch item {output?} | {error?}.",
+    "fields": [
+      {"name": "mediumList", "type": "batch-item<list<string>>", "required": true, "support_status": "implemented", "description": "list //sys/media; a present error aborts cluster init — MUST succeed"},
+      {"name": "schedulerVersion", "type": "batch-item<string>", "required": true, "support_status": "constant", "description": "get //sys/scheduler/orchid/service/version; mock 500 -> UI falls back to '0.0.0-unknown'"},
+      {"name": "uiConfig", "type": "batch-item<map>", "required": true, "support_status": "constant", "description": "get //sys/@ui_config; code-500 error tolerated"},
+      {"name": "uiDevConfig", "type": "batch-item<map>", "required": true, "support_status": "constant", "description": "get //sys/@ui_config_dev_overrides; code-500 error tolerated"},
+      {"name": "masterVersion", "type": "batch-item<list>", "required": true, "support_status": "constant", "description": "per-master versions; empty in mock"}
+    ]
+  },
+  {
+    "entry_type": "schema",
+    "name": "clusters-config-entry",
+    "description": "One cluster in the UI server's clusters-config.json (server-rendered into window.YT.clusters; no /clusters endpoint exists).",
+    "fields": [
+      {"name": "id", "type": "string", "required": true, "support_status": "implemented", "description": "URL segment (/:cluster/navigation)"},
+      {"name": "name", "type": "string", "required": true, "support_status": "implemented", "description": "display name"},
+      {"name": "proxy", "type": "string", "required": true, "support_status": "implemented", "description": "host:port of the HTTP proxy — points at the mock"},
+      {"name": "secure", "type": "bool", "required": false, "support_status": "implemented", "description": "false -> http scheme to proxy"},
+      {"name": "authentication", "type": "string", "required": true, "support_status": "implemented", "description": "'none' | 'basic' | 'domain'; UI only tests !== 'none'"},
+      {"name": "environment", "type": "string", "required": false, "support_status": "constant", "description": "badge: development/production/..."},
+      {"name": "theme", "type": "string", "required": false, "support_status": "constant", "description": "cluster color theme"},
+      {"name": "description", "type": "string", "required": false, "support_status": "constant", "description": "tooltip text"},
+      {"name": "group", "type": "string", "required": false, "support_status": "constant", "description": "cluster list grouping"},
+      {"name": "disableHeavyProxies", "type": "bool", "required": false, "support_status": "implemented", "description": "true -> UI server never calls /hosts for heavy commands"},
+      {"name": "primaryMaster", "type": "map", "required": false, "support_status": "unused", "description": "cellTag etc.; not needed by the viewer"}
+    ]
+  },
+  {
+    "entry_type": "schema",
+    "name": "execute-batch-request",
+    "description": "Body of POST /api/v3/execute_batch.",
+    "fields": [
+      {"name": "requests", "type": "list<{command, parameters}>", "required": true, "support_status": "implemented", "description": "sub-commands dispatched against the same command table"},
+      {"name": "output_format", "type": "format", "required": false, "support_status": "implemented", "description": "governs the OUTER envelope; annotate_with_types wraps every scalar as {$type,$value}"}
+    ]
+  },
+  {
+    "entry_type": "schema",
+    "name": "execute-batch-result-item",
+    "description": "One element of the execute_batch response list, in request order.",
+    "fields": [
+      {"name": "output", "type": "yson", "required": false, "support_status": "implemented", "description": "sub-command result on success"},
+      {"name": "error", "type": "yt-error", "required": false, "support_status": "implemented", "description": "per-item failure; HTTP status stays 200"}
+    ]
+  },
+  {
+    "entry_type": "schema",
+    "name": "login-request",
+    "description": "Password login: browser POSTs JSON to UI server /api/yt/:cluster/login; UI server converts to HTTP Basic and calls proxy POST /login; empty 200 + Set-Cookie YTCypressCookie (no SameSite), duplicated as <cluster>_YTCypressCookie by the UI server.",
+    "fields": [
+      {"name": "username", "type": "string", "required": true, "support_status": "implemented", "description": "checked against users map in data.js"},
+      {"name": "password", "type": "string", "required": true, "support_status": "implemented", "description": "plain password; wrong pair -> 401 code 900"}
+    ]
+  }
+]
