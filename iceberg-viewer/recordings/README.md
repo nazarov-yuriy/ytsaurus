@@ -38,3 +38,11 @@ writes:
 
 Result of the 2026-07-25 session: 61 distinct shapes, 110 proxy-side + 119 browser-side
 requests, **0 mock-critical proxy endpoints unexercised**, no unexpected error statuses.
+
+## Differential backend testing
+
+`replay-diff.py` starts the Node backend (:8001) and the Python backend (:8002),
+replays every recorded proxy-side request plus 26 hand-written edge cases (auth
+failures, nested attribute paths, v4 envelopes, ranges, batch errors, unknown
+commands/routes, header/query parameter sources) against both, and diffs status,
+body, and YT error headers. Current result: **191/191 identical**.

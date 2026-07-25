@@ -34,6 +34,10 @@ mock backend, as a first step toward serving the UI from an Apache Iceberg catal
   - `server.js` — routes, auth, command dispatch (run: `node server.js [port]`).
   - `data.js` — fake Cypress tree + tables (the layer to reimplement over Iceberg).
   - `webjson.js` — YT `web_json` / annotated-JSON encoders.
+- `mock-backend-py/` — Python (stdlib-only) port of the mock, wire-identical to the
+  Node one (`python3 server.py 8000`); see its README for the porting gotchas.
+- `tests/test_protocol.py` — 30 documented-behavior conformance tests, each run
+  against BOTH backends (`python3 tests/test_protocol.py`).
 
 ## Architecture being mocked
 
