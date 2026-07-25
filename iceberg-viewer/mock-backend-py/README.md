@@ -9,8 +9,7 @@ python3 server.py 8000
 # then point ytsaurus-ui's clusters-config.json at localhost:8000, same as the Node mock
 ```
 
-Env vars: `MOCK_RECORD=<path>` appends request/response JSONL (same format as Node);
-`MOCK_DEBUG_CONN=1` logs connection lifecycle (open/close/keep-alive decisions).
+Env vars: `MOCK_RECORD=<path>` appends request/response JSONL (same format as Node).
 
 ## Files (1:1 with the Node implementation)
 
