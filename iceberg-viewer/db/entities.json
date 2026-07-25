@@ -4,7 +4,7 @@
     "name": "yt-error",
     "description": "YT TError JSON envelope; body of every error response, mirrored in X-YT-Error header; nested via inner_errors.",
     "fields": [
-      {"name": "code", "type": "int", "required": true, "support_status": "implemented", "description": "YT error code (1 generic, 500 resolve/NODE_DOES_NOT_EXIST, 900/901 auth/CSRF)"},
+      {"name": "code", "type": "int", "required": true, "support_status": "implemented", "description": "numeric YT error code; the mock uses 1 (generic), 500 (resolve/NODE_DOES_NOT_EXIST), and mock-only 900/901 for login/CSRF. The real proxy returns generic code 1 for a wrong-password /login response and native auth codes such as 111/110 for cookie-auth failures"},
       {"name": "message", "type": "string", "required": true, "support_status": "implemented", "description": "human-readable message"},
       {"name": "attributes", "type": "map", "required": true, "support_status": "implemented", "description": "extra context (path, code, ...)"},
       {"name": "inner_errors", "type": "list<yt-error>", "required": true, "support_status": "constant", "description": "mock always returns []"}
@@ -13,12 +13,12 @@
   {
     "entry_type": "schema",
     "name": "whoami-response",
-    "description": "Body of GET /auth/whoami — the single auth gate the UI server checks per request.",
+    "description": "Body of GET /auth/whoami — the identity/CSRF endpoint used by cluster bootstrap and, when password auth is enabled, by UI-server request authentication.",
     "fields": [
       {"name": "login", "type": "string", "required": true, "support_status": "implemented", "description": "resolved from cookie/token; 'iceberg' for anonymous"},
       {"name": "realm", "type": "string", "required": true, "support_status": "implemented", "description": "'cypress_cookie' for cookie auth, 'mock' otherwise"},
       {"name": "real_login", "type": "string", "required": true, "support_status": "implemented", "description": "same as login in mock"},
-      {"name": "csrf_token", "type": "string", "required": true, "support_status": "implemented", "description": "must be truthy or UI blocks with PRELOAD_ERROR.AUTHENTICATION; re-sent as X-Csrf-Token"}
+      {"name": "csrf_token", "type": "string", "required": true, "support_status": "implemented", "description": "must be truthy or UI blocks with PRELOAD_ERROR.AUTHENTICATION; re-sent as X-Csrf-Token for credentialed requests, while the wrapper omits it when cluster authentication is 'none'"}
     ]
   },
   {
@@ -63,12 +63,12 @@
   {
     "entry_type": "schema",
     "name": "cluster-info-response",
-    "description": "Body of GET /api/cluster-info/:cluster (UI server; fans out to proxy /auth/whoami + /version). Both version and token.csrf_token must be valid or the page never mounts.",
+    "description": "Body of GET /api/cluster-info/:cluster (UI server; fans out to proxy /auth/whoami + /version). A truthy version and token.csrf_token are required for a successful mount, but failed upstream calls omit token/version and populate the corresponding error field.",
     "fields": [
-      {"name": "token", "type": "whoami-response", "required": true, "support_status": "implemented", "description": "proxied /auth/whoami body"},
-      {"name": "version", "type": "string", "required": true, "support_status": "constant", "description": "proxy /version text; must contain \\d+.\\d+.\\d+ ('mock-proxy-1.0.0')"},
-      {"name": "tokenError", "type": "yt-error", "required": false, "support_status": "unused", "description": "set when whoami fails -> PRELOAD_ERROR.AUTHENTICATION"},
-      {"name": "versionError", "type": "yt-error", "required": false, "support_status": "unused", "description": "set when version fails -> PRELOAD_ERROR.CONNECTION"}
+      {"name": "token", "type": "whoami-response", "required": false, "support_status": "implemented", "description": "proxied /auth/whoami body; required for a successful mount"},
+      {"name": "version", "type": "string", "required": false, "support_status": "constant", "description": "raw proxy /version text ('mock-proxy-1.0.0' in the mock); bootstrap checks only that it is truthy"},
+      {"name": "tokenError", "type": "{message, code?, inner_errors}", "required": false, "support_status": "unused", "description": "set when whoami fails -> PRELOAD_ERROR.AUTHENTICATION"},
+      {"name": "versionError", "type": "{message, code?, inner_errors}", "required": false, "support_status": "unused", "description": "set when version fails -> PRELOAD_ERROR.CONNECTION"}
     ]
   },
   {
@@ -80,7 +80,7 @@
       {"name": "schedulerVersion", "type": "batch-item<string>", "required": true, "support_status": "constant", "description": "get //sys/scheduler/orchid/service/version; mock 500 -> UI falls back to '0.0.0-unknown'"},
       {"name": "uiConfig", "type": "batch-item<map>", "required": true, "support_status": "constant", "description": "get //sys/@ui_config; code-500 error tolerated"},
       {"name": "uiDevConfig", "type": "batch-item<map>", "required": true, "support_status": "constant", "description": "get //sys/@ui_config_dev_overrides; code-500 error tolerated"},
-      {"name": "masterVersion", "type": "batch-item<list>", "required": true, "support_status": "constant", "description": "per-master versions; empty in mock"}
+      {"name": "masterVersion", "type": "batch-item<string or list<string>>", "required": true, "support_status": "constant", "description": "version string from the first primary master; when the primary-master list is empty, the list batch item is returned instead (output: [] in the mock)"}
     ]
   },
   {
@@ -92,9 +92,9 @@
       {"name": "name", "type": "string", "required": true, "support_status": "implemented", "description": "display name"},
       {"name": "proxy", "type": "string", "required": true, "support_status": "implemented", "description": "host:port of the HTTP proxy — points at the mock"},
       {"name": "secure", "type": "bool", "required": false, "support_status": "implemented", "description": "false -> http scheme to proxy"},
-      {"name": "authentication", "type": "string", "required": true, "support_status": "implemented", "description": "'none' | 'basic' | 'domain'; UI only tests !== 'none'"},
-      {"name": "environment", "type": "string", "required": false, "support_status": "constant", "description": "badge: development/production/..."},
-      {"name": "theme", "type": "string", "required": false, "support_status": "constant", "description": "cluster color theme"},
+      {"name": "authentication", "type": "string", "required": false, "support_status": "implemented", "description": "'none', 'basic', or 'domain'; omitted values default to 'none', and the UI otherwise only tests !== 'none'"},
+      {"name": "environment", "type": "string", "required": true, "support_status": "constant", "description": "badge: development/production/..."},
+      {"name": "theme", "type": "string", "required": true, "support_status": "constant", "description": "cluster color theme"},
       {"name": "description", "type": "string", "required": false, "support_status": "constant", "description": "tooltip text"},
       {"name": "group", "type": "string", "required": false, "support_status": "constant", "description": "cluster list grouping"},
       {"name": "disableHeavyProxies", "type": "bool", "required": false, "support_status": "implemented", "description": "true -> UI server never calls /hosts for heavy commands"},
@@ -125,7 +125,7 @@
     "description": "Password login: browser POSTs JSON to UI server /api/yt/:cluster/login; UI server converts to HTTP Basic and calls proxy POST /login; empty 200 + Set-Cookie YTCypressCookie (no SameSite), duplicated as <cluster>_YTCypressCookie by the UI server.",
     "fields": [
       {"name": "username", "type": "string", "required": true, "support_status": "implemented", "description": "checked against users map in data.js"},
-      {"name": "password", "type": "string", "required": true, "support_status": "implemented", "description": "plain password; wrong pair -> 401 code 900"}
+      {"name": "password", "type": "string", "required": true, "support_status": "implemented", "description": "plain password; a wrong pair returns HTTP 401 with mock-only code 900, while the real proxy masks it as generic code 1 ('Incorrect login or password')"}
     ]
   }
 ]

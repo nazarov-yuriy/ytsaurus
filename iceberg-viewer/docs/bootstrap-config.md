@@ -13,7 +13,8 @@ File references are `path:line` relative to those roots.
 ## 0. TL;DR — from zero to a rendered Navigation page
 
 ```bash
-# 0. mock proxy on :8000 (must answer /version, /auth/whoami, /hosts, /api/v3|v4/*)
+# 0. mock proxy on :8000 (must answer /version, /auth/whoami and /api/v3|v4/*;
+#    /hosts is needed only when heavy-proxy discovery is enabled)
 node /shared/ytsaurus4/iceberg-viewer/mock-backend/server.js 8000
 
 # 1. deps (node >= 24 per packages/ui/package.json:"engines")
@@ -41,15 +42,20 @@ cat > clusters-config.json <<'JSON'
 }
 JSON
 
-# 3. run: dev-server on 8080, node server on 8081 (8080 proxies to 8081)
+# 3. stock common config requires this file at boot; no token is needed in "none" mode
+mkdir -p secrets
+printf '{}\n' > secrets/yt-interface-secret.json
+
+# 4. run: dev-server on 8080, node server on 8081 (8080 proxies to 8081)
 LOCAL_DEV_PORT=8080 npm run dev:app
 
-# 4. open http://localhost:8080/mock/navigation?path=//
+# 5. open http://localhost:8080/mock/navigation?path=//
 ```
 
-No `secrets/yt-interface-secret.json` is needed as long as
-`authentication: "none"` and `userSettingsConfig` is not configured
-(see §2.4 and §5.4).
+With `authentication: "none"` the file needs no token data, but the stock common
+config still requires the path to be loadable at boot. The empty object above is
+sufficient. An installation config can instead set `ytInterfaceSecret:
+undefined` (see §2.4).
 
 ---
 
@@ -105,8 +111,10 @@ Interpreted in two places:
 - **Browser → wrapper** (`packages/ui/src/ui/common/yt-api.ts:39`): `yt.setup.setGlobalOption('authentication', {type: config.authentication || 'none'})`. In the wrapper, `withCredentials` is enabled only when the type is set and ≠ `'none'` (`node_modules/@ytsaurus/javascript-wrapper/lib/core.js:246`).
 
 **For a mock, use `"authentication": "none"`.** That is the only value that
-needs no token file and no login round-trip. Note it is orthogonal to
-`ALLOW_PASSWORD_AUTH`: password auth is a *server-wide* switch (§2.3), and
+needs no robot token value and no login round-trip. The stock server config
+still requires a loadable (possibly empty) secret file at boot (§2.4). Note it
+is orthogonal to
+`ALLOW_PASSWORD_AUTH`: password auth is a *server-wide* switch (§2.2), and
 when it is off, `GET /api/clusters/auth-status` reports every cluster as
 `{authorized: true}` (`controllers/clusters.ts:31-39`).
 
@@ -172,7 +180,7 @@ then folds a handful of environment variables into the config.
 | `PROXY` | `src/server/config.localcluster.ts:5` | Local-mode proxy `host:port`. Only used when `APP_ENV=local`. |
 | `PROXY_INTERNAL` | `src/server/components/utils.ts:62-69` | Overrides `proxy` **only** for the cluster whose id equals `YT_LOCAL_CLUSTER_ID`. |
 | `YT_LOCAL_CLUSTER_ID` | `src/server/constants/index.ts:1` | Id of the synthetic local cluster (default `ui`). |
-| `ALLOW_PASSWORD_AUTH` / `WITH_AUTH` | `utils/configs/apply-app-env-to-config.ts:30-40` | Enables YT password auth; sets `appAuthPolicy = required`. Leave **unset** for a mock. |
+| `ALLOW_PASSWORD_AUTH` / `WITH_AUTH` / `YT_AUTH_CLUSTER_ID` | `utils/configs/apply-app-env-to-config.ts:30-40` | Any non-empty value enables YT password auth. `YT_AUTH_CLUSTER_ID` is a legacy enablement signal only; it no longer selects an auth cluster. Leave all three **unset** for a no-auth mock. |
 | `YT_AUTH_ALLOW_INSECURE` | same, `:36` | Strips `Secure` from the `YTCypressCookie` when the origin is `http://` (`controllers/login.ts:89-118`). Needed only with password auth over plain HTTP. |
 | `YT_TOKEN` | `src/server/components/requestsSetup.ts:27` | Fallback robot OAuth token when `secrets/yt-interface-secret.json` is absent. |
 | `PROMETHEUS_BASE_URL` | `apply-app-env-to-config.ts:23` | Enables monitoring dashboards + `allowPrometheusDashboards`. |
@@ -180,19 +188,26 @@ then folds a handful of environment variables into the config.
 | `DEBUG_PORT` | `build.app.config.ts:10` | `--inspect-brk` port for the node server. |
 | `NODE_OPTIONS=--max-http-header-size=204800` | `package.json` scripts | Required: YT parameters travel in `X-YT-Parameters-*` headers up to 64 KiB × 2. |
 
-`YT_AUTH_CLUSTER_ID` is **removed**; if the old `config.ytAuthCluster` key is
-present the server serves a 500 error page instead of the app
-(`middlewares/check-configuration.ts:18-35`).
+The old `config.ytAuthCluster` key is **removed**; if it is present the server
+serves a 500 error page instead of the app
+(`middlewares/check-configuration.ts:18-35`). The similarly named
+`YT_AUTH_CLUSTER_ID` environment variable remains only as the legacy
+password-auth signal described above.
 
 ### 2.3 Configuration keys you may want for a mock
 
 Defined in `packages/ui/src/@types/core.d.ts:11-146`:
 
 - `clustersConfigPath` (`:26`) — path to the cluster file.
-- `ytInterfaceSecret` (`:21`) — robot token file; **omit** for `authentication: 'none'`.
+- `ytInterfaceSecret` (`:21`) — robot token file. Its token contents are unused
+  for `authentication: 'none'`, but the stock common config sets the path and
+  checks that it is loadable at boot; use an empty `{}` file or explicitly set
+  this key to `undefined` (§2.4).
 - `userSettingsConfig` (`:65-69`) — when **absent**, user settings fall back to `localStorage` (§5.4). Leave unset for a mock.
 - `userColumnPresets` (`:78-81`) — needs a dynamic table; leave unset.
-- `ytApiUseCORS` (`:32`) — `false`/absent (default) routes **all** YT API calls through the node server at `/api/yt/<cluster>/…`. Keep it that way; it avoids CORS entirely.
+- `ytApiUseCORS` (`:32`) — `false`/absent (default) routes ordinary wrapper YT
+  API calls through the node server at `/api/yt/<cluster>/…`. Direct downloads
+  and uploads are separate exceptions (§5.5).
 - `uiSettings.directDownload` — `true` in `configs/common.ts:56`. This makes *downloads* go straight from the browser to `//<externalProxy ?? proxy>/api/v3/<cmd>` (`src/ui/utils/navigation/index.ts:163-165`), which **does** need CORS on the mock. Set it to `false` to funnel downloads through the node server too.
 - `ytAllowRemoteLocalProxy` (`:37`) — allows arbitrary `host:port` cluster ids; not needed.
 
@@ -301,8 +316,9 @@ address the container can reach — `host.docker.internal:8000` on
 Docker Desktop, or the docker bridge IP on Linux; `localhost` inside the
 container is the container itself.)
 
-The README documents the two mount points: `/opt/app/clusters-config.json`
-and `/opt/app/secrets/yt-interface-secret.json`.
+The runtime paths come from `configs/common.ts`:
+`/opt/app/clusters-config.json` and
+`/opt/app/secrets/yt-interface-secret.json`.
 
 For reference, the way the official launcher starts the image
 (`/shared/ytsaurus4/yt/docker/local/run_local_cluster.sh:464-478`) uses
@@ -363,9 +379,12 @@ routes are mounted only after `UPDATE_CLUSTER.FINAL_SUCCESS`
    - On success it stores `csrf_token` in the cookie `ytfront_<cluster>_xsrf_token` (`cluster-params.ts:262`, name from `src/ui/utils/index.ts:252-254`).
    Server-side this endpoint issues `GET <proxy>/auth/whoami` and `GET <proxy>/version` in parallel (`cluster-queries.ts:52-81,128-131`).
 2. `initYTApiClusterParams(cluster)` (`src/ui/common/yt-api.ts:14-42`) configures the javascript-wrapper: `proxy = <window.location.host>/api/yt/<cluster>` when `ytApiUseCORS` is falsy (`src/ui/store/selectors/global/cluster.ts:40-46`), `useHeavyProxy = false`, `xsrf = true`, `xsrfCookieName = ytfront_<cluster>_xsrf_token`.
-3. `GET /api/cluster-params/:cluster` (`cluster-params.ts:77`). Response is the 5-tuple built in `src/server/components/cluster-params.ts:217-223`: `{mediumList, schedulerVersion, uiConfig, uiDevConfig, masterVersion}`, each a batch item `{output?, error?}`. **A non-empty `mediumList.error` aborts cluster init** (`cluster-params.ts:101-104`); errors in `uiConfig`/`uiDevConfig` with code `500` (`NODE_DOES_NOT_EXIST`) are tolerated (`cluster-params.ts:47-65`). Server-side this is two `execute_batch` calls against the proxy with the *robot* setup (`cluster-params.ts:60-94` and `:117-180`) reading `//sys/primary_masters`, `//sys/media`, `//sys/scheduler/orchid/service/version`, `//sys/@ui_config`, `//sys/@ui_config_dev_overrides`, `//sys/primary_masters/<m>/orchid/service/version`. Results are cached (`utils/auto-updated-cache.ts`).
-4. `checkIsDeveloper(login)` — a `check_permission` against the `admins` group (`cluster-params.ts:130-152`); failures are swallowed.
-5. `reloadUserSettings(login)` (`src/ui/store/actions/settings/index.ts:114-135`) → `provider.create()` + `provider.getAll()`. With remote settings enabled that is `POST /api/settings/<settingsCluster>/<login>/` then `GET /api/settings/<settingsCluster>/<login>/`, where `settingsCluster = userSettingsCluster ?? cluster` (`src/ui/store/selectors/global/index.ts:151-153`). With remote settings disabled both are `localStorage` no-ops (§5.4).
+3. `checkIsDeveloper(login)` is dispatched without awaiting it — an
+   `execute_batch` containing `check_permission_by_acl` against the `admins`
+   group (`src/shared/utils/check-permission.ts:31-57`); failures are swallowed.
+   This request can overlap the next step.
+4. `GET /api/cluster-params/:cluster` (`cluster-params.ts:77`). Response is the 5-tuple built in `src/server/components/cluster-params.ts:217-223`: `{mediumList, schedulerVersion, uiConfig, uiDevConfig, masterVersion}`, each a batch item `{output?, error?}`. **A non-empty `mediumList.error` aborts cluster init** (`cluster-params.ts:101-104`); errors in `uiConfig`/`uiDevConfig` with code `500` (`NODE_DOES_NOT_EXIST`) are tolerated (`cluster-params.ts:47-65`). Server-side this is two `execute_batch` calls against the proxy with the *robot* setup (`cluster-params.ts:60-94` and `:117-180`) reading `//sys/primary_masters`, `//sys/media`, `//sys/scheduler/orchid/service/version`, `//sys/@ui_config`, `//sys/@ui_config_dev_overrides`, `//sys/primary_masters/<m>/orchid/service/version`. Results are cached (`utils/auto-updated-cache.ts`).
+5. `reloadUserSettings(login)` (`src/ui/store/actions/settings/index.ts:114-135`) → `provider.create()` + `provider.getAll()`. With remote settings enabled that is `POST /api/settings/<settingsCluster>/<login>/` then `GET /api/settings/<settingsCluster>/<login>/`, where `settingsCluster = userSettingsCluster ?? cluster` (`src/ui/store/selectors/global/index.ts:151-153`). With remote settings disabled, `create()` is a no-op and `getAll()` reads `localStorage` (§5.4).
 6. Once the page is mounted, `SupportedFeaturesUpdater` (`src/ui/containers/ClusterPage/SupportedFeaturesUpdater.tsx:11-16`) polls YT `get_supported_features` every 600 s (`src/ui/store/actions/global/supported-features.ts:29`).
 
 The clusters-menu page (`/`) is separate and issues
@@ -448,26 +467,39 @@ request/response shapes.
 
 With `allowPasswordAuth` unset:
 
-- `applyAppEnvToConfig` sets `appAuthPolicy = AuthPolicy.disabled` (`utils/configs/apply-app-env-to-config.ts:37`), and `src/server/index.ts:28-45` installs **no** auth middleware.
+- `allowPasswordAuth` is false and `src/server/index.ts:28-45` installs no auth
+  resolver/handler (assuming OAuth is also unconfigured). The stock
+  `configs/common.ts` value `appAuthPolicy: AuthPolicy.required` is retained
+  because `applyAppEnvToConfig` only fills missing fields; without an auth
+  handler, the policy has nothing to invoke.
 - `req.yt` stays undefined, so `getUserYTApiSetup` produces empty `authHeaders` (`components/requestsSetup.ts:118-132`) — which is exactly right for `authentication: 'none'`.
+- `GET /api/cluster-info/:cluster` still calls the proxy's `/auth/whoami`
+  explicitly to obtain the bootstrap login and CSRF token (§4.2).
 
 With `ALLOW_PASSWORD_AUTH=1`, `createYTAuthorizationResolver`
 (`middlewares/yt-auth.ts:6-24`) turns the cookie
 `<cluster>_YTCypressCookie` (`utils/index.ts:234-236`) into
 `Cookie: YTCypressCookie=<secret>` for upstream calls, and
 `createAuthMiddleware` (`middlewares/authorization.ts:18-42`) calls
-`<proxy>/auth/whoami` on every request, 401-ing API routes on failure.
+`<proxy>/auth/whoami` on every auth-enabled request, 401-ing non-UI routes on
+authentication failure.
 
 ### 5.2 XSRF / CSRF
 
 - The browser stores `csrf_token` from `/api/cluster-info` in the cookie `ytfront_<cluster>_xsrf_token` (`src/ui/store/actions/cluster-params.ts:262`).
-- The wrapper is told `xsrf: true, xsrfCookieName: ytfront_<cluster>_xsrf_token` (`src/ui/common/yt-api.ts:30-31`), and axios then copies that cookie into the **`X-Csrf-Token`** request header (`javascript-wrapper/lib/core.js:264`).
+- The wrapper is told `xsrf: true, xsrfCookieName: ytfront_<cluster>_xsrf_token`
+  (`src/ui/common/yt-api.ts:30-31`). When `authentication !== 'none'`, it also
+  sets `withXSRFToken: true`, and Axios copies that cookie into the
+  **`X-Csrf-Token`** request header
+  (`javascript-wrapper/lib/core.js:246,264`). With `authentication: 'none'`,
+  `withXSRFToken` is false and no such header is sent.
 - The proxy requires `X-Csrf-Token` for every non-GET request that authenticated **via cookie** (`yt/yt/server/http_proxy/http_authenticator.cpp:214-232`); token-auth and no-auth requests are exempt. `GET /auth/whoami` mints the token (`http_authenticator.cpp:67-94`).
 - Wrapper error code `XSRF_TOKEN_EXPIRED` triggers a "reload the page" toast (`src/ui/common/yt-api.ts:51-63`).
 
-A mock with `require_authentication`-off semantics can accept any
-`X-Csrf-Token`; it just has to return **some** `csrf_token` from
-`/auth/whoami`, otherwise the UI hard-fails with `PRELOAD_ERROR.AUTHENTICATION`.
+A mock with `require_authentication`-off semantics can ignore
+`X-Csrf-Token` (and normally receives none in `authentication: 'none'` mode).
+It still has to return **some** `csrf_token` from `/auth/whoami`, otherwise the
+UI hard-fails with `PRELOAD_ERROR.AUTHENTICATION`.
 
 ### 5.3 Headers on the wire
 
@@ -482,8 +514,8 @@ parameters, ≤64 KiB each, max 2) together with
 `X-YT-Header-Format: <encode_utf8=%false>json` when `useEncodedParameters` is
 on (`core.js:48-81`) — hence `--max-http-header-size=204800`;
 `Content-Type: application/json` for POST/PUT; `X-YT-Suppress-Redirect: 1`
-when heavy-proxy resolution is disabled; `X-Csrf-Token` via axios
-(`core.js:264`); `Authorization: OAuth <token>` only when
+when heavy-proxy resolution is disabled; `X-Csrf-Token` via Axios when
+`authentication !== 'none'` (`core.js:246,264`); `Authorization: OAuth <token>` only when
 `authentication.type === 'oauth'` (`core.js:163-165`).
 
 `X-Custom-Request-Id` (`src/shared/constants/index.ts:1`) is added per call by
@@ -532,7 +564,9 @@ mock only has to make those four commands work.
 
 ### 5.5 CORS / websockets
 
-- With `ytApiUseCORS` unset (default) **no cross-origin request is made** for the API — everything is same-origin via `/api/yt/…`.
+- With `ytApiUseCORS` unset (default), ordinary wrapper API calls are
+  same-origin via `/api/yt/…`; the direct download/upload paths below are the
+  exceptions.
 - Exception 1 — **download-ish reads**, gated by `uiSettings.directDownload` (`src/ui/utils/navigation/index.ts:148-166`): `read_table` (table download), `read_file`, `read_query_result`, `get_job_stderr`, `get_job_fail_context`, `get_job_input` go to `//<externalProxy ?? proxy>/api/v3/<cmd>` with `withCredentials: true` (`.../DownloadManager/DownloadManager.tsx:314`, `src/ui/store/selectors/navigation/content/file.js:11`, `.../Jobs/job-selector.ts:154-168`). Set `directDownload: false` to route these through the node server instead.
 - Exception 2 — **uploads always bypass the node server**: `write_file` (`src/ui/containers/UploadFileManager/uploadFile.ts:18,36`) and `write_table` (`.../UploadManager/UploadManager.tsx:408,426-429`) override the wrapper `proxy` with `externalProxy ?? proxy` regardless of `directDownload`, and set `X-Csrf-Token` manually (`UploadManager.tsx:486-490`). Only relevant if your mock is writable.
 - The existing mock already answers CORS preflights (`mock-backend/server.js:43-64`).
@@ -564,17 +598,17 @@ Real-proxy semantics for reference (`yt/yt/server/http_proxy/coordinator.cpp:543
 
 ---
 
-## 7. Cluster proxy endpoints a mock must implement
+## 7. Cluster proxy endpoint contract (required and optional)
 
 | Endpoint | Called by | Required shape |
 |---|---|---|
-| `GET /version` | node server, per cluster-info and per `/api/clusters/versions` (`components/cluster-queries.ts:72-81`) | **plain text** body; the UI extracts `/(\d+)\.(\d+)\.(\d+)/` from it (`cluster-queries.ts:83-86`). Real proxy: raw `GetVersion()` string, no JSON quoting (`bootstrap.cpp:480-483`). |
+| `GET /version` | node server, per cluster-info and per `/api/clusters/versions` (`components/cluster-queries.ts:72-81`) | **plain text** body. `/api/clusters/versions` extracts `/(\d+)\.(\d+)\.(\d+)/` (`cluster-queries.ts:83-86`); cluster-info returns the raw string and bootstrap only checks that it is truthy. Real proxy: raw `GetVersion()` string, no JSON quoting (`bootstrap.cpp:480-483`). |
 | `GET /auth/whoami` | node server (`cluster-queries.ts:52-69`) and the auth middleware | `{"login": "...", "realm": "...", "real_login": "...", "csrf_token": "..."}` (`http_authenticator.cpp:67-94`). `login` and `csrf_token` are the two fields the UI needs. **Missing → the app never renders.** |
 | `GET /hosts` | node server for heavy commands (`controllers/yt-api.ts:96`) | JSON array of strings, `["localhost:8000"]`. |
 | `GET /hosts/all` | System page via `/api/yt-proxy/:c/hosts-all` | array of `{host,name,role,banned,ban_message,dead,liveness}`. |
 | `GET /internal/discover_versions/v2` | Components→Versions via `/api/yt-proxy/:c/internal-discover_versions` | `{summary: {<version>: {<type>: {total,banned,offline}}}, details: [...]}` (`coordinator.cpp:697-733`). |
 | `POST /api/v3/execute_batch` | node server for `/api/cluster-params` (`components/cluster-params.ts:61,118`) | `[{output?, error?}, …]`, one entry per sub-request, in order. |
-| `POST /api/v3\|v4/<command>` | everything else, tunnelled through `/api/yt/:c/api/:v/:cmd` | Standard YT command semantics. |
+| `POST /api/v3/<command>` or `/api/v4/<command>` | everything else, tunnelled through `/api/yt/:c/api/:v/:cmd` | Standard YT command semantics. |
 | `GET /ping` | not used by the UI | Real proxy: `200`/`503`, empty body (`coordinator.cpp:656-670`). |
 | `GET /api`, `GET /api/v4` | not used by the UI | Discovery: `["v3","v4"]` (`context.cpp:140-152`) and the command-descriptor list `[{name,input_type,output_type,is_volatile,is_heavy}]` (`context.cpp:162-180`, `client/driver/driver.cpp:73-83`). |
 | `POST /api/v4/discover_proxies` | not used by the UI | `{"proxies": ["host:port", …]}` (`client/driver/etc_commands.cpp:491-518`). Params `kind`/`type`, `role`, `address_type`, `network_name`. |
@@ -586,30 +620,31 @@ wrapper's command table before proxying and rejects unknown ones with 400
 
 ---
 
-## 8. Gaps in the current `mock-backend/server.js`
+## 8. Current `mock-backend/server.js` coverage
 
 Checked against `/shared/ytsaurus4/iceberg-viewer/mock-backend/server.js`:
 
-- **`/auth/whoami` is not implemented** (only an `api/*/whoami` command at `server.js:238`). Without it `/api/cluster-info/:c` returns `tokenError` and the UI stops at `PRELOAD_ERROR.AUTHENTICATION`. Add `GET /auth/whoami` → `{login, realm, real_login, csrf_token}`.
-- **`execute_batch` is not implemented**, so `/api/cluster-params/:c` fails. It must accept `{requests:[{command,parameters}]}` in the body and return `[{output}|{error}]`; the two batches the server issues are listed in §4.2 step 3. In particular `//sys/media` must succeed.
-- `authenticate()` returns `null` when there is neither a cookie nor an `Authorization` header (`server.js:118-132`), but with `authentication: "none"` the node server sends **neither**. Either allow anonymous (recommended, mirrors `require_authentication: false` → login `root`, `http_authenticator.cpp:100-113`) or set `"authentication": "basic"` in the cluster entry plus a `YT_TOKEN`.
-- `/hosts` already returns `[HOST]` (`server.js:282-284`) — correct for the node-server heavy path, provided `MOCK_HOST` resolves from the node server. `/hosts/all` currently returns the same string array; the System page expects objects.
-- `/version` returns `mock-proxy-1.0.0` — matches the `\d+\.\d+\.\d+` regex, good.
-- Missing commands needed by the Navigation page (see §4.2.1): `check_permission` and `check_permission_by_acl` (permission probes — failures are swallowed but produce error toasts), `get_supported_features` (polled every 10 min).
-- The mock's `login` handler reads `username`/`password` from the merged params (`server.js:290-301`), but `POST /api/yt/:c/login` forwards **Basic auth** to the proxy `POST /login` (`controllers/login.ts:35-44`), not a JSON body. Only relevant if you enable `ALLOW_PASSWORD_AUTH`.
+- The bootstrap path is implemented: `/version`, `/auth/whoami`, anonymous
+  access for `authentication: "none"`, and `execute_batch` with the
+  `//sys/primary_masters`, `//sys/media`, scheduler-version, and UI-config reads
+  used by `/api/cluster-params`.
+- The Navigation and static-table path is implemented for v3 and v4:
+  `get`, `list`, `exists`, `read_table`, `execute_batch`, `check_permission`,
+  `check_permission_by_acl`, `get_supported_features`,
+  `get_table_columnar_statistics`, and `whoami`.
+- Password login accepts HTTP Basic credentials at `/login` and returns a
+  `YTCypressCookie`. The mock also enforces `X-Csrf-Token` for non-GET requests
+  authenticated by one of its issued cookies.
+- `/hosts` returns `[HOST]`, `/hosts/all` returns an empty object-list-compatible
+  array, and `/version` returns `mock-proxy-1.0.0`.
 
-Minimal additions to make the boot path green:
+Remaining limitations are outside the documented Navigation/table-viewer
+surface:
 
-```js
-// GET /auth/whoami
-{login: 'iceberg', realm: 'mock', real_login: 'iceberg', csrf_token: 'csrf-iceberg'}
-
-// POST /api/v3/execute_batch  -> body {requests: [{command, parameters}]}
-// return one {output}|{error} per request, in order. Required outputs:
-//   list //sys/primary_masters                          -> []            (empty is fine)
-//   list //sys/media                                    -> ['default']   (MUST NOT error)
-//   get  //sys/scheduler/orchid/service/version         -> '0.0.0-mock'  (or error code 500)
-//   get  //sys/@ui_config                               -> {}            (or error code 500)
-//   get  //sys/@ui_config_dev_overrides                 -> {}            (or error code 500)
-// error code 500 == NODE_DOES_NOT_EXIST and is tolerated for the last three.
-```
+- `/internal/discover_versions/v2` is not implemented, so
+  Components → Versions cannot load.
+- `/api/v4` command discovery is not implemented (the UI does not call it).
+- Commands beyond the list above return a YT-shaped `404`; pages that need
+  those commands are not covered.
+- An unknown or expired `YTCypressCookie` falls back to the anonymous `iceberg`
+  user, so the mock does not exercise session-expiry 401/login-dialog behavior.

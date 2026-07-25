@@ -1,7 +1,7 @@
 {
  "entry_type": "schema",
  "name": "node-attributes",
- "description": "Cypress node attributes: union of what the UI requests (navigation ~70-attribute get <path>/@ batch, tabs, probes) and what the mock provides. Virtual attributes included.",
+ "description": "Cypress node attributes: union of what the UI requests (navigation ~70-attribute get <path>/@ batch, tabs, probes) and what the mock provides. Virtual attributes included. Required marks data the Iceberg-backed implementation must provide on the applicable node kind; table-only fields are absent on map nodes.",
  "fields": [
   {
    "name": "_format",
@@ -134,14 +134,14 @@
    "type": "yson",
    "required": true,
    "support_status": "implemented",
-   "description": "computed per node from in-RAM data"
+   "description": "computed for table nodes from in-RAM data"
   },
   {
    "name": "chunk_row_count",
    "type": "yson",
    "required": true,
    "support_status": "implemented",
-   "description": "computed per node from in-RAM data"
+   "description": "computed for table nodes from in-RAM data"
   },
   {
    "name": "cluster_name",
@@ -155,14 +155,14 @@
    "type": "yson",
    "required": true,
    "support_status": "implemented",
-   "description": "computed per node from in-RAM data"
+   "description": "computed for table nodes from in-RAM data"
   },
   {
    "name": "compression_codec",
    "type": "yson",
    "required": false,
    "support_status": "constant",
-   "description": "same fixed value for every node"
+   "description": "same fixed value for every table node"
   },
   {
    "name": "compression_ratio",
@@ -190,7 +190,7 @@
    "type": "yson",
    "required": true,
    "support_status": "implemented",
-   "description": "computed per node from in-RAM data"
+   "description": "computed for table nodes from in-RAM data"
   },
   {
    "name": "default_disk_space",
@@ -211,7 +211,7 @@
    "type": "yson",
    "required": true,
    "support_status": "implemented",
-   "description": "computed per node from in-RAM data"
+   "description": "computed for table nodes from in-RAM data"
   },
   {
    "name": "effective_acl",
@@ -239,7 +239,7 @@
    "type": "yson",
    "required": false,
    "support_status": "constant",
-   "description": "same fixed value for every node"
+   "description": "same fixed value for every table node"
   },
   {
    "name": "expiration_time",
@@ -274,7 +274,7 @@
    "type": "yson",
    "required": false,
    "support_status": "constant",
-   "description": "same fixed value for every node"
+   "description": "same fixed value for every table node"
   },
   {
    "name": "inherit_acl",
@@ -295,7 +295,7 @@
    "type": "yson",
    "required": true,
    "support_status": "implemented",
-   "description": "computed per node from in-RAM data"
+   "description": "computed for table nodes from in-RAM data"
   },
   {
    "name": "leader_controller_address",
@@ -372,7 +372,7 @@
    "type": "yson",
    "required": false,
    "support_status": "constant",
-   "description": "same fixed value for every node"
+   "description": "same fixed value for every table node"
   },
   {
    "name": "owner",
@@ -442,7 +442,7 @@
    "type": "yson",
    "required": true,
    "support_status": "implemented",
-   "description": "computed per node from in-RAM data"
+   "description": "computed for table nodes from in-RAM data"
   },
   {
    "name": "revision",
@@ -456,21 +456,21 @@
    "type": "yson",
    "required": true,
    "support_status": "implemented",
-   "description": "computed per node from in-RAM data"
+   "description": "computed for table nodes from in-RAM data"
   },
   {
    "name": "schema",
    "type": "yson",
    "required": true,
    "support_status": "implemented",
-   "description": "computed per node from in-RAM data"
+   "description": "computed for table nodes from in-RAM data"
   },
   {
    "name": "schema_mode",
    "type": "yson",
    "required": true,
    "support_status": "implemented",
-   "description": "computed per node from in-RAM data"
+   "description": "computed for table nodes from in-RAM data"
   },
   {
    "name": "security_tags",
@@ -484,14 +484,14 @@
    "type": "yson",
    "required": true,
    "support_status": "implemented",
-   "description": "computed per node from in-RAM data"
+   "description": "computed for table nodes from in-RAM data"
   },
   {
    "name": "sorted_by",
    "type": "yson",
    "required": true,
    "support_status": "implemented",
-   "description": "computed per node from in-RAM data"
+   "description": "computed for table nodes from in-RAM data"
   },
   {
    "name": "start_time",
@@ -533,7 +533,7 @@
    "type": "yson",
    "required": false,
    "support_status": "constant",
-   "description": "same fixed value for every node"
+   "description": "same fixed value for every table node"
   },
   {
    "name": "target_path",
@@ -582,7 +582,7 @@
    "type": "yson",
    "required": true,
    "support_status": "implemented",
-   "description": "computed per node from in-RAM data"
+   "description": "computed for table nodes from in-RAM data"
   },
   {
    "name": "unmerged_row_count",

@@ -53,13 +53,17 @@ export function getClusterProxy(clusterConfig: ClusterConfig): string {
 This value is installed as the javascript-wrapper's `proxy` global option
 (`UI/src/ui/common/yt-api.ts:20`). Therefore:
 
-* **`ytApiUseCORS` falsy (the default)** — *every* YT command from the browser goes to the
-  UI Node server at `/api/yt/<cluster>/api/v3/<command>`, which reverse-proxies it to the
-  cluster HTTP proxy. **The browser never talks to the cluster proxy directly.**
-  This is the mode a mock backend should target: implement one HTTP origin.
+* **`ytApiUseCORS` falsy (the default)** — every YT command issued through the
+  javascript-wrapper goes to the UI Node server at
+  `/api/yt/<cluster>/api/v3/<command>`, which reverse-proxies it to the cluster HTTP
+  proxy. Normal navigation and table-display requests therefore never talk to the
+  cluster proxy directly. The table-download URL can still bypass this tunnel when
+  `uiSettings.directDownload` is enabled (§6.4). This is the mode a mock backend should
+  target: implement one HTTP origin.
 * **`ytApiUseCORS` true** — the wrapper's `proxy` becomes `clusterConfig.proxy` and the browser
-  hits `https://<cluster-proxy>/api/v3/<command>` cross-origin. This requires the cluster
-  proxy CORS config to allow the UI origin (see §3.8).
+  hits `<http|https>://<cluster-proxy>/api/v3/<command>` cross-origin, according to the
+  cluster's `secure` setting. This requires the cluster proxy CORS config to allow the UI
+  origin (see §3.8).
 
 `ytApiUseCORS` is injected into the page by the Node server:
 `UI/src/server/components/layout-config.ts:22,65` → `window.__DATA__.ytApiUseCORS`;
@@ -85,21 +89,24 @@ Handler `ytTvmApiHandler` — `UI/src/server/controllers/yt-api.ts:31-141`. It:
    (`yt-api.ts:92-101`). `read_table` **is** heavy (`WRAP/lib/commands/v3.js:99`), so the mock
    must answer `/hosts` if it wants to exercise this path — or set `disableHeavyProxies`.
 3. Forwards `req.method`, the query string (`qs.stringify(req.query)`), the body, and **all**
-   incoming headers except `host` and `cookie`, plus:
+   incoming headers except `host`, `cookie`, and the UI-only `X-Custom-Request-Id`, plus:
    ```
    accept-encoding: gzip
    X-YT-Correlation-Id: <express request id>
    X-YT-Suppress-Redirect: 1
-   Cookie: YTCypressCookie=<secret>     (from authHeaders, see below)
+   Cookie: YTCypressCookie=<secret>     (cookie auth)
+     or    access_token=<oauth token>   (OAuth; omitted when authentication == 'none')
    ```
    (`yt-api.ts:104-125`). Response is streamed back verbatim (`responseType: 'stream'`,
    `pipeAxiosResponse`), so **all `X-YT-*` response headers and the body reach the browser
    unchanged**.
 
 Auth header derivation — `UI/src/server/middlewares/yt-auth.ts:6-24` and
-`UI/src/server/components/requestsSetup.ts:118-132`: the browser cookie
+`UI/src/server/components/requestsSetup.ts:118-132`: for cookie auth, the browser cookie
 `<cluster>_YTCypressCookie` is rewritten into an outgoing `Cookie: YTCypressCookie=<secret>;`
-header (only when `clusterConfig.authentication !== 'none'`).
+header. OAuth instead supplies `Cookie: access_token=<oauth token>`
+(`UI/src/server/middlewares/oauth.ts:14-24`). Both are omitted when
+`clusterConfig.authentication === 'none'`.
 
 ### Other UI Node endpoints that reach the cluster
 
@@ -107,7 +114,7 @@ header (only when `clusterConfig.authentication !== 'none'`).
 |---|---|---|
 | `GET /api/cluster-info/:cluster` | `GET <proxy>/auth/whoami`, `GET <proxy>/version` | `UI/src/server/components/cluster-queries.ts:25-70, 72-81, 122-155` |
 | `GET /api/cluster-params/:cluster` | 2× `POST /api/v3/execute_batch` | `UI/src/server/components/cluster-params.ts:60-201` |
-| `GET/POST/PUT/DELETE /api/settings/:cluster/:user[/:path]` | `create`/`get`/`set`/`remove` on a Cypress document | `UI/src/server/components/settings.ts:38-130` |
+| `GET|POST /api/settings/:cluster/:user`; `GET|PUT|DELETE /api/settings/:cluster/:user/:path` | `create`/`get`/`set`/`remove` on a Cypress document | `UI/src/server/components/settings.ts:38-130` |
 | `GET /api/clusters/versions` | `GET <proxy>/version` per cluster | `UI/src/server/controllers/clusters.ts:6-12`, `cluster-queries.ts:88-100` |
 | `GET /api/yt-proxy/:cluster/:command` | `/hosts/all`, `/internal/discover_versions/v2` (allowlist) | `UI/src/server/controllers/yt-proxy-api.ts:21-24` |
 | `POST /api/yt/:cluster/login` | `POST <proxy>/login` with `Authorization: Basic ...` | `UI/src/server/controllers/login.ts:23-87` |
@@ -265,7 +272,12 @@ X-YT-Request-Id: 0-1-2-3
 Trailer: X-YT-Error, X-YT-Response-Code, X-YT-Response-Message
 Access-Control-Expose-Headers: ...
 
-[{"output":{"type":"map_node","id":"1-2-3-4","account":"tmp","modification_time":"2026-07-25T10:00:00.000000Z"}}]
+[{"output":{
+  "type":{"$type":"string","$value":"map_node"},
+  "id":{"$type":"string","$value":"1-2-3-4"},
+  "account":{"$type":"string","$value":"tmp"},
+  "modification_time":{"$type":"string","$value":"2026-07-25T10:00:00.000000Z"}
+}}]
 ```
 
 (v3 `execute_batch` returns a bare list; v4 returns `{"results": [...]}` — §4.2.)
@@ -497,8 +509,9 @@ Rules a mock must reproduce:
 
 * `X-YT-Parameters` alone ⇒ used **verbatim** (parsed with the header format).
 * `X-YT-Parameters0` / `X-YT-Parameters-0` (and `…1`, `…2`, contiguous from 0) ⇒ concatenated,
-  then **base64-decoded**, then parsed. This is the path the UI actually takes for
-  `get`/`list` when they are not body-encoded — and for `select_rows` etc.
+  then **base64-decoded**, then parsed. This is the path wrapper commands use when their
+  parameters are not body-encoded. The viewer's v3 `get`/`list` and `select_rows` commands
+  are body-encoded instead.
 * Same mechanism for `X-YT-Input-Format`, `X-YT-Output-Format`, `X-YT-Error-Format`.
 * **Not** for `X-YT-Header-Format` (plain `Find`, `context.cpp:312`).
 
@@ -548,11 +561,12 @@ JSON format attributes (`YT/yt/core/json/config.cpp:7-51`) — relevant defaults
 The UI's `TYPED_OUTPUT_FORMAT` flips `stringify` + `annotate_with_types` on
 (`UI/src/ui/constants/index.ts:36-42`).
 
-### 3.6 Response headers the proxy always sets
+### 3.6 Response headers
 
 * `X-YT-Proxy: <self host>` and `Cache-Control: no-store` — `helpers.cpp:354-357`,
   `context.cpp:92,98`.
-* `Content-Type` / `Content-Encoding` + `Vary: Content-Encoding` —`context.cpp:836-843`.
+* `Content-Type` when the output type has one; `Content-Encoding` plus
+  `Vary: Content-Encoding` only when response compression is active — `context.cpp:830-843`.
 * `Trailer: X-YT-Error, X-YT-Response-Code, X-YT-Response-Message` unless
   `X-YT-Omit-Trailers` — `context.cpp:845-847`.
 * `X-YT-Response-Parameters` — serialized **in the request's header format** and emitted from
@@ -608,9 +622,10 @@ if (Request_->GetHeaders()->Find("X-YT-Accept-Framing") && GetFramingConfig()->E
 The request header's **value is irrelevant**; the response signal is `X-YT-Framing: 1`, and it is
 *removed* if the request ends in a pre-flush error (`context.cpp:1115`).
 
-**Layering**: compression is applied first, framing is outermost —
-`frame(compress(data))` (`context.cpp:715-725`). Framing also forces the streaming path even for
-`Structured`/`Null` output (`context.cpp:699-704`).
+**Layering**: the compression adapter wraps the response stream first, then the framing adapter
+wraps the compressor. Driver writes therefore produce `compress(frame(data))`
+(`context.cpp:715-725`). Framing also forces the streaming path even for `Structured`/`Null`
+output (`context.cpp:699-704`).
 
 **Keep-alive scheduling**: a `TPeriodicExecutor` started only after the driver emits response
 parameters (`context.cpp:727-746`, started at `context.cpp:765-768`). Config
@@ -823,7 +838,8 @@ void ProduceSingleOutput(ICommandContextPtr context, TStringBuf name, const prod
 The UI's TypeScript types mirror this exactly: `YTApiV3.get<Value>(...): Promise<Value>` vs
 `YTApiV4.get<Value>(...): Promise<{value: Value}>` (`UI/src/ui/rum/rum-wrap-api.ts:55, 125`).
 
-**The UI uses v3 for everything on the navigation/table path.**
+**The UI uses v3 for the navigation/table path except the table-meta
+`get <path>/@has_row_level_ace` request, which uses v4.**
 
 ### 4.3 Error object schema
 
@@ -856,8 +872,8 @@ Batch sub-request results keep the same shape under the `error` key:
 
 ## 5. `web_json` — the table viewer's output format
 
-Config struct: `YT/yt/client/formats/config.h:363-381`; registration
-`YT/yt/client/formats/config.cpp:321-339`. Writer:
+The config struct is in `YT/yt/client/formats/config.h:363-381`, its parameters are
+registered in `YT/yt/client/formats/config.cpp:321-339`, and the writer is implemented in
 `YT/yt/library/formats/web_json_writer.cpp`.
 
 ### 5.1 Format attributes
@@ -1082,9 +1098,9 @@ On mounting a cluster page (`updateCluster`, `UI/src/ui/store/actions/cluster-pa
 
    All sub-requests carry `suppress_transaction_coordinator_sync: true` and
    `suppress_upstream_sync: true` (`UI/src/shared/constants/index.ts:14-17`).
-   `NODE_DOES_NOT_EXIST` (code 500) on `@ui_config_dev_overrides` / the version paths is
-   tolerated (`cluster-params.ts:203-215`). Only a `mediumList` error is fatal client-side
-   (`UI/src/ui/store/actions/cluster-params.ts:101-104`).
+   `NODE_DOES_NOT_EXIST` (code 500) on `@ui_config`, `@ui_config_dev_overrides`, or either
+   version path is tolerated (`cluster-params.ts:203-230`). Only a `mediumList` error is fatal
+   client-side (`UI/src/ui/store/actions/cluster-params.ts:101-104`).
    Response shape the client expects:
    ```json
    {"mediumList": {"output": ["default"]},
@@ -1151,7 +1167,7 @@ there is **no separate `get //path/@schema` call**.
 | mount config | `execute_batch [get <path>/@mount_config]` (tolerates code 500) | `UI/src/ui/store/actions/navigation/content/table/table-mount-config.ts:13-39` |
 | description tab | `execute_batch [get <path>/@ attributes=[annotation, annotation_path]]` | `UI/src/ui/store/api/navigation/tabs/description.ts:24-50` |
 | permissions (only when `account` is set) | `execute_batch [check_permission{user, write, path}, check_permission{user, use, //sys/accounts/<account>}]` | `index.ts:155-171`, `UI/src/ui/utils/acl/acl-api.ts:209-224` |
-| queue export (only when the attr exists) | `execute_batch [get #<queueId>/@path]` | `UI/src/ui/store/api/navigation/tabs/queue/exports.ts:11-38` |
+| queue-origin lookup | `execute_batch [get #<queueId>/@path]`; dispatched unconditionally, so a missing destination attribute produces `#undefined/@path` and an ignored per-item error | `UI/src/ui/store/actions/navigation/tabs/queue/exports.ts:11-36` |
 
 **On failure only** (`index.ts:192-193`): `POST /api/v3/exists {"path": "//sys/idm/lock"}`.
 
@@ -1203,7 +1219,7 @@ from `UI/src/ui/pages/navigation/content/Table/Table.js:170-177`.
   "path": "<path>[#0:#0]",
   "table_reader": {"workload_descriptor": {"category": "user_interactive"}},
   "output_format": {"$value": "web_json", "$attributes": {
-      "field_weight_limit": 1024,
+      "field_weight_limit": <cellSize>,
       "max_selected_column_count": 50,
       "max_all_column_names_count": 3000,
       "column_names": []}},
@@ -1290,7 +1306,8 @@ Paths that must resolve for the bootstrap batches (§6.1 step 6):
 `//sys/scheduler/orchid/service/version` (get),
 `//sys/@ui_config` (get), `//sys/@ui_config_dev_overrides` (get),
 `//sys/primary_masters/<name>/orchid/service/version` (get).
-The last three may legitimately answer with error code **500** (`NODE_DOES_NOT_EXIST`).
+The final four may legitimately answer with error code **500** (`NODE_DOES_NOT_EXIST`);
+the primary-master version request is omitted when `//sys/primary_masters` is empty.
 
 Per-response headers worth emitting on every YT API response:
 
@@ -1311,7 +1328,7 @@ and, on error, `X-YT-Error` / `X-YT-Response-Code` / `X-YT-Response-Message` wit
 | `GET /api/cluster-params/:cluster` | `{"mediumList":{"output":["default"]},"schedulerVersion":{"output":"24.1.0-mock"},"masterVersion":{"output":"24.1.0-mock"},"uiConfig":{"output":{}},"uiDevConfig":{"output":{}}}` |
 | `GET /api/clusters/versions` | `[{"id":"mock","version":"24.1.0"}]` (root page only) |
 | `GET /api/clusters/auth-status` | `{"mock":{"authorized":true}}` (root page only) |
-| `GET|POST /api/settings/:cluster/:user[/:path]` | `{}` / 200 — only if `userSettingsConfig` is configured |
+| `GET|POST /api/settings/:cluster/:user`; `GET|PUT|DELETE /api/settings/:cluster/:user/:path` | `{}` / 200 — only if `userSettingsConfig` is configured |
 | `POST /api/yt/:cluster/login` | proxies to `/login`; only if password auth is enabled |
 | `GET|POST|PUT /api/yt/:cluster/api/:version/:command` | forward to §7.1 |
 
@@ -1357,7 +1374,8 @@ X-YT-Input-Format / X-YT-Output-Format         (not used by the UI; params carry
 X-Csrf-Token: <ytfront_<cluster>_xsrf_token>   (only when authentication != 'none')
 X-Custom-Request-Id: <YTApiId>                 (UI-only diagnostic, stripped by the Node server)
 X-YT-Correlation-Id: <req id>                  (added by the UI Node server)
-Cookie: YTCypressCookie=<secret>               (added by the UI Node server)
+Cookie: YTCypressCookie=<secret> | access_token=<oauth token>
+                                                 (added by the UI Node server only when authentication != 'none')
 ```
 
 Response (cluster proxy → browser):

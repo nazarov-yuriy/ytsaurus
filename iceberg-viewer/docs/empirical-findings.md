@@ -58,10 +58,13 @@ POST /api/yt/mock/api/v3/read_table    {path: <t>[#0:#51], web_json, max_selecte
 
 ## Operational notes
 
-- Dev server: `LOCAL_DEV_PORT=8080 npm run dev:app` in `packages/ui`; webpack-dev-server
+- Dev server: `LOCAL_DEV_PORT=8080 npm run dev:app` in `packages/ui`; the Rspack dev server
   on 8080 proxies to the Node app on 8081. If the app crashes at boot (e.g. missing
   secrets file), the watcher does NOT restart it — rerun `npm run dev:app`.
 - Node 20 works in practice despite `"engines": {"node": ">=24"}`.
 - Verified with Playwright headless Chromium (`npx playwright install chromium`,
-  no system deps needed); driver script: see `scratchpad/ui-check.js` pattern —
-  capture `pageerror`, `requestfailed`, and responses with status ≥ 400.
+  no system deps needed). The tracked driver is `recordings/play.js`; from
+  `recordings/`, run
+  `NODE_PATH=../ytsaurus-ui/packages/ui/node_modules node play.js`.
+  For ad-hoc debugging, also capture `pageerror`, `requestfailed`, and responses with
+  status ≥ 400.

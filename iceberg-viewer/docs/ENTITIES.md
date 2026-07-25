@@ -4,14 +4,14 @@ Every payload entity and every field, with mock support status: 🟢 implemented
 
 ## cluster-info-response
 
-Body of GET /api/cluster-info/:cluster (UI server; fans out to proxy /auth/whoami + /version). Both version and token.csrf_token must be valid or the page never mounts.
+Body of GET /api/cluster-info/:cluster (UI server; fans out to proxy /auth/whoami + /version). A truthy version and token.csrf_token are required for a successful mount, but failed upstream calls omit token/version and populate the corresponding error field.
 
 | Status | Field | Type | Required | Description |
 |--------|-------|------|----------|-------------|
-| 🟢 implemented | `token` | whoami-response | yes | proxied /auth/whoami body |
-| 🟡 constant | `version` | string | yes | proxy /version text; must contain \d+.\d+.\d+ ('mock-proxy-1.0.0') |
-| ⚪ unused | `tokenError` | yt-error |  | set when whoami fails -> PRELOAD_ERROR.AUTHENTICATION |
-| ⚪ unused | `versionError` | yt-error |  | set when version fails -> PRELOAD_ERROR.CONNECTION |
+| 🟢 implemented | `token` | whoami-response |  | proxied /auth/whoami body; required for a successful mount |
+| 🟡 constant | `version` | string |  | raw proxy /version text ('mock-proxy-1.0.0' in the mock); bootstrap checks only that it is truthy |
+| ⚪ unused | `tokenError` | {message, code?, inner_errors} |  | set when whoami fails -> PRELOAD_ERROR.AUTHENTICATION |
+| ⚪ unused | `versionError` | {message, code?, inner_errors} |  | set when version fails -> PRELOAD_ERROR.CONNECTION |
 
 ## cluster-params-response
 
@@ -20,7 +20,7 @@ Body of GET /api/cluster-params/:cluster (UI server; two execute_batch calls aga
 | Status | Field | Type | Required | Description |
 |--------|-------|------|----------|-------------|
 | 🟢 implemented | `mediumList` | batch-item<list<string>> | yes | list //sys/media; a present error aborts cluster init — MUST succeed |
-| 🟡 constant | `masterVersion` | batch-item<list> | yes | per-master versions; empty in mock |
+| 🟡 constant | `masterVersion` | batch-item<string or list<string>> | yes | version string from the first primary master; when the primary-master list is empty, the list batch item is returned instead (output: [] in the mock) |
 | 🟡 constant | `schedulerVersion` | batch-item<string> | yes | get //sys/scheduler/orchid/service/version; mock 500 -> UI falls back to '0.0.0-unknown' |
 | 🟡 constant | `uiConfig` | batch-item<map> | yes | get //sys/@ui_config; code-500 error tolerated |
 | 🟡 constant | `uiDevConfig` | batch-item<map> | yes | get //sys/@ui_config_dev_overrides; code-500 error tolerated |
@@ -31,16 +31,16 @@ One cluster in the UI server's clusters-config.json (server-rendered into window
 
 | Status | Field | Type | Required | Description |
 |--------|-------|------|----------|-------------|
-| 🟢 implemented | `authentication` | string | yes | 'none' / 'basic' / 'domain'; UI only tests !== 'none' |
+| 🟢 implemented | `authentication` | string |  | 'none', 'basic', or 'domain'; omitted values default to 'none', and the UI otherwise only tests !== 'none' |
 | 🟢 implemented | `disableHeavyProxies` | bool |  | true -> UI server never calls /hosts for heavy commands |
 | 🟢 implemented | `id` | string | yes | URL segment (/:cluster/navigation) |
 | 🟢 implemented | `name` | string | yes | display name |
 | 🟢 implemented | `proxy` | string | yes | host:port of the HTTP proxy — points at the mock |
 | 🟢 implemented | `secure` | bool |  | false -> http scheme to proxy |
 | 🟡 constant | `description` | string |  | tooltip text |
-| 🟡 constant | `environment` | string |  | badge: development/production/... |
+| 🟡 constant | `environment` | string | yes | badge: development/production/... |
 | 🟡 constant | `group` | string |  | cluster list grouping |
-| 🟡 constant | `theme` | string |  | cluster color theme |
+| 🟡 constant | `theme` | string | yes | cluster color theme |
 | ⚪ unused | `primaryMaster` | map |  | cellTag etc.; not needed by the viewer |
 
 ## execute-batch-request
@@ -67,50 +67,50 @@ Password login: browser POSTs JSON to UI server /api/yt/:cluster/login; UI serve
 
 | Status | Field | Type | Required | Description |
 |--------|-------|------|----------|-------------|
-| 🟢 implemented | `password` | string | yes | plain password; wrong pair -> 401 code 900 |
+| 🟢 implemented | `password` | string | yes | plain password; a wrong pair returns HTTP 401 with mock-only code 900, while the real proxy masks it as generic code 1 ('Incorrect login or password') |
 | 🟢 implemented | `username` | string | yes | checked against users map in data.js |
 
 ## node-attributes
 
-Cypress node attributes: union of what the UI requests (navigation ~70-attribute get <path>/@ batch, tabs, probes) and what the mock provides. Virtual attributes included.
+Cypress node attributes: union of what the UI requests (navigation ~70-attribute get <path>/@ batch, tabs, probes) and what the mock provides. Virtual attributes included. Required marks data the Iceberg-backed implementation must provide on the applicable node kind; table-only fields are absent on map nodes.
 
 | Status | Field | Type | Required | Description |
 |--------|-------|------|----------|-------------|
-| 🟢 implemented | `chunk_count` | yson | yes | computed per node from in-RAM data |
-| 🟢 implemented | `chunk_row_count` | yson | yes | computed per node from in-RAM data |
-| 🟢 implemented | `compressed_data_size` | yson | yes | computed per node from in-RAM data |
-| 🟢 implemented | `data_weight` | yson | yes | computed per node from in-RAM data |
-| 🟢 implemented | `dynamic` | yson | yes | computed per node from in-RAM data |
+| 🟢 implemented | `chunk_count` | yson | yes | computed for table nodes from in-RAM data |
+| 🟢 implemented | `chunk_row_count` | yson | yes | computed for table nodes from in-RAM data |
+| 🟢 implemented | `compressed_data_size` | yson | yes | computed for table nodes from in-RAM data |
+| 🟢 implemented | `data_weight` | yson | yes | computed for table nodes from in-RAM data |
+| 🟢 implemented | `dynamic` | yson | yes | computed for table nodes from in-RAM data |
 | 🟢 implemented | `id` | yson | yes | computed per node from in-RAM data |
-| 🟢 implemented | `key_columns` | yson | yes | computed per node from in-RAM data |
+| 🟢 implemented | `key_columns` | yson | yes | computed for table nodes from in-RAM data |
 | 🟢 implemented | `path` | yson | yes | computed per node from in-RAM data |
-| 🟢 implemented | `resource_usage` | yson | yes | computed per node from in-RAM data |
-| 🟢 implemented | `row_count` | yson | yes | computed per node from in-RAM data |
-| 🟢 implemented | `schema` | yson | yes | computed per node from in-RAM data |
-| 🟢 implemented | `schema_mode` | yson | yes | computed per node from in-RAM data |
-| 🟢 implemented | `sorted` | yson | yes | computed per node from in-RAM data |
-| 🟢 implemented | `sorted_by` | yson | yes | computed per node from in-RAM data |
+| 🟢 implemented | `resource_usage` | yson | yes | computed for table nodes from in-RAM data |
+| 🟢 implemented | `row_count` | yson | yes | computed for table nodes from in-RAM data |
+| 🟢 implemented | `schema` | yson | yes | computed for table nodes from in-RAM data |
+| 🟢 implemented | `schema_mode` | yson | yes | computed for table nodes from in-RAM data |
+| 🟢 implemented | `sorted` | yson | yes | computed for table nodes from in-RAM data |
+| 🟢 implemented | `sorted_by` | yson | yes | computed for table nodes from in-RAM data |
 | 🟢 implemented | `type` | yson | yes | computed per node from in-RAM data |
-| 🟢 implemented | `uncompressed_data_size` | yson | yes | computed per node from in-RAM data |
+| 🟢 implemented | `uncompressed_data_size` | yson | yes | computed for table nodes from in-RAM data |
 | 🟡 constant | `access_time` | yson |  | same fixed value for every node |
 | 🟡 constant | `account` | yson |  | same fixed value for every node |
 | 🟡 constant | `acl` | yson |  | same fixed value for every node |
 | 🟡 constant | `attribute_revision` | yson |  | same fixed value for every node |
-| 🟡 constant | `compression_codec` | yson |  | same fixed value for every node |
+| 🟡 constant | `compression_codec` | yson |  | same fixed value for every table node |
 | 🟡 constant | `content_revision` | yson |  | same fixed value for every node |
 | 🟡 constant | `creation_time` | yson |  | same fixed value for every node |
 | 🟡 constant | `effective_acl` | yson |  | same fixed value for every node |
-| 🟡 constant | `erasure_codec` | yson |  | same fixed value for every node |
+| 🟡 constant | `erasure_codec` | yson |  | same fixed value for every table node |
 | 🟡 constant | `has_row_level_ace` | yson |  | same fixed value for every node |
-| 🟡 constant | `in_memory_mode` | yson |  | same fixed value for every node |
+| 🟡 constant | `in_memory_mode` | yson |  | same fixed value for every table node |
 | 🟡 constant | `inherit_acl` | yson |  | same fixed value for every node |
 | 🟡 constant | `modification_time` | yson |  | same fixed value for every node |
 | 🟡 constant | `opaque` | yson |  | same fixed value for every node |
 | 🟡 constant | `opaque_attribute_keys` | yson |  | same fixed value for every node |
-| 🟡 constant | `optimize_for` | yson |  | same fixed value for every node |
+| 🟡 constant | `optimize_for` | yson |  | same fixed value for every table node |
 | 🟡 constant | `owner` | yson |  | same fixed value for every node |
 | 🟡 constant | `revision` | yson |  | same fixed value for every node |
-| 🟡 constant | `tablet_state` | yson |  | same fixed value for every node |
+| 🟡 constant | `tablet_state` | yson |  | same fixed value for every table node |
 | 🟡 constant | `user_attribute_keys` | yson |  | same fixed value for every node |
 | 🟡 constant | `user_attributes` | yson |  | same fixed value for every node |
 | ⚪ unused | `_format` | yson |  | requested by UI, absent in mock; per-attribute code-500 error is tolerated |
@@ -204,11 +204,11 @@ read_table response body in output_format web_json (the table viewer format).
 
 ## whoami-response
 
-Body of GET /auth/whoami — the single auth gate the UI server checks per request.
+Body of GET /auth/whoami — the identity/CSRF endpoint used by cluster bootstrap and, when password auth is enabled, by UI-server request authentication.
 
 | Status | Field | Type | Required | Description |
 |--------|-------|------|----------|-------------|
-| 🟢 implemented | `csrf_token` | string | yes | must be truthy or UI blocks with PRELOAD_ERROR.AUTHENTICATION; re-sent as X-Csrf-Token |
+| 🟢 implemented | `csrf_token` | string | yes | must be truthy or UI blocks with PRELOAD_ERROR.AUTHENTICATION; re-sent as X-Csrf-Token for credentialed requests, while the wrapper omits it when cluster authentication is 'none' |
 | 🟢 implemented | `login` | string | yes | resolved from cookie/token; 'iceberg' for anonymous |
 | 🟢 implemented | `real_login` | string | yes | same as login in mock |
 | 🟢 implemented | `realm` | string | yes | 'cypress_cookie' for cookie auth, 'mock' otherwise |
@@ -220,6 +220,6 @@ YT TError JSON envelope; body of every error response, mirrored in X-YT-Error he
 | Status | Field | Type | Required | Description |
 |--------|-------|------|----------|-------------|
 | 🟢 implemented | `attributes` | map | yes | extra context (path, code, ...) |
-| 🟢 implemented | `code` | int | yes | YT error code (1 generic, 500 resolve/NODE_DOES_NOT_EXIST, 900/901 auth/CSRF) |
+| 🟢 implemented | `code` | int | yes | numeric YT error code; the mock uses 1 (generic), 500 (resolve/NODE_DOES_NOT_EXIST), and mock-only 900/901 for login/CSRF. The real proxy returns generic code 1 for a wrong-password /login response and native auth codes such as 111/110 for cookie-auth failures |
 | 🟢 implemented | `message` | string | yes | human-readable message |
 | 🟡 constant | `inner_errors` | list<yt-error> | yes | mock always returns [] |

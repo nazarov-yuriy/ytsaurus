@@ -27,7 +27,7 @@ browser  ──(1)──►  UI Node server (expresskit)  ──(2)──►  cl
 
 ## 0. The three authentication modes and how to turn auth off
 
-### 0.1 `allowPasswordAuth` — the master switch of the UI server
+### 0.1 `allowPasswordAuth` — the password-auth switch
 
 `ui/src/server/utils/configs/apply-app-env-to-config.ts:29-41`:
 
@@ -41,8 +41,13 @@ const tmp = {
 };
 ```
 
-So: **if none of `ALLOW_PASSWORD_AUTH`, `WITH_AUTH`, `YT_AUTH_CLUSTER_ID` is set
-in the UI server's environment, `appAuthPolicy` becomes `AuthPolicy.disabled`.**
+`applyAppEnvToConfig` fills only fields that are not already present
+(`ui/src/server/utils/configs/apply-missing-fields.ts`). Thus the environment
+variables above determine `allowPasswordAuth`, but the stock
+`ui/src/server/configs/common.ts` already supplies
+`appAuthPolicy: AuthPolicy.required`, so that policy is not overwritten with
+`disabled`. This does not enable authentication by itself: Expresskit invokes an
+auth handler only when one is configured.
 
 `ui/src/server/index.ts:26-45` then wires middleware only when auth is on:
 
@@ -57,7 +62,7 @@ if (authMiddlewares.length) {
 }
 ```
 
-And expresskit skips the auth handler entirely when the policy is `disabled`
+Expresskit also skips the auth handler when the policy is `disabled`
 (`ui/node_modules/@gravity-ui/expresskit/dist/router.js:140-142`):
 
 ```js
@@ -65,10 +70,13 @@ const authHandler = authPolicy === AuthPolicy.disabled ? undefined
                                                        : route.authHandler || ctx.config.appAuthHandler;
 ```
 
-Consequences when `allowPasswordAuth` is falsy:
+Consequences when `allowPasswordAuth` is falsy **and `ytOAuthSettings` is not
+configured**:
 
 * No `resolveYTAuthorization` middleware ⇒ `req.yt` is **undefined**.
-* No `authMiddleware` ⇒ nothing ever calls `/auth/whoami`, nothing ever 401s.
+* No application auth handler is installed, so the server-wide auth gate neither
+  calls `/auth/whoami` nor produces a 401. The cluster bootstrap still calls
+  `/auth/whoami` explicitly through `GET /api/cluster-info/:cluster` (§2.5).
 * `getLayoutConfig` ships `allowPasswordAuth: false` to the browser
   (`ui/src/server/components/layout-config.ts:68`), and the client's
   `selectGlobalShowLoginDialog` (`ui/src/ui/store/selectors/global/index.ts:117-129`)
@@ -117,7 +125,11 @@ Where it is consumed:
   `yt.setup.setGlobalOption('authentication', {type: config.authentication || 'none'})`.
   In `jsw/lib/core.js:246` this drives
   `withCredentials = Boolean(authentication.type) && authentication.type !== 'none'`,
-  i.e. with `'none'` the browser does not even send cookies on the XHRs.
+  i.e. `'none'` disables credentials on cross-origin requests. Same-origin XHRs
+  can still carry UI-host cookies, but the Node tunnel strips the incoming
+  `Cookie` header before proxying (§2.6). The wrapper also sets Axios
+  `withXSRFToken` to this same boolean, so it does not copy the XSRF cookie into a
+  header in `'none'` mode.
 
 * Local mode (`PROXY` env var, no clusters-config):
   `ui/src/server/config.localcluster.ts:20`
@@ -236,15 +248,13 @@ export const makeAuthClusterCookieName = (ytAuthCluster: string) =>
 
 then `removeSecureFlagIfOriginInsecure()` (§0.3) runs.
 
-Wire (two clusters would give two extra lines; here cluster id is `mock`):
+Wire (one relayed cookie plus one copy for the current cluster, here `mock`):
 
 ```http
 HTTP/1.1 200 OK
-Content-Type: application/json
-Set-Cookie: YTCypressCookie=<opaque>; Path=/; HttpOnly; Secure; SameSite=Lax; Expires=...
-Set-Cookie: mock_YTCypressCookie=<opaque>; Path=/; HttpOnly; Secure; SameSite=Lax; Expires=...
-
-{}
+Content-Length: 0
+Set-Cookie: YTCypressCookie=<opaque>; Expires=...; Secure; HttpOnly; Path=/
+Set-Cookie: mock_YTCypressCookie=<opaque>; Expires=...; Secure; HttpOnly; Path=/
 ```
 
 `pipeResponse` (`ui/src/server/utils/index.ts:132-154`) copies every header
@@ -256,17 +266,18 @@ Error path: `login.ts:79-86` rewrites a proxy `401` into `400` before
 `sendAndLogError`, "to avoid redirecting to login page when checking user
 password". Because of `pipeAxiosErrorOrFalse`
 (`ui/src/server/utils/index.ts:189-201`) the proxy's own YT-error JSON body is
-piped through unchanged with the proxy's status code whenever the error response
-is a stream — so in practice the browser sees the proxy's `401` body/status for
-a wrong password, and `LoginFormPage.tsx:82-90` renders `error.response.data.message`.
+piped through unchanged whenever the error response is a stream, using the
+rewritten **400** status. `LoginFormPage.tsx:82-90` renders
+`error.response.data.message`.
 
 ### 1.5 After a successful login
 
 `LoginFormPage.tsx:77-81` → `onSuccessLogin(username)`
 (`ui/src/ui/store/actions/global/index.ts:335-346`) which only mutates the redux
 store (`showLoginDialog: false, login, ytAuthCluster: undefined`) and reloads
-user settings. **No page reload, no second network call** is required for the
-login form to disappear.
+user settings. **No page reload or second authentication request** is required
+for the login form to disappear; remote user-settings calls may still occur
+when that feature is configured.
 
 ---
 
@@ -361,9 +372,9 @@ Expected `200` body — **exactly these two fields are consumed**:
 {"login": "admin", "csrf_token": "b3f1…:1737800000"}
 ```
 
-Anything non-200 ⇒ axios throws ⇒ `isAuthError` (`authorization.ts:14-16`
-matches `e.response?.status === 401`) ⇒ for non-`ui` routes the Node server
-answers the browser:
+A proxy **401** makes `isAuthError` true
+(`authorization.ts:14-16` matches `e.response?.status === 401`), so for
+non-`ui` routes the Node server answers the browser:
 
 ```http
 HTTP/1.1 401 Unauthorized
@@ -374,9 +385,11 @@ x-yt-ui-cluster-name: mock
 ```
 
 For routes flagged `ui: true` (all HTML pages, `/api/yt/:cluster/login`,
-`/api/yt/logout`, the oauth routes) the middleware **swallows** the failure and
+`/api/yt/logout`, the oauth routes) the middleware **swallows** the 401 and
 calls `next()`, so the page still renders — just with `login === undefined`,
-which is what makes the login form appear.
+which is what makes the login form appear. Other `/auth/whoami` failures (for
+example 503) are not classified as authentication failures and are also allowed
+through by this middleware.
 
 ### 2.4 The browser's reaction to 401
 
@@ -418,8 +431,9 @@ Flow, end to end:
    (`cluster-params.ts:249-257`, `ui/src/ui/containers/PreloadError/PreloadError.tsx:57`).
 4. The javascript-wrapper is configured with
    `xsrf: true`, `xsrfCookieName: ytfront_<cluster>_xsrf_token`
-   (`ui/src/ui/common/yt-api.ts:30-31`) and axios turns that into the request
-   header `X-Csrf-Token` (`jsw/lib/core.js:264`):
+   (`ui/src/ui/common/yt-api.ts:30-31`). When `authentication !== 'none'`, the
+   wrapper also enables credentials/XSRF handling and Axios turns that cookie
+   into the request header `X-Csrf-Token` (`jsw/lib/core.js:246,264`):
 
    ```js
    xsrfEnabled ? {xsrfCookieName, xsrfHeaderName: 'X-Csrf-Token'} : undefined
@@ -541,6 +555,8 @@ produce a 401, render the page instead" (`middlewares/authorization.ts:34-37`).
   `Authorization: Basic base64(user:pass)`.
 * Response: the proxy's status/body/headers, plus a duplicated
   `<cluster>_YTCypressCookie` `Set-Cookie`.
+  An upstream `401` is returned to the browser as `400`, with the proxy error
+  body preserved (§1.4).
 
 ### 3.2 `POST /api/yt/:ytAuthCluster/change-password` — `routes.ts:77`, `ui: true`
 
@@ -571,9 +587,10 @@ Token refresh: if only the refresh cookie is present, `getOAuthAccessToken`
 (`oauth.ts:47-59`) POSTs `grant_type=refresh_token` and re-sets the cookies.
 
 The button is rendered only when `allowOAuth` is in `window.__DATA__`
-(`layout-config.ts:69`, `LoginFormPage.tsx:151-164`), which requires all six of
-`baseURL, authPath, tokenPath, clientId, clientSecret` (+`scope` used) to be
-configured (`oauth.ts:12-22`).
+(`layout-config.ts:69`, `LoginFormPage.tsx:151-164`). The runtime eligibility
+check requires `baseURL`, `authPath`, `tokenPath`, `clientId`, and
+`clientSecret`; the typed configuration also requires `scope`, which is used in
+the authorization request (`oauth.ts:12-22,89-101`).
 
 ### 3.5 `GET /api/cluster-info/:ytAuthCluster` — `routes.ts:56`
 
@@ -616,7 +633,7 @@ opts out of the auth handler.
 ### 3.8 Routes that merely *consume* the credentials
 
 These have no auth-specific payload but will 401 through `authMiddleware` if
-`/auth/whoami` fails, so a mock must satisfy them too:
+`/auth/whoami` returns 401, so a mock must satisfy them too:
 
 * `GET|POST|PUT /api/yt/:ytAuthCluster/api/:version/:command` (`routes.ts:82-84`) — §2.6.
 * `GET /api/yt-proxy/:ytAuthCluster/:command` (`routes.ts:86`) — whitelist
@@ -802,7 +819,7 @@ POST /login HTTP/1.1
 Authorization: Basic YWRtaW46c2VjcmV0
 
 HTTP/1.1 200 OK
-Set-Cookie: YTCypressCookie=51f3…8b; Expires=Wed, 23 Oct 2026 12:00:00 GMT; Secure; HttpOnly; Path=/
+Set-Cookie: YTCypressCookie=51f3…8b; Expires=Fri, 23 Oct 2026 12:00:00 GMT; Secure; HttpOnly; Path=/
 ```
 
 ### 4.4 Credential resolution for `/api/v3|v4/*`
@@ -971,9 +988,9 @@ The cheapest correct configuration is to make the UI never ask about auth:
 
 1. UI server env: do **not** set `ALLOW_PASSWORD_AUTH`, `WITH_AUTH` or
    `YT_AUTH_CLUSTER_ID`; do not configure `ytOAuthSettings`.
-   ⇒ `allowPasswordAuth = false`, `appAuthPolicy = AuthPolicy.disabled`
-   (`apply-app-env-to-config.ts:32,37`), no auth middleware at all
-   (`server/index.ts:34-45`).
+   ⇒ `allowPasswordAuth = false` and no auth resolver/handler is installed
+   (`server/index.ts:26-45`). The stock common config's `appAuthPolicy` remains
+   `required`, but with no handler that policy has nothing to invoke (§0.1).
 2. `clusters-config.json`:
 
    ```json
@@ -987,15 +1004,17 @@ The cheapest correct configuration is to make the UI never ask about auth:
    **no** credential header (`requestsSetup.ts:90-95,122-124`), and the browser's
    javascript-wrapper sets `withCredentials: false` (`jsw/lib/core.js:246`).
 
-With that, the mock proxy needs **zero** auth endpoints. Required non-auth
-endpoints (all unauthenticated) are:
+With that, the mock needs no credential validation or session state.
+`/auth/whoami` is nevertheless still required as a fixed cluster-bootstrap
+endpoint. The bootstrap/navigation requirements and optional component
+endpoints are:
 
 | method | path | why | response |
 |---|---|---|---|
-| GET | `/version` | `getVersions`, `getClusterInfo` (`cluster-queries.ts:72-81,122-155`) | `text/plain` body like `24.1.0-mock` (the UI regexes `(\d+)\.(\d+)\.(\d+)`) |
+| GET | `/version` | `getVersions`, `getClusterInfo` (`cluster-queries.ts:72-81,122-155`) | `text/plain` body like `24.1.0-mock`; `getVersions` extracts `(\d+)\.(\d+)\.(\d+)` for the cluster menu, while cluster bootstrap only requires a truthy raw string |
 | GET | `/auth/whoami` | still called by `getClusterInfo` even with auth off — see 5.2 | `{"login":"root","realm":"YT","real_login":"root","csrf_token":"mock:9999999999"}` |
 | POST | `/api/v3/execute_batch` | `/api/cluster-params/:cluster` | batch results for `list //sys/media`, `get //sys/scheduler/orchid/service/version`, `get //sys/@ui_config`, `get //sys/@ui_config_dev_overrides`, `list //sys/primary_masters` (+ its version) |
-| GET/POST | `/api/v4/<command>` | everything the pages do | per-command |
+| GET/POST | `/api/v3/<command>` or `/api/v4/<command>` | everything the pages do | per-command |
 | GET | `/hosts` | heavy commands (`yt-api.ts:94-100`) | `["127.0.0.1:8000"]` |
 | GET | `/hosts/all`, `/internal/discover_versions/v2` | only if the components pages are opened (`yt-proxy-api.ts:21-24`) | — |
 
@@ -1016,9 +1035,10 @@ Content-Type: application/json
 ```
 
 The client will then set the browser cookie
-`ytfront_mock_xsrf_token=mock-csrf:9999999999` and send
-`X-Csrf-Token: mock-csrf:9999999999` on non-GET cluster calls — the mock can
-ignore the header entirely.
+`ytfront_mock_xsrf_token=mock-csrf:9999999999`. With
+`authentication: "none"` the wrapper sets `withXSRFToken: false`, so it does
+**not** copy that cookie into `X-Csrf-Token`; an unauthenticated mock does not
+need the header. Password/cookie mode does send it (§2.5).
 
 Note the username shortcut: if the UI runs in local mode
 (`APP_ENV=local` / `YT_LOCAL_CLUSTER_ID`), `home.ts:29` hard-codes
@@ -1040,8 +1060,8 @@ Set-Cookie: YTCypressCookie=0123456789abcdef0123456789abcdef0123456789abcdef0123
 ```
 
 Omit `Secure` when serving the UI over `http://` (or rely on
-`ytAuthAllowInsecure` to strip it). Never emit `SameSite` — the real proxy does
-not. On bad credentials:
+`ytAuthAllowInsecure` to strip it). The real proxy emits no `SameSite`
+attribute; omit it when matching the real wire format. On bad credentials:
 
 ```http
 HTTP/1.1 401 Unauthorized
@@ -1074,13 +1094,12 @@ dialog.
 
 ### 5.3 Things a mock must NOT do
 
-* Do **not** emit `SameSite=Strict` on `YTCypressCookie` — the login POST is
-  same-origin to the UI, but the cookie is re-issued by the UI server for a
-  different name; `Strict` breaks the follow-up navigation.
-* Do **not** return `403`/`500` for bad credentials: the UI only recognises
-  `401` (`authorization.ts:15`, `entries/main.tsx:21`). A `503` (which is what
-  the real proxy returns for *non*-`InvalidCredentials` errors, §4.5) will not
-  open the login form.
+* For an expired or invalid session, do **not** return `403`/`500` from
+  `/auth/whoami` or proxied API calls: the UI only recognises `401`
+  (`authorization.ts:15`, `entries/main.tsx:21`). A `503` (which is what the
+  real proxy returns for *non*-`InvalidCredentials` errors, §4.5) will not open
+  the login form. A bad-password `401` from `/login` is deliberately rewritten
+  to `400` by the UI server (§1.4).
 * Do **not** forget `Content-Type: application/json` on error bodies — the
   client reads `error.response.data.message`.
 * Do **not** return a `csrf_token` of `undefined`/`null` from `/auth/whoami`:

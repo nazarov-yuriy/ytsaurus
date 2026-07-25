@@ -12,10 +12,9 @@
     "response": {
       "status": 200,
       "headers": {
-        "Set-Cookie": ["YTCypressCookie=<64 hex>; Expires=<RFC822>; HttpOnly; [Secure]; Path=/", "<cluster>_YTCypressCookie=<64 hex>; Expires=<RFC822>; HttpOnly; [Secure]; Path=/"],
-        "Content-Type": "application/json"
+        "Set-Cookie": ["YTCypressCookie=<64 hex>; Expires=<RFC822>; HttpOnly; [Secure]; Path=/", "<cluster>_YTCypressCookie=<64 hex>; Expires=<RFC822>; HttpOnly; [Secure]; Path=/"]
       },
-      "body_schema": "empty body on success (the proxy replies with no payload). On failure the proxy's YT-error JSON is piped through: {code:int, message:string, attributes:object, inner_errors:array}. UI server maps proxy 401 -> 400 at login.ts:80-83, but pipeAxiosErrorOrFalse usually streams the proxy status/body verbatim."
+      "body_schema": "empty body on success (the proxy replies with no payload). On failure the proxy's YT-error JSON body is piped through: {code:int, message:string, attributes:object, inner_errors:array}. The UI server maps proxy 401 -> 400 at login.ts:80-83 before pipeAxiosErrorOrFalse streams the response with that rewritten status."
     },
     "cookies": ["YTCypressCookie", "<ytAuthCluster>_YTCypressCookie"],
     "needed_for_mock": true,
@@ -195,7 +194,7 @@
     "request": {
       "headers": {
         "Cookie": "<cluster>_YTCypressCookie=<value> (browser side; replaced upstream)",
-        "X-Csrf-Token": "<csrf_token> - set by axios from cookie ytfront_<cluster>_xsrf_token, forwarded verbatim",
+        "X-Csrf-Token": "<csrf_token> - set by Axios and forwarded verbatim only when cluster authentication is not 'none'",
         "X-Custom-Request-Id": "optional, consumed by the UI server for stats and NOT forwarded",
         "X-YT-Parameters / X-YT-Input-Format / X-YT-Output-Format": "forwarded as-is"
       },
@@ -539,9 +538,9 @@
     "layer": "proxy",
     "method": "GET",
     "path": "/version",
-    "description": "Plain-text proxy version. Called without credentials by getVersions and getClusterInfo. A missing or unparseable version makes the client render PRELOAD_ERROR.CONNECTION and never reach the auth check.",
+    "description": "Plain-text proxy version. Called without credentials by getVersions and getClusterInfo. The cluster-info bootstrap only checks that the raw string is truthy; a missing or failed response makes the client render PRELOAD_ERROR.CONNECTION before it checks the auth result. getVersions separately extracts a semantic-looking version for the cluster menu.",
     "request": {"headers": {}, "params": {}, "body": "none"},
-    "response": {"status": 200, "headers": {"Content-Type": "text/plain"}, "body_schema": "raw version string, matched by the client against /(\\d+)\\.(\\d+)\\.(\\d+)/"},
+    "response": {"status": 200, "headers": {"Content-Type": "text/plain"}, "body_schema": "raw version string; getVersions matches it against /(\\d+)\\.(\\d+)\\.(\\d+)/, while getClusterInfo returns it unchanged"},
     "cookies": [],
     "needed_for_mock": true,
     "source_refs": [

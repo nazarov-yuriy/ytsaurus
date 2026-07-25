@@ -100,7 +100,7 @@
     "command": "yt-api-reverse-proxy",
     "method": "GET|POST|PUT",
     "path": "/api/yt/:ytAuthCluster/api/:version/:command",
-    "description": "The single reverse proxy the browser uses for ALL YT commands when ytApiUseCORS is falsy (the default). Validates version/command against the javascript-wrapper command list; resolves a heavy proxy via GET <proxy>/hosts for heavy commands (read_table!) unless isLocalCluster or disableHeavyProxies; forwards query string, body and all headers except host/cookie, adding accept-encoding:gzip, X-YT-Correlation-Id, X-YT-Suppress-Redirect:1 and Cookie: YTCypressCookie=<secret>. The response is streamed back verbatim, so all X-YT-* response headers survive.",
+    "description": "The default reverse proxy for javascript-wrapper commands when ytApiUseCORS is falsy (the default); explicit direct-download paths may bypass it. Validates version/command against the javascript-wrapper command list; resolves a heavy proxy via GET <proxy>/hosts for heavy commands (read_table!) unless isLocalCluster or disableHeavyProxies; forwards the query string, body and all headers except host/cookie/X-Custom-Request-Id, adding accept-encoding:gzip, X-YT-Correlation-Id and X-YT-Suppress-Redirect:1. It injects an upstream credential cookie only when cluster authentication is not 'none' (YTCypressCookie for password auth or access_token for OAuth). The response is streamed back verbatim, so all X-YT-* response headers survive.",
     "request": {
       "headers": {
         "Accept": "application/json",
@@ -543,7 +543,7 @@
     "command": "framing",
     "method": "POST",
     "path": "/api/v3/read_table",
-    "description": "Optional response chunk-framing. Enabled purely by the PRESENCE of the X-YT-Accept-Framing request header (value ignored) plus api/framing/enable (default true); signalled back with X-YT-Framing: 1. Wire format: Data frame = 0x01 + ui32 little-endian length + payload (zero-length legal); KeepAlive frame = the single byte 0x02 with no length and no payload. Framing is OUTSIDE compression: frame(compress(data)). Keep-alives start only after the driver emits response parameters, period api/framing/keep_alive_period (default 5 s). The UI/javascript-wrapper NEVER sends X-YT-Accept-Framing, so a mock can ignore this entirely.",
+    "description": "Optional response chunk-framing. Enabled purely by the PRESENCE of the X-YT-Accept-Framing request header (value ignored) plus api/framing/enable (default true); signalled back with X-YT-Framing: 1. Wire format: Data frame = 0x01 + ui32 little-endian length + payload (zero-length legal); KeepAlive frame = the single byte 0x02 with no length and no payload. Compression wraps the framed stream on the wire: compress(frame(data)), so clients decompress before parsing frames. Keep-alives start only after the driver emits response parameters, period api/framing/keep_alive_period (default 5 s). The UI/javascript-wrapper NEVER sends X-YT-Accept-Framing, so a mock can ignore this entirely.",
     "request": {"headers": {"X-YT-Accept-Framing": "1"}, "params": {}},
     "response": {"body_schema": "octet stream of frames; response header X-YT-Framing: 1"},
     "api_version": "v3",
