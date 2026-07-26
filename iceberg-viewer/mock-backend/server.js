@@ -21,6 +21,22 @@ const RECORD_PATH = process.env.MOCK_RECORD || null;
 const REQUIRE_AUTH = Boolean(process.env.MOCK_REQUIRE_AUTH);
 const ROBOT_TOKEN = process.env.MOCK_ROBOT_TOKEN || '';
 
+// MOCK_DELAY simulates a slow catalog: "1500" delays every data command by 1.5s,
+// "read_table:5000,list:2000" per command. //sys paths are never delayed — the
+// UI server's boot-path robot requests have a 5s timeout (see docs/timeouts.md).
+const DELAYS = {};
+for (const part of (process.env.MOCK_DELAY || '').split(',').filter(Boolean)) {
+  const [cmd, ms] = part.includes(':') ? part.split(':') : [null, part];
+  if (cmd) DELAYS[cmd] = Number(ms);
+  else for (const c of ['get', 'list', 'exists', 'read_table']) DELAYS[c] = Number(ms);
+}
+
+function maybeDelay(command, params) {
+  const ms = DELAYS[command] || 0;
+  if (!ms || String((params || {}).path || '').startsWith('//sys')) return Promise.resolve();
+  return new Promise((r) => setTimeout(r, ms));  // async: never blocks the event loop
+}
+
 function record(entry) {
   if (!RECORD_PATH) return;
   fs.appendFileSync(RECORD_PATH, JSON.stringify(entry) + '\n');
@@ -282,20 +298,22 @@ const commands = {
   },
 
   // Runs subrequests [{command, parameters}] and returns one result object each.
-  execute_batch(params, auth) {
-    return (params.requests || []).map((r) => {
+  async execute_batch(params, auth) {
+    const out = [];
+    for (const r of params.requests || []) {
       const impl = commands[r.command];
       if (!impl) {
-        return {error: ytError(1, `Command ${r.command} is not registered in batch`)};
+        out.push({error: ytError(1, `Command ${r.command} is not registered in batch`)});
+        continue;
       }
       try {
-        const output = impl(r.parameters || {}, auth);
-        return {output};
+        await maybeDelay(r.command, r.parameters);
+        out.push({output: await impl(r.parameters || {}, auth)});
       } catch (e) {
-        if (e && e.err) return {error: e.err};
-        return {error: ytError(1, String(e && e.message || e))};
+        out.push(e && e.err ? {error: e.err} : {error: ytError(1, String(e && e.message || e))});
       }
-    });
+    }
+    return out;
   },
 };
 
@@ -466,7 +484,8 @@ const server = http.createServer(async (req, res) => {
       }
       let result;
       try {
-        result = impl(params, auth);
+        await maybeDelay(command, params);
+        result = await impl(params, auth);
       } catch (e) {
         if (e && e.err) return void sendYtError(res, e.status, e.err, cors);
         throw e;

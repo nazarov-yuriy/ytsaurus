@@ -17,6 +17,8 @@ Environment:
   tokens instead of using the anonymous `iceberg` fallback.
 - `MOCK_ROBOT_TOKEN=<token>` supplies the one OAuth robot token accepted in
   strict mode; it maps to the `iceberg` user.
+- `MOCK_DELAY=<ms|cmd:ms,...>` simulates a slow catalog on data commands
+  (`//sys` paths and infrastructure endpoints exempt) — see `../docs/timeouts.md`.
 
 ## User management (PostgreSQL)
 

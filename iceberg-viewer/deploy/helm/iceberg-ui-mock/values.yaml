@@ -12,6 +12,9 @@ mockBackend:
   # When true, mount server.py/data.py/webjson.py/userdb.py from the chart's ConfigMap.
   # Set to false when image.repository already contains them (baked image).
   sourcesFromConfigMap: true
+  # Simulate a slow catalog, e.g. "1500" or "read_table:5000,list:2000".
+  # //sys paths and infrastructure endpoints are never delayed (docs/timeouts.md).
+  delay: ""
   service:
     # Port 80 keeps the clusters-config `proxy` value a bare hostname; other
     # ports are appended to the generated Service DNS address.

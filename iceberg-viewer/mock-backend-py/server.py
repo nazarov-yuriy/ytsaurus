@@ -13,6 +13,7 @@ import re
 import secrets
 import socket
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -27,6 +28,23 @@ HOST = os.environ.get('MOCK_HOST', f'localhost:{PORT}')
 RECORD_PATH = os.environ.get('MOCK_RECORD')
 REQUIRE_AUTH = bool(os.environ.get('MOCK_REQUIRE_AUTH'))
 ROBOT_TOKEN = os.environ.get('MOCK_ROBOT_TOKEN', '')
+
+# MOCK_DELAY simulates a slow catalog: "1500" delays every data command by 1.5s,
+# "read_table:5000,list:2000" per command. //sys paths are never delayed — the
+# UI server's boot-path robot requests have a 5s timeout (see docs/timeouts.md).
+DELAYS = {}
+for _part in filter(None, os.environ.get('MOCK_DELAY', '').split(',')):
+    _cmd, _, _ms = _part.partition(':')
+    if _ms:
+        DELAYS[_cmd] = int(_ms)
+    else:
+        DELAYS.update(dict.fromkeys(('get', 'list', 'exists', 'read_table'), int(_cmd)))
+
+
+def maybe_delay(command, params):
+    ms = DELAYS.get(command, 0)
+    if ms and not str((params or {}).get('path', '')).startswith('//sys'):
+        time.sleep(ms / 1000)
 
 
 def log(*args):
@@ -178,6 +196,7 @@ def cmd_execute_batch(params, auth):
             out.append({'error': yt_error(1, f'Command {r.get("command")} is not registered in batch')})
             continue
         try:
+            maybe_delay(r.get('command'), r.get('parameters'))
             out.append({'output': impl(r.get('parameters') or {}, auth)})
         except CommandError as e:
             out.append({'error': e.err})
@@ -396,6 +415,7 @@ class Handler(BaseHTTPRequestHandler):
                 log(f'  !! unimplemented command: {command}')
                 return self.send_yt_error(404, yt_error(1, f'Command {command} is not registered'), cors)
             try:
+                maybe_delay(command, params)
                 result = impl(params, auth)
             except CommandError as e:
                 return self.send_yt_error(e.status, e.err, cors)
