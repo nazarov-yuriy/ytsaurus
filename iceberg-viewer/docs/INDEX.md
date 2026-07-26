@@ -7,6 +7,7 @@ Which doc covers what, and which doc mentions which. Regenerate with `python3 db
 ### [README.md](../README.md)
 *Reusing the YTsaurus UI as an Apache Iceberg catalog viewer*
 - mentions: [deploy/README.md](../deploy/README.md), [docs/API-INDEX.md](../docs/API-INDEX.md), [docs/ENTITIES.md](../docs/ENTITIES.md), [docs/auth.md](../docs/auth.md), [docs/bootstrap-config.md](../docs/bootstrap-config.md), [docs/coverage-notes.md](../docs/coverage-notes.md), [docs/iceberg-considerations.md](../docs/iceberg-considerations.md), [docs/table-viewer.md](../docs/table-viewer.md), [docs/timeouts.md](../docs/timeouts.md)
+- mentioned by: [docs/security-review.md](../docs/security-review.md)
 
 ## Protocol documentation (handwritten)
 
@@ -16,7 +17,7 @@ Which doc covers what, and which doc mentions which. Regenerate with `python3 db
 
 ### [docs/table-viewer.md](../docs/table-viewer.md)
 *YTsaurus UI ↔ cluster wire protocol: Navigation + static Table viewer*
-- mentioned by: [README.md](../README.md), [docs/coverage-notes.md](../docs/coverage-notes.md), [docs/iceberg-considerations.md](../docs/iceberg-considerations.md)
+- mentioned by: [README.md](../README.md), [docs/architecture-review.md](../docs/architecture-review.md), [docs/coverage-notes.md](../docs/coverage-notes.md), [docs/iceberg-considerations.md](../docs/iceberg-considerations.md)
 
 ### [docs/bootstrap-config.md](../docs/bootstrap-config.md)
 *Running the YTsaurus UI against a mock backend*
@@ -41,6 +42,16 @@ Which doc covers what, and which doc mentions which. Regenerate with `python3 db
 *Reusing ytsaurus-ui for an Apache Iceberg viewer — considerations & open questions*
 - mentions: [docs/auth.md](../docs/auth.md), [docs/table-viewer.md](../docs/table-viewer.md), [docs/timeouts.md](../docs/timeouts.md), [recordings/COVERAGE.md](../recordings/COVERAGE.md)
 - mentioned by: [README.md](../README.md)
+
+## Reviews
+
+### [docs/architecture-review.md](../docs/architecture-review.md)
+*Architecture review: does the mock match YTsaurus' high-level design?*
+- mentions: [docs/table-viewer.md](../docs/table-viewer.md)
+
+### [docs/security-review.md](../docs/security-review.md)
+*Backend security review*
+- mentions: [README.md](../README.md), [deploy/README.md](../deploy/README.md)
 
 ## Generated from the SQLite catalog / recordings — do not edit
 
@@ -72,4 +83,4 @@ Which doc covers what, and which doc mentions which. Regenerate with `python3 db
 
 ### [deploy/README.md](../deploy/README.md)
 *Kubernetes deployment (Helm)*
-- mentioned by: [README.md](../README.md)
+- mentioned by: [README.md](../README.md), [docs/security-review.md](../docs/security-review.md)

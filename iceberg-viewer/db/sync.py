@@ -237,6 +237,7 @@ DOC_GROUPS = [
         "docs/auth.md", "docs/table-viewer.md", "docs/bootstrap-config.md",
         "docs/empirical-findings.md", "docs/coverage-notes.md", "docs/timeouts.md"]),
     ("Planning", ["docs/iceberg-considerations.md"]),
+    ("Reviews", ["docs/architecture-review.md", "docs/security-review.md"]),
     ("Generated from the SQLite catalog / recordings — do not edit", [
         "docs/API-INDEX.md", "docs/ENTITIES.md", "recordings/COVERAGE.md"]),
     ("Component guides", [
