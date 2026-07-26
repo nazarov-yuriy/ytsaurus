@@ -62,8 +62,13 @@ the stock `python:3.12-slim` image. The UI image is pulled from
     --set mockBackend.image.repository=registry.example/iceberg-ui-mock-backend \
     --set mockBackend.image.tag=dev
   ```
-- `sync-chart-files.sh` — copies `mock-backend-py/*.py` into the chart's
-  `files/`; `--check` fails if they drifted (run it after backend changes).
+- The chart's `files/*.py` are **relative symlinks into `mock-backend-py/`** —
+  there is exactly one copy of the backend sources, so nothing can drift.
+  `helm template`/`install` from the repo and `helm package` both resolve the
+  links (the loader logs "Contents of linked file included and used"); a
+  packaged `.tgz` is self-contained. Two caveats: don't copy `deploy/helm/`
+  out of the repository by itself (the links would dangle — `helm package` it
+  instead), and on Windows clone with `core.symlinks=true`.
 
 ## PostgreSQL credentials and rotation
 
