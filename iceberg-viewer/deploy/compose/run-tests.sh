@@ -5,8 +5,8 @@
 set -e
 cd /workspace
 
-echo '== installing psycopg (PG-mode suites)'
-pip install --quiet 'psycopg[binary]'
+echo '== installing pinned PG-mode dependencies'
+python3 -m pip install --quiet --requirement mock-backend-py/requirements.txt
 
 for suite in test_protocol test_userdb test_cookie_model test_slow_backend test_golden_replay; do
     echo "== tests/$suite.py"

@@ -1,0 +1,4 @@
+# Optional PostgreSQL-backed user/session storage. Keep every resolved
+# distribution exact because Helm installs this file at pod startup.
+psycopg[binary]==3.3.4
+typing-extensions==4.16.0

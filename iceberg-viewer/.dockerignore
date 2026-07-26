@@ -4,3 +4,4 @@
 !mock-backend-py/data.py
 !mock-backend-py/webjson.py
 !mock-backend-py/userdb.py
+!mock-backend-py/requirements.txt

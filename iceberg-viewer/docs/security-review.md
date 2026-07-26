@@ -380,7 +380,7 @@ prints the first 300 body bytes before authentication
 The user administration CLI requires a password in the process argument list
 ([`userdb.py`](../mock-backend-py/userdb.py#L223-L231)), and deployment
 documentation recommends passing secrets through Helm `--set`
-([`README.md`](../deploy/README.md#L68-L77)). The robot token has no
+([`README.md`](../deploy/README.md#L100-L106)). The robot token has no
 `existingSecret` option. Secret-derived SHA-256 values are also placed in
 readable pod annotations
 ([`mock-backend.yaml`](../deploy/helm/iceberg-ui-mock/templates/mock-backend.yaml#L30-L38)),
@@ -420,15 +420,17 @@ mounts, and set RuntimeDefault seccomp. Disable ServiceAccount token automount
 for UI, backend, PostgreSQL, and test pods unless a narrowly scoped identity is
 actually required.
 
-### SEC-15 — Startup executes mutable, unpinned third-party code
+### SEC-15 — Startup downloads third-party code and images remain mutable
 
 **Severity: Medium**
 
 With PostgreSQL and the default ConfigMap source mode, every pod start runs
-`pip install 'psycopg[binary]'` from the network before starting the backend
+`python3 -m pip install --requirement /app/requirements.txt` from the network
+before starting the backend
 ([`mock-backend.yaml`](../deploy/helm/iceberg-ui-mock/templates/mock-backend.yaml#L48-L55)).
-The version and hashes are not pinned, and this runs as root. The baked image
-also installs an unpinned package and uses a mutable base tag
+The requirements file pins every installed distribution to an exact version,
+and the baked image consumes the same file. Package hashes are not pinned; the
+startup installation also runs as root, and the image uses a mutable base tag
 ([`mock-backend.Dockerfile`](../deploy/docker/mock-backend.Dockerfile#L5-L8)).
 Backend, PostgreSQL, and UI images are tag-based rather than digest-pinned
 ([`values.yaml`](../deploy/helm/iceberg-ui-mock/values.yaml#L8-L11),

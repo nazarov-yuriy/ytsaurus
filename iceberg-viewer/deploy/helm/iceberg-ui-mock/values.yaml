@@ -21,9 +21,9 @@ mockBackend:
     port: 80
   resources: {}
 
-# Optional real user persistence: users + login sessions in PostgreSQL
-# (table data stays fake/in-RAM). When enabled, the mock gets MOCK_PG_DSN and
-# the run-from-ConfigMap mode pip-installs psycopg at container start.
+# Optional real user persistence: users + login sessions in PostgreSQL.
+# When enabled, the mock gets MOCK_PG_DSN; run-from-ConfigMap mode installs the
+# exact versions in requirements.txt at container start. Table data stays fake.
 postgres:
   enabled: false
   image:

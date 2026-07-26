@@ -7,7 +7,7 @@ metadata:
   labels:
     {{- include "iceberg-ui-mock.labels" . | nindent 4 }}
 data:
-{{ (.Files.Glob "files/*.py").AsConfig | indent 2 }}
+{{ (.Files.Glob "files/*").AsConfig | indent 2 }}
 ---
 {{- end }}
 apiVersion: apps/v1
@@ -29,7 +29,7 @@ spec:
         app.kubernetes.io/component: mock-backend
       annotations:
         # Roll pods when the embedded backend sources change.
-        checksum/sources: {{ (.Files.Glob "files/*.py").AsConfig | sha256sum }}
+        checksum/sources: {{ (.Files.Glob "files/*").AsConfig | sha256sum }}
         {{- if ne (include "iceberg-ui-mock.auth.mode" .) "none" }}
         checksum/robot-token: {{ include "iceberg-ui-mock.auth.robotToken" . | sha256sum }}
         {{- end }}
@@ -48,8 +48,8 @@ spec:
           {{- if .Values.mockBackend.sourcesFromConfigMap }}
           workingDir: /app
           {{- if .Values.postgres.enabled }}
-          # Stock python image lacks the PG driver; install it at start.
-          command: ["sh", "-c", "pip install --quiet 'psycopg[binary]' && exec python3 /app/server.py 8000"]
+          # Stock python image lacks the PG driver; install the pinned dependencies at start.
+          command: ["sh", "-c", "python3 -m pip install --quiet --requirement /app/requirements.txt && exec python3 /app/server.py 8000"]
           {{- else }}
           command: ["python3", "/app/server.py", "8000"]
           {{- end }}

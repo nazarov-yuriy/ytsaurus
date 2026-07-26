@@ -67,10 +67,13 @@ the stock `python:3.12-slim` image. The UI image is pulled from
   the backend reject missing/unknown credentials. Set
   `ui.cluster.authentication=none` explicitly only when an unauthenticated
   PostgreSQL-backed mock is intentional. The seed login is `iceberg`/`iceberg`.
-  In run-from-ConfigMap mode the container pip-installs `psycopg[binary]` at start,
-  so it needs egress to PyPI; a startup probe protects that installation. Use
-  the baked image for air-gapped clusters.
-- `docker/mock-backend.Dockerfile` — optional baked image (includes psycopg).
+  In run-from-ConfigMap mode the container installs the exact versions in
+  `mock-backend-py/requirements.txt` at start, so it needs egress to PyPI; a
+  startup probe protects that installation. The Docker image and Compose test
+  runner consume the same file, preventing dependency-version drift. Use the
+  baked image for air-gapped clusters.
+- `docker/mock-backend.Dockerfile` — optional baked image (includes the pinned
+  PostgreSQL dependencies).
   Build and push an explicit tag to a registry reachable by the cluster, then
   use that same repository and tag:
 
@@ -83,8 +86,9 @@ the stock `python:3.12-slim` image. The UI image is pulled from
     --set mockBackend.image.repository=registry.example/iceberg-ui-mock-backend \
     --set mockBackend.image.tag=dev
   ```
-- The chart's `files/*.py` are **relative symlinks into `mock-backend-py/`** —
-  there is exactly one copy of the backend sources, so nothing can drift.
+- The chart's `files/` entries are **relative symlinks into `mock-backend-py/`** —
+  there is exactly one copy of the backend sources and dependency pins, so
+  nothing can drift.
   `helm template`/`install` from the repo and `helm package` both resolve the
   links (the loader logs "Contents of linked file included and used"); a
   packaged `.tgz` is self-contained. Two caveats: don't copy `deploy/helm/`

@@ -54,7 +54,8 @@ in-RAM storage (seed users `iceberg`/`iceberg`, `root`/empty) otherwise.
   `MOCK_PG_DSN=... python3 userdb.py add-user <login> <password>` (also `list-users`).
 - `/ping` reports that the process is alive; `/ready` also checks PostgreSQL and
   returns 503 while storage is unavailable.
-- Requires `psycopg` (`pip install "psycopg[binary]"`) only in PG mode.
+- PG mode requires the exact dependency versions in `requirements.txt`; install
+  them with `python3 -m pip install --requirement requirements.txt`.
 - Tests: `MOCK_PG_TEST_DSN=... python3 ../tests/test_user_persistence.py`
   (isolated-schema restart/reconnect, CLI users, password storage); the whole
   `tests/test_protocol.py` suite also passes with `MOCK_PG_DSN` set — the wire
