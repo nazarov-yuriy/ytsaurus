@@ -39,6 +39,12 @@ app.kubernetes.io/component: mock-backend
 {{ include "iceberg-ui-mock.fullname" . }}-mock-backend
 {{- end }}
 
+{{- define "iceberg-ui-mock.postgres.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "iceberg-ui-mock.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: postgres
+{{- end }}
+
 {{/* Bare hostname the UI uses as `proxy` (port 80 is implicit, like the official chart). */}}
 {{- define "iceberg-ui-mock.mock.proxyAddress" -}}
 {{- if .Values.ui.cluster.proxy }}

@@ -163,6 +163,28 @@ Cypress node attributes: union of what the UI requests (navigation ~70-attribute
 | ⚪ unused | `treat_as_queue_producer` | yson |  | requested by UI, absent in mock; per-attribute code-500 error is tolerated |
 | ⚪ unused | `unmerged_row_count` | yson |  | requested by UI, absent in mock; per-attribute code-500 error is tolerated |
 
+## pg-sessions-table
+
+PostgreSQL table `sessions` (userdb.py): login sessions backing YTCypressCookie, surviving server restarts.
+
+| Status | Field | Type | Required | Description |
+|--------|-------|------|----------|-------------|
+| 🟢 implemented | `cookie` | text PK | yes | the YTCypressCookie value issued by /login |
+| 🟢 implemented | `expires_at` | timestamptz | yes | now()+30d, matching the cookie Expires; expired sessions stop authenticating |
+| 🟢 implemented | `login` | text FK users(login) | yes | session owner; cascade-deleted with the user |
+| 🟡 constant | `created_at` | timestamptz | yes | defaulted by the database |
+
+## pg-users-table
+
+PostgreSQL table `users` (mock-backend-py/userdb.py, active when MOCK_PG_DSN is set): the persisted user registry behind /login. Table data stays fake; only users/sessions are real state.
+
+| Status | Field | Type | Required | Description |
+|--------|-------|------|----------|-------------|
+| 🟢 implemented | `login` | text PK | yes | user login; seeded with iceberg/root, extendable via `userdb.py add-user` |
+| 🟢 implemented | `password_hash` | text | yes | sha256(salt:password) hex; plaintext is never stored |
+| 🟢 implemented | `salt` | text | yes | per-user random salt (hex) |
+| 🟡 constant | `created_at` | timestamptz | yes | defaulted by the database |
+
 ## table-schema-column
 
 One column in the @schema attribute ({$attributes: {strict, unique_keys}, $value: [columns]}).

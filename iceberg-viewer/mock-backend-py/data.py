@@ -201,7 +201,4 @@ def resolve(ypath):
     return cur, attr_path
 
 
-users = {
-    'iceberg': {'password': 'iceberg'},
-    'root': {'password': ''},
-}
+# Users/sessions live in userdb.py (PostgreSQL or in-RAM).

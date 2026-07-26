@@ -6,11 +6,11 @@ cd "$(dirname "$0")"
 SRC=../mock-backend-py
 DST=helm/iceberg-ui-mock/files
 if [ "$1" = "--check" ]; then
-    for f in server.py data.py webjson.py; do
+    for f in server.py data.py webjson.py userdb.py; do
         cmp -s "$SRC/$f" "$DST/$f" || { echo "STALE: $DST/$f differs from $SRC/$f — run deploy/sync-chart-files.sh"; exit 1; }
     done
     echo "OK: chart files match mock-backend-py"
 else
-    cp "$SRC"/server.py "$SRC"/data.py "$SRC"/webjson.py "$DST"/
-    echo "Synced server.py data.py webjson.py -> $DST"
+    cp "$SRC"/server.py "$SRC"/data.py "$SRC"/webjson.py "$SRC"/userdb.py "$DST"/
+    echo "Synced server.py data.py webjson.py userdb.py -> $DST"
 fi

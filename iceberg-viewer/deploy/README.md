@@ -36,7 +36,13 @@ No registry access is needed for the backend: by default the chart ships
   - `templates/tests/test-smoke.yaml` — `helm test` pod: probes the mock
     directly, both UI boot gates (`cluster-info`, `cluster-params`), an `exists`
     command through the UI tunnel, and a `read_table` web_json response.
-- `docker/mock-backend.Dockerfile` — optional baked image; set
+- PostgreSQL user persistence (`postgres.enabled=true`): adds a `postgres:17-alpine`
+  Deployment with a PVC, Secret-managed password (`postgres.password` or
+  `postgres.existingSecret` with key `password`), and wires `MOCK_PG_DSN` into the
+  mock so users and login sessions survive pod restarts (table data stays fake).
+  In run-from-ConfigMap mode the container pip-installs `psycopg[binary]` at start,
+  so it needs egress to PyPI — use the baked image for air-gapped clusters.
+- `docker/mock-backend.Dockerfile` — optional baked image (includes psycopg); set
   `mockBackend.image.repository` and `mockBackend.sourcesFromConfigMap=false`
   to use it.
 - `sync-chart-files.sh` — copies `mock-backend-py/*.py` into the chart's

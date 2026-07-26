@@ -8,17 +8,16 @@ Set MOCK_RECORD=<path> to append request/response pairs as JSONL.
 import base64
 import json
 import os
-import random
 import re
 import socket
-import string
 import sys
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qsl, urlsplit
 
-from data import resolve, users
+import userdb
+from data import resolve
 from webjson import annotated, typed_annotate, web_json_body
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
@@ -43,10 +42,7 @@ def resolve_error(path):
     return CommandError(400, yt_error(500, f'Error resolving path {path}', {'path': path, 'code': 500}))
 
 
-# ---- auth ------------------------------------------------------------------
-
-sessions = {}  # cookie value -> username
-
+# ---- auth (user/session storage lives in userdb: PostgreSQL or in-RAM) -----
 
 def csrf_token_for(user):
     return f'csrf-{user}'
@@ -54,12 +50,11 @@ def csrf_token_for(user):
 
 def authenticate(headers):
     cookies = dict(p.strip().split('=', 1) for p in (headers.get('Cookie') or '').split(';') if '=' in p)
-    yc = cookies.get('YTCypressCookie')
-    if yc in sessions:
-        return {'user': sessions[yc], 'via_cookie': True}
+    if user := userdb.session_user(cookies.get('YTCypressCookie')):
+        return {'user': user, 'via_cookie': True}
     token = (headers.get('Authorization') or '').removeprefix('OAuth ').strip()
     if headers.get('Authorization', '').startswith('OAuth ') and token:
-        return {'user': token if token in users else 'iceberg', 'via_cookie': False}
+        return {'user': token if userdb.user_exists(token) else 'iceberg', 'via_cookie': False}
     return {'user': 'iceberg', 'via_cookie': False}  # auth "none" sends no credentials
 
 
@@ -325,10 +320,10 @@ class Handler(BaseHTTPRequestHandler):
             m = re.match(r'^Basic (.+)$', self.headers.get('Authorization') or '')
             user, _, password = (base64.b64decode(m.group(1)).decode('utf-8', 'replace')
                                  if m else '').partition(':')
-            if user not in users or users[user]['password'] != password:
+            if not userdb.verify(user, password):
+                # Real proxy masks the cause: generic code 1 (cypress_cookie_login.cpp:83).
                 return self.send_yt_error(401, yt_error(1, 'Incorrect login or password'), cors)
-            cookie = 'mock-' + user + '-' + ''.join(random.choices(string.ascii_lowercase + string.digits, k=11))
-            sessions[cookie] = user
+            cookie = userdb.create_session(user)
             expires = format_datetime(datetime.now(timezone.utc) + timedelta(days=30), usegmt=True)
             return self.send_body(200, b'', {
                 **cors, 'Set-Cookie': f'YTCypressCookie={cookie}; Expires={expires}; HttpOnly; Path=/'})

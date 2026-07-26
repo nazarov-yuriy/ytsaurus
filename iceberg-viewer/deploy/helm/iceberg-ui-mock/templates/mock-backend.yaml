@@ -41,11 +41,25 @@ spec:
           imagePullPolicy: {{ .Values.mockBackend.image.pullPolicy }}
           {{- if .Values.mockBackend.sourcesFromConfigMap }}
           workingDir: /app
+          {{- if .Values.postgres.enabled }}
+          # Stock python image lacks the PG driver; install it at start.
+          command: ["sh", "-c", "pip install --quiet 'psycopg[binary]' && exec python3 /app/server.py 8000"]
+          {{- else }}
           command: ["python3", "/app/server.py", "8000"]
+          {{- end }}
           {{- end }}
           env:
             - name: MOCK_HOST
               value: {{ include "iceberg-ui-mock.mock.proxyAddress" . | quote }}
+            {{- if .Values.postgres.enabled }}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.existingSecret | default (printf "%s-postgres" (include "iceberg-ui-mock.fullname" .)) }}
+                  key: password
+            - name: MOCK_PG_DSN
+              value: "postgresql://{{ .Values.postgres.user }}:$(PGPASSWORD)@{{ include "iceberg-ui-mock.fullname" . }}-postgres.{{ .Release.Namespace }}.svc.cluster.local:5432/{{ .Values.postgres.database }}"
+            {{- end }}
           ports:
             - name: http
               containerPort: 8000

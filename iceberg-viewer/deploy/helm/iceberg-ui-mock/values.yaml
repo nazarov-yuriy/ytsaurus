@@ -17,6 +17,24 @@ mockBackend:
     port: 80
   resources: {}
 
+# Optional real user persistence: users + login sessions in PostgreSQL
+# (table data stays fake/in-RAM). When enabled, the mock gets MOCK_PG_DSN and
+# the run-from-ConfigMap mode pip-installs psycopg at container start.
+postgres:
+  enabled: false
+  image:
+    repository: postgres
+    tag: "17-alpine"
+    pullPolicy: IfNotPresent
+  database: mockusers
+  user: mock
+  # Change this or point existingSecret at a Secret with key "password".
+  password: mock-password
+  existingSecret: ""
+  storage: 1Gi
+  storageClassName: ""
+  resources: {}
+
 # ytsaurus-ui, deployed the same way as the official ui-helm-chart.
 ui:
   replicaCount: 1

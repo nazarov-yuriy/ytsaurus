@@ -9,7 +9,28 @@ python3 server.py 8000
 # then point ytsaurus-ui's clusters-config.json at localhost:8000, same as the Node mock
 ```
 
-Env vars: `MOCK_RECORD=<path>` appends request/response JSONL (same format as Node).
+Env vars: `MOCK_RECORD=<path>` appends request/response JSONL (same format as Node);
+`MOCK_PG_DSN=postgresql://...` switches user/session storage to PostgreSQL.
+
+## User management (PostgreSQL)
+
+Users and login sessions are the one piece of real state; table data stays fake.
+`userdb.py` speaks PostgreSQL when `MOCK_PG_DSN` is set and falls back to
+in-RAM storage (seed users `iceberg`/`iceberg`, `root`/empty) otherwise — the
+Node backend and all parity tests run in the fallback mode.
+
+- Schema (auto-created on start): `users(login PK, salt, password_hash, created_at)`
+  and `sessions(cookie PK, login FK, created_at, expires_at)`. Passwords are
+  stored salted+SHA-256, never in plaintext; sessions expire after 30 days,
+  matching the `YTCypressCookie` lifetime.
+- With PostgreSQL, password logins and their cookies survive server restarts,
+  and users added out-of-band are visible without a restart:
+  `MOCK_PG_DSN=... python3 userdb.py add-user <login> <password>` (also `list-users`).
+- Requires `psycopg` (`pip install "psycopg[binary]"`) only in PG mode.
+- Tests: `MOCK_PG_TEST_DSN=... python3 ../tests/test_user_persistence.py`
+  (restart-survival, CLI-added users, hashed-at-rest); the whole
+  `tests/test_protocol.py` suite also passes with `MOCK_PG_DSN` set — the wire
+  behavior is identical in both storage modes.
 
 ## Files (1:1 with the Node implementation)
 
