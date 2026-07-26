@@ -1,3 +1,24 @@
+# Deployment: docker compose (local testing) and Kubernetes (Helm)
+
+## docker compose — test everything without touching the host (macOS-friendly)
+
+From `iceberg-viewer/`:
+
+```bash
+docker compose up --build            # UI: http://localhost:8080/mock/navigation
+docker compose run --rm tests        # all backend suites + end-to-end smoke, in a container
+docker compose --profile e2e run --rm e2e   # headless-Chromium render check
+```
+
+Services: `postgres` (users/sessions persisted in the `pgdata` volume),
+`mock-backend` (built from `docker/mock-backend.Dockerfile`, `/ready`-gated),
+`ui` (official `ghcr.io/ytsaurus/ui` image with `deploy/compose/` configs
+mounted — same wiring as the chart), plus on-demand `tests` and `e2e` runners.
+The suites are self-contained (they spawn their own servers inside the tests
+container); `compose-smoke.py` then exercises the composed stack end to end.
+On Apple Silicon, if an image lacks arm64, prefix commands with
+`DOCKER_DEFAULT_PLATFORM=linux/amd64`. The `e2e` profile needs npm egress once.
+
 # Kubernetes deployment (Helm)
 
 Deploys **ytsaurus-ui + the Python mock backend** as one release, for testing the

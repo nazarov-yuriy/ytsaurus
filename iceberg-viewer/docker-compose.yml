@@ -1,0 +1,105 @@
+# Full stack in containers — nothing runs on the host (macOS-friendly).
+#
+#   docker compose up --build          # UI on http://localhost:8080/mock/navigation
+#   docker compose run --rm tests      # all backend suites + end-to-end smoke
+#   docker compose --profile e2e run --rm e2e   # headless-Chromium UI check
+#
+# Users/sessions persist in the pgdata volume; table data stays fake in RAM.
+# Apple Silicon note: if the UI image has no arm64 build, prefix commands with
+# DOCKER_DEFAULT_PLATFORM=linux/amd64.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: mockusers
+      POSTGRES_USER: mock
+      POSTGRES_PASSWORD: mock-password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "mock", "-d", "mockusers"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  mock-backend:
+    build:
+      context: .
+      dockerfile: deploy/docker/mock-backend.Dockerfile
+    environment:
+      MOCK_HOST: mock-backend:8000
+      # libpq conninfo via PG* env; the password never appears in a URI.
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: mock
+      PGDATABASE: mockusers
+      PGPASSWORD: mock-password
+      MOCK_PG_DSN: "connect_timeout=5 application_name=iceberg-ui-mock"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  ui:
+    image: ghcr.io/ytsaurus/ui:1.60.1
+    command: ["/bin/bash", "-c", "/usr/bin/supervisord -c /etc/supervisor/supervisord.conf"]
+    environment:
+      APP_INSTALLATION: custom
+      YT_AUTH_ALLOW_INSECURE: "1"
+    volumes:
+      - ./deploy/compose/clusters-config.json:/opt/app/clusters-config.json:ro
+      - ./deploy/compose/common.js:/opt/app/dist/server/configs/custom/common.js:ro
+      - ./deploy/compose/yt-interface-secret.json:/opt/app/secrets/yt-interface-secret.json:ro
+    ports:
+      - "8080:80"
+    depends_on:
+      mock-backend:
+        condition: service_healthy
+
+  # `docker compose run --rm tests` — self-contained backend suites (they spawn
+  # their own servers inside the container) plus an end-to-end smoke against the
+  # composed ui + mock-backend + postgres.
+  tests:
+    profiles: ["test"]
+    image: python:3.12-slim
+    working_dir: /workspace
+    command: ["bash", "deploy/compose/run-tests.sh"]
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      MOCK_PG_TEST_DSN: "postgresql://mock:mock-password@postgres:5432/mockusers"
+      UI_URL: "http://ui"
+      MOCK_URL: "http://mock-backend:8000"
+    volumes:
+      - .:/workspace:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mock-backend:
+        condition: service_healthy
+      ui:
+        condition: service_started
+
+  # `docker compose --profile e2e run --rm e2e` — real-browser check (needs npm
+  # egress once to fetch the playwright package; browsers ship in the image).
+  e2e:
+    profiles: ["e2e"]
+    image: mcr.microsoft.com/playwright:v1.53.1-noble
+    working_dir: /tmp/e2e
+    command: ["bash", "-c",
+              "npm init -y > /dev/null && npm install --silent playwright@1.53.1 && node /workspace/deploy/compose/e2e-check.js"]
+    environment:
+      UI_URL: "http://ui"
+    volumes:
+      - .:/workspace:ro
+    depends_on:
+      ui:
+        condition: service_started
+
+volumes:
+  pgdata:

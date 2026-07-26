@@ -82,5 +82,5 @@ Which doc covers what, and which doc mentions which. Regenerate with `python3 db
 - mentions: [recordings/COVERAGE.md](../recordings/COVERAGE.md)
 
 ### [deploy/README.md](../deploy/README.md)
-*Kubernetes deployment (Helm)*
+*Deployment: docker compose (local testing) and Kubernetes (Helm)*
 - mentioned by: [README.md](../README.md), [docs/security-review.md](../docs/security-review.md)

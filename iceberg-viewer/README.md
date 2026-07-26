@@ -48,6 +48,9 @@ mock backend, as a first step toward serving the UI from an Apache Iceberg catal
   (`recordings/proxy-traffic.jsonl`) against the backend and diffs every response
   with `recordings/golden.jsonl` (the wire contract with the UI; regenerate with
   `GOLDEN_UPDATE=1` after deliberate changes).
+- `docker-compose.yml` — the whole stack in containers (UI + mock + PostgreSQL),
+  nothing on the host: `docker compose up --build`, then
+  `docker compose run --rm tests` for every suite; see `deploy/README.md`.
 - `deploy/` — Kubernetes deployment: Helm chart (`helm/iceberg-ui-mock`) running
   UI + mock together (modeled on the official ui-helm-chart), a Dockerfile for a
   baked backend image, and a `helm test` smoke suite; see `deploy/README.md`.

@@ -1,0 +1,16 @@
+{
+  "clusters": [
+    {
+      "id": "mock",
+      "name": "Mock cluster",
+      "proxy": "mock-backend:8000",
+      "secure": false,
+      "authentication": "none",
+      "theme": "grapefruit",
+      "description": "Compose stack: in-RAM tables, PostgreSQL-persisted users",
+      "environment": "development",
+      "group": "Mock",
+      "disableHeavyProxies": true
+    }
+  ]
+}
