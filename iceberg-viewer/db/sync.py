@@ -402,8 +402,27 @@ def audit() -> None:
             if name and name not in served_commands and not (command or "").startswith("execute_batch:"):
                 failures += 1
                 print(f"NOT IN SERVER: catalog claims implemented {part.strip()}")
-    print("OK: catalog matches the server surface" if not failures
-          else f"{failures} drift(s) between catalog and server")
+    # Recorded real-UI traffic must be cataloged too (proxy layer; browser-layer
+    # files are parameterized ui-server routes, checked by recordings/analyze.py).
+    observed = set()
+    for traffic in sorted((ROOT / "recordings").glob("*-traffic.jsonl")):
+        if traffic.name.startswith("browser-"):
+            continue
+        for line in traffic.read_text().splitlines():
+            observed.add(json.loads(line)["path"].rstrip("/") or "/")
+    all_db_paths = {p.strip().rstrip("/") for row in conn.execute(
+        "SELECT path FROM endpoints WHERE layer='proxy'") for p in row[0].split(",")
+        if "*" not in p and ":" not in p}
+    for path in sorted(observed):
+        if path not in all_db_paths and not re.fullmatch(r"/api/v\d/\w+", path):
+            failures += 1
+            print(f"NOT IN CATALOG: recorded UI traffic hit {path}")
+        elif path not in all_db_paths:
+            failures += 1
+            print(f"NOT IN CATALOG: recorded UI traffic used command {path}")
+
+    print("OK: catalog matches the server surface and all recorded UI traffic" if not failures
+          else f"{failures} drift(s) between catalog, server and recorded traffic")
     sys.exit(1 if failures else 0)
 
 

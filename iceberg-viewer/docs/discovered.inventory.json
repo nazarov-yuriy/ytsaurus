@@ -1,0 +1,47 @@
+[
+  {
+    "layer": "proxy",
+    "method": "POST",
+    "path": "/api/v3/list_operations",
+    "command": "list_operations",
+    "api_version": "v3",
+    "description": "Discovered in recorded UI traffic (statuses [404]); not implemented by the mock — the UI degrades gracefully. Promote to a handwritten inventory when implementing.",
+    "request": {
+      "params": {
+        "state": "...",
+        "user": "...",
+        "cursor_time": "...",
+        "cursor_direction": "...",
+        "include_archive": "...",
+        "limit": "...",
+        "read_from": "...",
+        "disable_per_user_cache": "..."
+      }
+    },
+    "response": {
+      "body_schema": "unknown (unimplemented)"
+    },
+    "needed_for_mock": false,
+    "source_refs": [
+      "recordings/discovery-traffic.jsonl"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "GET",
+    "path": "/api/v4/get_query_tracker_info",
+    "command": "get_query_tracker_info",
+    "api_version": "v4",
+    "description": "Discovered in recorded UI traffic (statuses [404]); not implemented by the mock — the UI degrades gracefully. Promote to a handwritten inventory when implementing.",
+    "request": {
+      "params": {}
+    },
+    "response": {
+      "body_schema": "unknown (unimplemented)"
+    },
+    "needed_for_mock": false,
+    "source_refs": [
+      "recordings/discovery-traffic.jsonl"
+    ]
+  }
+]

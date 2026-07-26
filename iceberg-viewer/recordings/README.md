@@ -45,6 +45,18 @@ writes:
   exercised (split mock-critical vs out-of-scope) and exercised endpoint lists.
 - `recorded_requests` table in the SQLite DB (queryable next to `endpoints`).
 
+## Discovery sessions (catching uncataloged calls in real traffic)
+
+`play-discovery.js` drives the UI through pages outside the viewer scope
+(Queries, Operations, Accounts, Scheduling, System, …) with `MOCK_RECORD`
+pointing at `discovery-traffic.jsonl`; `discover.py` then diffs the recorded
+proxy calls against the catalog and auto-generates stub entries into
+`docs/discovered.inventory.json` (deterministic — rerunning without new traffic
+produces no diff). `db/sync.py audit` fails whenever any `*-traffic.jsonl`
+contains a proxy call the catalog does not know, so newly recorded sessions
+force cataloging. First run caught `get_query_tracker_info` (v4!) and
+`list_operations`.
+
 Result of the 2026-07-25 session: 61 distinct shapes, 165 proxy-side + 119
 browser-side requests, no unexpected error statuses. `/ready` is the only
 mock-critical endpoint outside the recorded UI session; deployment probes and

@@ -50,6 +50,14 @@ pages/features an Iceberg catalog viewer does not need:
 `/:ytAuthCluster/change-password/` is served by the implemented generic SPA HTML shell, but
 the password self-service feature is outside the viewer (auth-none mode has no passwords).
 
+Commands discovered by recording a wider UI session (`recordings/play-discovery.js`
+visiting the Queries and Operations pages; stubs auto-generated into
+`discovered.inventory.json` by `recordings/discover.py`) — both unimplemented,
+the UI degrades to empty states:
+
+- `GET /api/v4/get_query_tracker_info` — Queries page capability probe.
+- `POST /api/v3/list_operations` — Operations page listing.
+
 Proxy token-management commands are also outside the viewer path. The UI never calls
 `get_current_user` (it uses `/auth/whoami`); the other three are only used by the
 token-management settings page:
