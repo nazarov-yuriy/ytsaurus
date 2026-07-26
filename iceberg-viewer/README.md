@@ -44,6 +44,10 @@ mock backend, as a first step toward serving the UI from an Apache Iceberg catal
 - `tests/test_userdb.py` — always-running PBKDF2, session-revocation, and reconnect
   unit tests; `test_user_persistence.py` adds isolated PostgreSQL integration
   coverage when `MOCK_PG_TEST_DSN` is available.
+- `tests/test_golden_replay.py` — replays the recorded UI corpus
+  (`recordings/proxy-traffic.jsonl`) against the backend and diffs every response
+  with `recordings/golden.jsonl` (the wire contract with the UI; regenerate with
+  `GOLDEN_UPDATE=1` after deliberate changes).
 - `deploy/` — Kubernetes deployment: Helm chart (`helm/iceberg-ui-mock`) running
   UI + mock together (modeled on the official ui-helm-chart), a Dockerfile for a
   baked backend image, and a `helm test` smoke suite; see `deploy/README.md`.

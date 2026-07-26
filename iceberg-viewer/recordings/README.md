@@ -32,6 +32,15 @@ writes:
 - `corpus.json` — one full representative example per shape, with hit counts and
   observed statuses. This is the reference corpus for designing API tests and checking
   which response shapes the UI actually consumes.
+- `golden.jsonl` — the expected backend response for every corpus request,
+  enforced by `python3 ../tests/test_golden_replay.py`: it replays all of
+  `proxy-traffic.jsonl` against the backend and diffs status, `X-YT-Response-Code`,
+  `Content-Type` and body (CSRF tokens, the /hosts self-address and the random
+  /login Set-Cookie are normalized). Run it after backend changes and before
+  swapping `data.py` for a real Iceberg catalog. After deliberate behavior
+  changes — or after re-recording the corpus for a new UI version — regenerate
+  with `GOLDEN_UPDATE=1 python3 ../tests/test_golden_replay.py` and review the
+  golden diff in git.
 - `COVERAGE.md` — two-way diff against `../db/api_catalog.sqlite`: documented-but-not-
   exercised (split mock-critical vs out-of-scope) and exercised endpoint lists.
 - `recorded_requests` table in the SQLite DB (queryable next to `endpoints`).
