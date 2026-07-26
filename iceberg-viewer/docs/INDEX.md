@@ -17,7 +17,7 @@ Which doc covers what, and which doc mentions which. Regenerate with `python3 db
 
 ### [docs/table-viewer.md](../docs/table-viewer.md)
 *YTsaurus UI ↔ cluster wire protocol: Navigation + static Table viewer*
-- mentioned by: [README.md](../README.md), [docs/architecture-review.md](../docs/architecture-review.md), [docs/coverage-notes.md](../docs/coverage-notes.md), [docs/iceberg-considerations.md](../docs/iceberg-considerations.md)
+- mentioned by: [README.md](../README.md), [docs/architecture-review.md](../docs/architecture-review.md), [docs/coverage-notes.md](../docs/coverage-notes.md), [docs/iceberg-considerations.md](../docs/iceberg-considerations.md), [docs/proxy-test-coverage.md](../docs/proxy-test-coverage.md)
 
 ### [docs/bootstrap-config.md](../docs/bootstrap-config.md)
 *Running the YTsaurus UI against a mock backend*
@@ -48,10 +48,15 @@ Which doc covers what, and which doc mentions which. Regenerate with `python3 db
 ### [docs/architecture-review.md](../docs/architecture-review.md)
 *Architecture review: does the mock match YTsaurus' high-level design?*
 - mentions: [docs/table-viewer.md](../docs/table-viewer.md)
+- mentioned by: [docs/proxy-test-coverage.md](../docs/proxy-test-coverage.md)
 
 ### [docs/security-review.md](../docs/security-review.md)
 *Backend security review*
 - mentions: [README.md](../README.md), [deploy/README.md](../deploy/README.md)
+
+### [docs/proxy-test-coverage.md](../docs/proxy-test-coverage.md)
+*YTsaurus http-proxy test suites vs the mock backends*
+- mentions: [docs/architecture-review.md](../docs/architecture-review.md), [docs/table-viewer.md](../docs/table-viewer.md)
 
 ## Generated from the SQLite catalog / recordings — do not edit
 
