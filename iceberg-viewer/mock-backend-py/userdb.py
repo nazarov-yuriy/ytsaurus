@@ -25,8 +25,6 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash     text NOT NULL,
     password_revision bigint NOT NULL DEFAULT 0,
     created_at        timestamptz NOT NULL DEFAULT now());
-ALTER TABLE users
-    ADD COLUMN IF NOT EXISTS password_revision bigint NOT NULL DEFAULT 0;
 CREATE TABLE IF NOT EXISTS settings (
     key   text PRIMARY KEY,
     value text NOT NULL);
@@ -36,19 +34,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     password_revision  bigint NOT NULL DEFAULT 0,
     created_at         timestamptz NOT NULL DEFAULT now(),
     expires_at         timestamptz NOT NULL);
-ALTER TABLE sessions
-    ADD COLUMN IF NOT EXISTS password_revision bigint NOT NULL DEFAULT 0;
-WITH installed AS (
-    INSERT INTO settings (key, value)
-    VALUES ('session_password_revision_migration', '1')
-    ON CONFLICT (key) DO NOTHING
-    RETURNING key)
-DELETE FROM sessions WHERE EXISTS (SELECT 1 FROM installed);
 """
-
-
-def _legacy_hash(password, salt):
-    return hashlib.sha256(f'{salt}:{password}'.encode()).hexdigest()
 
 
 def _hash(password, salt, iterations=PBKDF2_ITERATIONS):
@@ -58,31 +44,17 @@ def _hash(password, salt, iterations=PBKDF2_ITERATIONS):
 
 
 def _password_matches(password, salt, password_hash):
-    if isinstance(password_hash, str) and password_hash.startswith(f'{PASSWORD_SCHEME}$'):
-        try:
-            scheme, raw_iterations, digest = password_hash.split('$')
-            iterations = int(raw_iterations)
-            if (scheme != PASSWORD_SCHEME
-                    or not 0 < iterations <= PBKDF2_MAX_VERIFY_ITERATIONS
-                    or len(bytes.fromhex(digest)) != 32):
-                return False
-            expected = _hash(password, salt, iterations)
-        except (TypeError, ValueError):
-            return False
-        return secrets.compare_digest(password_hash, expected)
-
-    # Compatibility with hashes created before the PBKDF2 migration.
-    if not isinstance(password_hash, str) or len(password_hash) != 64:
-        return False
-    return secrets.compare_digest(password_hash, _legacy_hash(password, salt))
-
-
-def _password_needs_upgrade(password_hash):
     try:
-        scheme, raw_iterations, _ = password_hash.split('$')
-        return scheme != PASSWORD_SCHEME or int(raw_iterations) < PBKDF2_ITERATIONS
+        scheme, raw_iterations, digest = password_hash.split('$')
+        iterations = int(raw_iterations)
+        if (scheme != PASSWORD_SCHEME
+                or not PBKDF2_ITERATIONS <= iterations <= PBKDF2_MAX_VERIFY_ITERATIONS
+                or len(bytes.fromhex(digest)) != 32):
+            return False
+        expected = _hash(password, salt, iterations)
     except (AttributeError, TypeError, ValueError):
-        return True
+        return False
+    return secrets.compare_digest(password_hash, expected)
 
 
 def _new_password(password):
@@ -155,19 +127,7 @@ if DSN:
             return False
 
         salt, password_hash = rows[0]
-        if not _password_matches(password, salt, password_hash):
-            return False
-        if _password_needs_upgrade(password_hash):
-            new_salt, new_hash = _new_password(password)
-            upgraded = _query(
-                'UPDATE users SET salt = %s, password_hash = %s'
-                ' WHERE login = %s AND salt = %s AND password_hash = %s'
-                ' RETURNING login',
-                (new_salt, new_hash, login, salt, password_hash),
-                retry=False)
-            if not upgraded:
-                return False
-        return True
+        return _password_matches(password, salt, password_hash)
 
     def create_session(login):
         cookie = _new_cookie(login)
@@ -191,18 +151,6 @@ if DSN:
         salt, password_hash, password_revision = rows[0]
         if not _password_matches(password, salt, password_hash):
             return None
-        if _password_needs_upgrade(password_hash):
-            new_salt, new_hash = _new_password(password)
-            upgraded = _query(
-                'UPDATE users SET salt = %s, password_hash = %s'
-                ' WHERE login = %s AND salt = %s AND password_hash = %s'
-                ' AND password_revision = %s'
-                ' RETURNING password_revision',
-                (new_salt, new_hash, login, salt, password_hash, password_revision),
-                retry=False)
-            if not upgraded:
-                return None
-            salt, password_hash = new_salt, new_hash
 
         cookie = _new_cookie(login)
         created = _query(
@@ -280,11 +228,7 @@ else:  # in-RAM fallback: same behavior, nothing persisted
             if login not in _users:
                 return False
             salt, password_hash = _users[login]
-            if not _password_matches(password, salt, password_hash):
-                return False
-            if _password_needs_upgrade(password_hash):
-                _users[login] = _new_password(password)
-            return True
+            return _password_matches(password, salt, password_hash)
 
     _csrf_secret = os.environ.get('MOCK_CSRF_SECRET') or secrets.token_hex(32)
 
@@ -312,8 +256,6 @@ else:  # in-RAM fallback: same behavior, nothing persisted
             salt, password_hash = credentials
             if not _password_matches(password, salt, password_hash):
                 return None
-            if _password_needs_upgrade(password_hash):
-                _users[login] = _new_password(password)
             return _create_session_locked(login)
 
     def session_user(cookie):

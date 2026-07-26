@@ -37,8 +37,7 @@ Node backend and all parity tests run in the fallback mode.
   password_revision, created_at)` and `sessions(cookie PK, login FK,
   password_revision, created_at, expires_at)`. Passwords are stored using
   PBKDF2-HMAC-SHA256 with 600,000 iterations and 128-bit salts, never in
-  plaintext. Existing salted-SHA256 rows remain valid and are upgraded after a
-  successful login. Sessions expire after the configured cookie TTL (30 days by
+  plaintext. Sessions expire after the configured cookie TTL (30 days by
   default), matching the browser's `YTCypressCookie` lifetime.
 - Cookies are 64-hex values (GenerateCookieValue parity) with matching
   server/browser expiry. The privileged `//sys/cypress_cookies` store is not
@@ -46,9 +45,8 @@ Node backend and all parity tests run in the fallback mode.
   SignCsrfToken HMAC construction (`tests/test_cookie_model.py`).
 - Password changes revoke the user's existing sessions and increment a revision
   checked during authentication, so a racing login with the old password cannot
-  leave a valid session. Upgrading an older database invalidates pre-revision
-  sessions once. The backend does not emulate near-expiry cookie renewal because
-  the UI tunnel does not propagate a renewed proxy cookie into its
+  leave a valid session. The backend does not emulate near-expiry cookie renewal
+  because the UI tunnel does not propagate a renewed proxy cookie into its
   cluster-prefixed authentication cookie.
 - With PostgreSQL, password logins and their cookies survive server restarts,
   connection loss is recovered lazily, and users added out-of-band are visible
@@ -58,11 +56,11 @@ Node backend and all parity tests run in the fallback mode.
   returns 503 while storage is unavailable.
 - Requires `psycopg` (`pip install "psycopg[binary]"`) only in PG mode.
 - Tests: `MOCK_PG_TEST_DSN=... python3 ../tests/test_user_persistence.py`
-  (isolated-schema restart/reconnect, CLI users, hash migration); the whole
+  (isolated-schema restart/reconnect, CLI users, password storage); the whole
   `tests/test_protocol.py` suite also passes with `MOCK_PG_DSN` set — the wire
   behavior is identical in both storage modes.
 - `python3 ../tests/test_userdb.py` always runs without PostgreSQL and covers
-  hash parsing/migration plus reconnect behavior with a fake driver.
+  hash validation plus reconnect behavior with a fake driver.
 
 ## Files (1:1 with the Node implementation)
 

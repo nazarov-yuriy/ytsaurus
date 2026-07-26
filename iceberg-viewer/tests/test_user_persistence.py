@@ -6,13 +6,11 @@ Requires a reachable PostgreSQL and psycopg:
 Skips cleanly when the DSN or psycopg is absent. The interpreter must have
 psycopg installed (the server subprocesses inherit it via sys.executable).
 
-Covers what in-RAM mode cannot: safe schema upgrades, sessions surviving a full
-server restart, users added out-of-band (userdb.py CLI) being visible
-immediately, and passwords being stored with salted PBKDF2 rather than in
-plaintext.
+Covers what in-RAM mode cannot: sessions surviving a full server restart,
+users added out-of-band (userdb.py CLI) being visible immediately, and
+passwords being stored with salted PBKDF2 rather than in plaintext.
 """
 import base64
-import hashlib
 import json
 import os
 import secrets
@@ -97,31 +95,6 @@ class TestUserPersistence(unittest.TestCase):
                 DSN,
                 options=f'-c search_path={cls.schema}',
                 application_name=cls.application_name)
-            cls.legacy_cookie = 'a' * 64
-            with psycopg.connect(cls.dsn, autocommit=True) as conn:
-                conn.execute("""
-                    CREATE TABLE users (
-                        login text PRIMARY KEY,
-                        salt text NOT NULL,
-                        password_hash text NOT NULL,
-                        created_at timestamptz NOT NULL DEFAULT now());
-                    CREATE TABLE settings (
-                        key text PRIMARY KEY,
-                        value text NOT NULL);
-                    CREATE TABLE sessions (
-                        cookie text PRIMARY KEY,
-                        login text NOT NULL REFERENCES users(login) ON DELETE CASCADE,
-                        created_at timestamptz NOT NULL DEFAULT now(),
-                        expires_at timestamptz NOT NULL);
-                    """)
-                conn.execute(
-                    'INSERT INTO users (login, salt, password_hash)'
-                    ' VALUES (%s, %s, %s)',
-                    ('pre-revision-user', 'salt', '0' * 64))
-                conn.execute(
-                    'INSERT INTO sessions (cookie, login, expires_at)'
-                    " VALUES (%s, 'pre-revision-user', now() + interval '1 day')",
-                    (cls.legacy_cookie,))
             cls.proc = start_server(cls.dsn)
         except Exception:
             cls.drop_schema()
@@ -145,22 +118,7 @@ class TestUserPersistence(unittest.TestCase):
         cookie = (hdrs.get('Set-Cookie') or '').split(';')[0]
         return status, cookie
 
-    def test_0_pre_revision_sessions_are_invalidated_on_upgrade(self):
-        status, _, _ = call(
-            'GET', '/auth/whoami',
-            {'Cookie': f'YTCypressCookie={type(self).legacy_cookie}'})
-        self.assertEqual(status, 401)
-        with psycopg.connect(type(self).dsn) as conn:
-            session_count = conn.execute(
-                'SELECT count(*) FROM sessions WHERE cookie = %s',
-                (type(self).legacy_cookie,)).fetchone()[0]
-            migration = conn.execute(
-                "SELECT value FROM settings"
-                " WHERE key = 'session_password_revision_migration'").fetchone()
-        self.assertEqual(session_count, 0)
-        self.assertEqual(migration, ('1',))
-
-    def test_1_strict_auth_requires_cookie_or_robot_token(self):
+    def test_0_strict_auth_requires_cookie_or_robot_token(self):
         status, body, _ = call('GET', '/auth/whoami')
         self.assertEqual(status, 401)
         self.assertEqual(body['code'], 900)
@@ -178,18 +136,18 @@ class TestUserPersistence(unittest.TestCase):
             {'Authorization': 'OAuth wrong-robot-token'})
         self.assertEqual(status, 401)
 
-    def test_2_seed_user_can_login(self):
+    def test_1_seed_user_can_login(self):
         status, cookie = self.login('iceberg', 'iceberg')
         self.assertEqual(status, 200)
         _, who, _ = call('GET', '/auth/whoami', {'Cookie': cookie})
         self.assertEqual(who['realm'], 'cypress_cookie')
         self.assertEqual(who['login'], 'iceberg')
 
-    def test_3_wrong_password_is_masked_401(self):
+    def test_2_wrong_password_is_masked_401(self):
         status, _ = self.login('iceberg', 'nope')
         self.assertEqual(status, 401)
 
-    def test_4_session_survives_server_restart(self):
+    def test_3_session_survives_server_restart(self):
         _, cookie = self.login('iceberg', 'iceberg')
         type(self).proc.terminate()
         type(self).proc.wait()
@@ -197,7 +155,7 @@ class TestUserPersistence(unittest.TestCase):
         _, who, _ = call('GET', '/auth/whoami', {'Cookie': cookie})
         self.assertEqual(who['realm'], 'cypress_cookie')  # session came from PG
 
-    def test_5_cli_added_user_is_visible_without_restart(self):
+    def test_4_cli_added_user_is_visible_without_restart(self):
         subprocess.run([sys.executable, str(BACKEND / 'userdb.py'), 'add-user', 'alice', 's3cret'],
                        env={**os.environ, 'MOCK_PG_DSN': type(self).dsn}, check=True,
                        stdout=subprocess.DEVNULL)
@@ -206,7 +164,7 @@ class TestUserPersistence(unittest.TestCase):
         _, who, _ = call('GET', '/auth/whoami', {'Cookie': cookie})
         self.assertEqual(who['login'], 'alice')
 
-    def test_6_password_change_revokes_existing_sessions(self):
+    def test_5_password_change_revokes_existing_sessions(self):
         subprocess.run(
             [sys.executable, str(BACKEND / 'userdb.py'), 'add-user', 'session-owner', 'old-secret'],
             env={**os.environ, 'MOCK_PG_DSN': type(self).dsn}, check=True,
@@ -223,37 +181,16 @@ class TestUserPersistence(unittest.TestCase):
         status, _ = self.login('session-owner', 'new-secret')
         self.assertEqual(status, 200)
 
-    def test_7_passwords_are_hashed_at_rest(self):
+    def test_6_passwords_are_hashed_at_rest(self):
         with psycopg.connect(type(self).dsn) as conn:
-            rows = conn.execute('SELECT login, salt, password_hash FROM users').fetchall()
+            rows = conn.execute('SELECT salt, password_hash FROM users').fetchall()
         self.assertGreaterEqual(len(rows), 2)
-        for login, salt, password_hash in rows:
-            if login == 'pre-revision-user':
-                # setUpClass fixture with a planted legacy hash; it never logs
-                # in, so it legitimately keeps the old format until first login.
-                continue
+        for salt, password_hash in rows:
             self.assertTrue(salt)
             self.assertRegex(password_hash, r'^pbkdf2_sha256\$600000\$[0-9a-f]{64}$')
             self.assertNotIn(password_hash, ('iceberg', 's3cret', ''))
 
-    def test_8_legacy_hash_is_upgraded_after_login(self):
-        salt = secrets.token_hex(8)
-        legacy_hash = hashlib.sha256(f'{salt}:old-secret'.encode()).hexdigest()
-        with psycopg.connect(type(self).dsn, autocommit=True) as conn:
-            conn.execute(
-                'INSERT INTO users (login, salt, password_hash) VALUES (%s, %s, %s)',
-                ('legacy', salt, legacy_hash))
-
-        status, _ = self.login('legacy', 'old-secret')
-        self.assertEqual(status, 200)
-        with psycopg.connect(type(self).dsn) as conn:
-            new_salt, new_hash = conn.execute(
-                'SELECT salt, password_hash FROM users WHERE login = %s',
-                ('legacy',)).fetchone()
-        self.assertNotEqual(new_salt, salt)
-        self.assertRegex(new_hash, r'^pbkdf2_sha256\$600000\$[0-9a-f]{64}$')
-
-    def test_9_database_connection_recovers_after_termination(self):
+    def test_7_database_connection_recovers_after_termination(self):
         _, cookie = self.login('iceberg', 'iceberg')
         with psycopg.connect(DSN, autocommit=True) as conn:
             terminated = conn.execute(

@@ -177,12 +177,12 @@ PostgreSQL table `sessions` (userdb.py): login sessions backing 64-hex YTCypress
 
 ## pg-settings-table
 
-PostgreSQL table `settings` (userdb.py): persisted server-wide values for the CSRF HMAC secret and idempotent schema migrations.
+PostgreSQL table `settings` (userdb.py): persisted server-wide values; currently only the CSRF HMAC secret, so signed tokens survive restarts and are shared across replicas.
 
 | Status | Field | Type | Required | Description |
 |--------|-------|------|----------|-------------|
-| 🟢 implemented | `key` | text PK | yes | 'csrf_secret' or an internal schema-migration marker |
-| 🟢 implemented | `value` | text | yes | random 64-hex CSRF secret (MOCK_CSRF_SECRET env overrides) or a migration version |
+| 🟢 implemented | `key` | text PK | yes | currently only 'csrf_secret' |
+| 🟢 implemented | `value` | text | yes | random 64-hex secret, generated once (MOCK_CSRF_SECRET env overrides) |
 
 ## pg-users-table
 
@@ -191,7 +191,7 @@ PostgreSQL table `users` (mock-backend-py/userdb.py, active when MOCK_PG_DSN is 
 | Status | Field | Type | Required | Description |
 |--------|-------|------|----------|-------------|
 | 🟢 implemented | `login` | text PK | yes | user login; seeded with iceberg/root, extendable via `userdb.py add-user` |
-| 🟢 implemented | `password_hash` | text | yes | versioned PBKDF2-HMAC-SHA256 digest (600,000 iterations); legacy sha256(salt:password) rows are upgraded after successful login; plaintext is never stored |
+| 🟢 implemented | `password_hash` | text | yes | PBKDF2-HMAC-SHA256 digest (600,000 iterations); plaintext is never stored |
 | 🟢 implemented | `password_revision` | bigint | yes | monotonic credential revision; incremented on password changes so a concurrently-issued old-password session cannot authenticate |
 | 🟢 implemented | `salt` | text | yes | per-user random salt (hex) |
 | 🟡 constant | `created_at` | timestamptz | yes | defaulted by the database |

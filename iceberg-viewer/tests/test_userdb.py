@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Focused tests for password hashing and PostgreSQL connection recovery."""
-import hashlib
 import importlib.util
 import os
 import sys
@@ -93,19 +92,6 @@ class TestPasswordStorage(unittest.TestCase):
         self.assertTrue(self.userdb.verify('alice', 's3cret'))
         self.assertFalse(self.userdb.verify('alice', 'wrong'))
 
-    def test_legacy_sha256_is_upgraded_after_successful_login(self):
-        salt = '0123456789abcdef'
-        legacy_hash = hashlib.sha256(f'{salt}:old-secret'.encode()).hexdigest()
-        self.userdb._users['legacy'] = (salt, legacy_hash)
-
-        self.assertFalse(self.userdb.verify('legacy', 'wrong'))
-        self.assertEqual(self.userdb._users['legacy'], (salt, legacy_hash))
-        self.assertTrue(self.userdb.verify('legacy', 'old-secret'))
-
-        new_salt, new_hash = self.userdb._users['legacy']
-        self.assertNotEqual(new_salt, salt)
-        self.assertTrue(new_hash.startswith('pbkdf2_sha256$600000$'))
-
     def test_ram_store_is_always_healthy(self):
         self.assertTrue(self.userdb.healthy())
 
@@ -168,7 +154,9 @@ class TestPasswordStorage(unittest.TestCase):
         malformed_hashes = [
             'pbkdf2_sha256$not-a-number$00',
             'pbkdf2_sha256$600000$not-hex',
+            self.userdb._hash('secret', 'salt', 1),
             'pbkdf2_sha256$5000001$' + ('00' * 32),
+            '0' * 64,
             None,
         ]
         for index, password_hash in enumerate(malformed_hashes):

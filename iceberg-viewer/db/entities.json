@@ -464,7 +464,7 @@
         "type": "text",
         "required": true,
         "support_status": "implemented",
-        "description": "versioned PBKDF2-HMAC-SHA256 digest (600,000 iterations); legacy sha256(salt:password) rows are upgraded after successful login; plaintext is never stored"
+        "description": "PBKDF2-HMAC-SHA256 digest (600,000 iterations); plaintext is never stored"
       },
       {
         "name": "password_revision",
@@ -527,21 +527,21 @@
   {
     "entry_type": "schema",
     "name": "pg-settings-table",
-    "description": "PostgreSQL table `settings` (userdb.py): persisted server-wide values for the CSRF HMAC secret and idempotent schema migrations.",
+    "description": "PostgreSQL table `settings` (userdb.py): persisted server-wide values; currently only the CSRF HMAC secret, so signed tokens survive restarts and are shared across replicas.",
     "fields": [
       {
         "name": "key",
         "type": "text PK",
         "required": true,
         "support_status": "implemented",
-        "description": "'csrf_secret' or an internal schema-migration marker"
+        "description": "currently only 'csrf_secret'"
       },
       {
         "name": "value",
         "type": "text",
         "required": true,
         "support_status": "implemented",
-        "description": "random 64-hex CSRF secret (MOCK_CSRF_SECRET env overrides) or a migration version"
+        "description": "random 64-hex secret, generated once (MOCK_CSRF_SECRET env overrides)"
       }
     ]
   }
