@@ -1,7 +1,7 @@
-# YTsaurus http-proxy test suites vs the mock backends
+# YTsaurus http-proxy test suites vs the mock backend
 
 **Question:** does the YTsaurus repository have HTTP-proxy tests, and how much
-of their behavior do the mock backends reproduce?
+of their behavior does the mock backend reproduce?
 
 **Short answer:** yes. In the reviewed tree there are five C++ `TEST` bodies and
 112 Python `def test_*` definitions across five integration files. The Python
@@ -11,7 +11,7 @@ than one class, and skip markers can remove it. It is therefore not a sound
 denominator for a coverage percentage.
 
 The integration suites require a real `YTEnvSetup` cluster, so they cannot be
-pointed at these mocks directly. The useful comparison is assertion-by-assertion:
+pointed at this mock directly. The useful comparison is assertion-by-assertion:
 the small UI-facing overlap is mostly present, while cluster and proxy
 infrastructure is intentionally absent.
 
@@ -25,7 +25,7 @@ infrastructure is intentionally absent.
 | `tests/integration/proxies/test_cypress_token_auth.py` | 13 | token lifecycle and whoami headers |
 | `tests/integration/proxies/test_proxy_roles.py` | 4 | role-map CRUD and ACLs; it does not test `/hosts` |
 | `tests/integration/proxies/test_oauth.py` | 14 | proxy-side OAuth/ACO |
-| Related RPC/GRPC proxy suites | — | different proxy types; not applicable to these mocks |
+| Related RPC/GRPC proxy suites | — | different proxy types; not applicable to this mock |
 
 ## 2. Assertion-level coverage map
 
@@ -56,10 +56,10 @@ Direct local matches:
 
 Partial overlaps:
 
-- C++ `TTestParseQueryTest`: the mocks accept a flat query-string parameter
-  source and define source precedence, but do not build nested maps/lists from
+- C++ `TTestParseQueryTest`: the mock accepts a flat query-string parameter
+  source and defines source precedence, but does not build nested maps/lists from
   bracket notation or reject conflicting container shapes.
-- `test_http_proxy.py::test_hosts`: the mocks reproduce the static one-data-proxy
+- `test_http_proxy.py::test_hosts`: the mock reproduces the static one-data-proxy
   result (`default`/`role=data` returns self; another role returns `[]`), but not
   live proxy registration, custom role changes, or the associated metrics
   assertion. `test_proxy_roles.py` covers role-map CRUD/ACL behavior instead and
@@ -68,9 +68,8 @@ Partial overlaps:
   error fixture exercising the large-integer typed representation used for a
   real transaction id.
 - The Cypress-cookie suite: ordinary login/use/expiry behavior is represented,
-  but arbitrary user lifecycle is only available in the Python store. The Node
-  fixture has static users, so the upstream weird-password and password-change
-  scenarios are not full dual-backend matches.
+  and the Python store supports arbitrary user lifecycle and password changes.
+  Local tests do not reproduce every upstream weird-password scenario.
 - The framing `test_get` payload matches after decoding, but the framing and
   keep-alive transport surrounding that payload is not implemented.
 
@@ -89,11 +88,11 @@ Intentionally not reproduced:
 
 ## 3. Why a single percentage would mislead
 
-The local protocol suite runs the same assertions against both backends, and the
-replay corpus adds 61 recorded UI request shapes. Those tests go deeper on the
-viewer contract: typed output envelopes, web_json `value_format: yql`,
-`column_names` projection, virtual attributes, connection handling, and UI boot
-gates. Upstream goes much deeper on production-proxy infrastructure.
+The local protocol suite goes deeper on the viewer contract: typed output
+envelopes, web_json `value_format: yql`, `column_names` projection, virtual
+attributes, connection handling, and UI boot gates. The recording corpus
+catalogs 61 UI request shapes that informed this coverage. Upstream goes much
+deeper on production-proxy infrastructure.
 
 The surfaces are substantially different. In particular, v4 `{value}` wrapping
 must not be listed as local-only: upstream asserts it in the framing suite. A

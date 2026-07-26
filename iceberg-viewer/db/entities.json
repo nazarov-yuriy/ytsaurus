@@ -429,7 +429,7 @@
         "type": "string",
         "required": true,
         "support_status": "implemented",
-        "description": "checked against users map in data.js"
+        "description": "checked against the user store in mock-backend-py/userdb.py"
       },
       {
         "name": "password",

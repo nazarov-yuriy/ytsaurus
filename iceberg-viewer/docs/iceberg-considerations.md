@@ -42,7 +42,7 @@ this project's code/tests; **[likely]** — strong evidence, not fully tested;
 - **[verified]** Nested types (struct/list/map) work as legacy `any` +
   JSON-stringified cells (the `events.payload` column proves the render path).
 - **[verified]** Richer complex-type rendering via `value_format: "yql"` is now
-  implemented in both mocks (`yql_type_registry` + `[value, type_index]` cells,
+  implemented in the mock (`yql_type_registry` + `[value, type_index]` cells,
   per table-viewer.md §5.4): the UI requests it and renders nested any/Yson
   values as an expandable tree. Base64 (`b64`), truncation (`inc`), and native
   Struct/List/Dict registry types remain uncovered.
@@ -107,8 +107,9 @@ this project's code/tests; **[likely]** — strong evidence, not fully tested;
 
 ## 6. Protocol contracts to preserve (hard-won)
 
-All encoded in `tests/test_protocol.py` + `recordings/` — run them against any
-new backend implementation, they are the real spec:
+The executable behavior is encoded in `tests/test_protocol.py`; `recordings/`
+documents the UI traffic that informed it. Run the protocol suite against any
+new backend implementation:
 
 - **[verified]** `TYPED_OUTPUT_FORMAT` scalar annotation; `@path` `//`-absolute;
   `@key_columns` mandatory; virtual attrs (`@user_attributes`,
@@ -119,7 +120,7 @@ new backend implementation, they are the real spec:
 - **[verified]** The UI evolves: after upgrading the pinned `ghcr.io/ytsaurus/ui`
   tag, re-run `recordings/play.js` + `analyze.py` and diff COVERAGE.md — new
   endpoints/attributes show up as unimplemented-command log lines (`!!`) and
-  corpus diffs. Treat the replay corpus as a contract test against UI upgrades.
+  corpus diffs. Treat that capture and coverage diff as an upgrade audit.
 
 ## 7. Operations & scale
 

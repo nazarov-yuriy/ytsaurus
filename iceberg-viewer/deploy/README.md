@@ -84,8 +84,7 @@ helm upgrade --install iceberg-ui deploy/helm/iceberg-ui-mock \
 The database password stays in `PGPASSWORD`; it is not interpolated into a URI.
 The backend reconnects after a PostgreSQL connection loss, and `/ready` removes
 it from Service endpoints while storage is unavailable. Application-user
-passwords are stored as salted PBKDF2-HMAC-SHA256 hashes; legacy salted-SHA256
-rows are upgraded after a successful login.
+passwords are stored as salted PBKDF2-HMAC-SHA256 hashes.
 
 The PostgreSQL container reconciles its role password through its local socket
 on every pod start. To rotate the chart-managed credential, change

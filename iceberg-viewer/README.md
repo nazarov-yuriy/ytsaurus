@@ -35,15 +35,13 @@ mock backend, as a first step toward serving the UI from an Apache Iceberg catal
     (DB → generated `API-INDEX.md` + `ENTITIES.md`), `check` (fails unless every
     endpoint is mentioned in a handwritten doc, everything has a status, and the
     generated MD matches the DB), `query "SQL"`.
-- `mock-backend/` — Node HTTP server mimicking the YT HTTP proxy with in-RAM fake data:
-  - `server.js` — routes, auth, command dispatch (run: `node server.js [port]`).
-  - `data.js` — fake Cypress tree + tables (the layer to reimplement over Iceberg).
-  - `webjson.js` — YT `web_json` / annotated-JSON encoders.
-- `mock-backend-py/` — Python (stdlib-only) port of the mock, wire-identical to the
-  Node one (`python3 server.py 8000`); see its README for the porting gotchas.
-- `tests/test_protocol.py` — documented-behavior conformance tests, each run
-  against BOTH backends (`python3 tests/test_protocol.py`).
-- `tests/test_userdb.py` — always-running PBKDF2, legacy-migration, and reconnect
+- `mock-backend-py/` — Python HTTP server mimicking the YT HTTP proxy with in-RAM
+  fake catalog data and optional PostgreSQL-backed users and sessions
+  (`python3 server.py 8000`); see its README for configuration and implementation
+  notes.
+- `tests/test_protocol.py` — documented-behavior conformance tests for the backend
+  (`python3 tests/test_protocol.py`).
+- `tests/test_userdb.py` — always-running PBKDF2, session-revocation, and reconnect
   unit tests; `test_user_persistence.py` adds isolated PostgreSQL integration
   coverage when `MOCK_PG_TEST_DSN` is available.
 - `deploy/` — Kubernetes deployment: Helm chart (`helm/iceberg-ui-mock`) running
@@ -59,5 +57,5 @@ browser (React app)
 UI Node/Express server (packages/ui/src/server)
    │  /api/v3|v4/<command>  (+ /hosts, /ping) — YT HTTP proxy protocol
    ▼
-cluster HTTP proxy  ◀── this is what mock-backend/ replaces
+cluster HTTP proxy  ◀── this is what mock-backend-py/ replaces
 ```

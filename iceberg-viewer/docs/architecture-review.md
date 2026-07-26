@@ -53,7 +53,7 @@ browser (React SPA + javascript-wrapper)
 | Design element | Our implementation | Verdict |
 |---|---|---|
 | Tier ① UI API backend | The **real** ytsaurus-ui Node server, unmodified (dev mode or the official image in the chart) | ✅ matches by construction |
-| Tier ② HTTP proxy | `mock-backend{,-py}` implements the HTTP-proxy protocol: `/api/v3|v4`, `/auth/whoami`, `/login`, `/hosts`, `/ping`, `/version` | ✅ correct tier; the mock replaces *only* the proxy |
+| Tier ② HTTP proxy | `mock-backend-py` implements the HTTP-proxy protocol: `/api/v3|v4`, `/auth/whoami`, `/login`, `/hosts`, `/ping`, `/version` | ✅ correct tier; the mock replaces *only* the proxy |
 | Proxy roles (control vs data) | One mock instance serves both Cypress and heavy commands; `/hosts` returns itself | ✅ *as a degenerate case*: identical to a one-proxy cluster whose single proxy has the `data` role (data proxies legitimately serve everything) |
 | Heavy-proxy discovery | `disableHeavyProxies: true` in our clusters-config; browser wrapper has `useHeavyProxy=false` hardcoded; UI tunnel always sends `X-YT-Suppress-Redirect: 1` | ✅ we route everything to one address exactly the way the UI itself does against real clusters |
 | Redirect/refusal on control proxies | Not implemented | ✅ unreachable in the UI topology (suppress-redirect always set, browser requests exempt anyway) — see gaps |
@@ -85,7 +85,7 @@ Ordered by value:
    if SDK/CLI clients (not just the UI) will ever point at the mock.
 3. **Control-proxy semantics**: implement the `context.cpp:291-305` behavior
    (307 redirect to a data proxy / "may not serve heavy requests" error) behind
-   a `MOCK_ROLE=control` env, with dual-backend tests.
+   a `MOCK_ROLE=control` env, with protocol tests.
 4. **`/hosts/all` object shape** for the System→Proxies page.
 
 A real Iceberg backend serving only this UI can stay a single "data-role"

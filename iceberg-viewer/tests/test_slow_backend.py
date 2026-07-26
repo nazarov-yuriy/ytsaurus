@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Slow-catalog simulation tests (MOCK_DELAY) against both backends.
+"""Slow-catalog simulation tests (MOCK_DELAY) against the Python backend.
 
 Verifies the contract documented in docs/timeouts.md: data commands are delayed,
 //sys paths and infrastructure endpoints never are (the UI server's boot-path
@@ -19,25 +19,18 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PORTS = {'node': 8031, 'python': 8032}
+PORT = 8032
 DELAY_SPEC = 'list:1200,read_table:2000,get:800'
-_only = os.environ.get('BACKEND')
-BACKENDS = {k: v for k, v in PORTS.items() if not _only or k == _only}
 
 _procs = []
 
 
 def setUpModule():
     env = {**os.environ, 'MOCK_DELAY': DELAY_SPEC}
-    if 'node' in BACKENDS:
-        _procs.append(subprocess.Popen(['node', str(ROOT / 'mock-backend' / 'server.js'),
-                                        str(PORTS['node'])], env=env,
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
-    if 'python' in BACKENDS:
-        _procs.append(subprocess.Popen([sys.executable, str(ROOT / 'mock-backend-py' / 'server.py'),
-                                        str(PORTS['python'])], env=env,
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
-    for port in BACKENDS.values():
+    _procs.append(subprocess.Popen(
+        [sys.executable, str(ROOT / 'mock-backend-py' / 'server.py'), str(PORT)],
+        env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+    for port in (PORT,):
         for _ in range(50):
             try:
                 urllib.request.urlopen(f'http://localhost:{port}/ping', timeout=1)
@@ -69,9 +62,7 @@ def timed_call(port, method, path, body=None):
 
 class TestSlowBackend(unittest.TestCase):
     def each(self):
-        for name, port in BACKENDS.items():
-            with self.subTest(backend=name):
-                yield port
+        yield PORT
 
     def test_data_list_is_delayed_and_correct(self):
         for port in self.each():
@@ -124,8 +115,7 @@ class TestSlowBackend(unittest.TestCase):
             self.assertLess(took, 1.6)  # one delayed sub-command, not two
 
     def test_slow_request_does_not_block_fast_ones(self):
-        # Node is single-threaded: the delay must be async. Python is
-        # thread-per-connection. Either way /ping stays fast during a slow read.
+        # Python is thread-per-connection, so /ping stays fast during a slow read.
         import threading
         for port in self.each():
             slow = threading.Thread(target=timed_call, args=(port, 'POST', '/api/v3/read_table'),

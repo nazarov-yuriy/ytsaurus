@@ -527,7 +527,7 @@
       "packages/ui/node_modules/@ytsaurus/javascript-wrapper/lib/commands/v3.js:35",
       "packages/ui/node_modules/@ytsaurus/javascript-wrapper/lib/commands/v3.js:42",
       "packages/ui/node_modules/@ytsaurus/javascript-wrapper/lib/commands/v3.js:49",
-      "/shared/ytsaurus4/iceberg-viewer/mock-backend/server.js:329"
+      "/shared/ytsaurus4/iceberg-viewer/mock-backend-py/server.py:527"
     ]
   },
   {
@@ -541,7 +541,7 @@
     "source_refs": [
       "packages/ui/node_modules/@ytsaurus/javascript-wrapper/lib/commands/v3.js:94",
       "packages/ui/src/server/controllers/yt-api.ts:92",
-      "/shared/ytsaurus4/iceberg-viewer/mock-backend/server.js:211"
+      "/shared/ytsaurus4/iceberg-viewer/mock-backend-py/server.py:272"
     ]
   },
   {

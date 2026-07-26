@@ -2,7 +2,7 @@
 """Mock YTsaurus HTTP proxy serving in-RAM fake data to ytsaurus-ui.
 
 Run: python3 server.py [port]   (default 8000)
-Port of ../mock-backend/server.js; parity checked by recordings/replay-diff.py.
+This is the sole mock-backend implementation.
 Set MOCK_RECORD=<path> to append request/response pairs as JSONL.
 """
 import base64
@@ -151,7 +151,7 @@ def csrf_token_for(user):
 
 
 def check_csrf_token(token, user):
-    """CheckCsrfToken parity: returns (HTTP status, YT error) or None."""
+    """Match YTsaurus CheckCsrfToken; return (HTTP status, YT error) or None."""
     parts = token.strip().split(':')
     if len(parts) != 2 or not parts[1].isdigit():
         return 503, yt_error(1, 'Malformed CSRF token')
@@ -368,8 +368,8 @@ class Handler(BaseHTTPRequestHandler):
         for k, v in headers.items():
             self.send_header(k, v)
         self.send_header('Content-Length', str(len(body_bytes)))
-        # Advertise the close decision: Node clients treat a header-less HTTP/1.1
-        # response as keep-alive and would pool a socket we are about to close.
+        # The UI's Node HTTP client treats a header-less HTTP/1.1 response as
+        # keep-alive and would pool a socket we are about to close.
         self.send_header('Connection', 'close' if self.close_connection else 'keep-alive')
         if not self.close_connection:
             self.send_header('Keep-Alive', 'timeout=5')
@@ -563,7 +563,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 class DualStackServer(ThreadingHTTPServer):
-    # Dual-stack bind (Node parity); backlog 511: a page load bursts ~20 connections.
+    # Dual-stack localhost support; backlog 511: a page load bursts ~20 connections.
     address_family = socket.AF_INET6
     request_queue_size = 511
 

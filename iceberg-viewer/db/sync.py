@@ -241,8 +241,7 @@ DOC_GROUPS = [
     ("Generated from the SQLite catalog / recordings — do not edit", [
         "docs/API-INDEX.md", "docs/ENTITIES.md", "recordings/COVERAGE.md"]),
     ("Component guides", [
-        "mock-backend/README.md", "mock-backend-py/README.md",
-        "recordings/README.md", "deploy/README.md"]),
+        "mock-backend-py/README.md", "recordings/README.md", "deploy/README.md"]),
 ]
 
 

@@ -1,4 +1,4 @@
-"""JSON encoders matching the YT HTTP proxy wire format (port of webjson.js)."""
+"""JSON encoders matching the YT HTTP proxy wire format."""
 import json
 
 INT_TYPES = {'int64', 'int32', 'int16', 'int8', 'uint64', 'uint32', 'uint16', 'uint8'}

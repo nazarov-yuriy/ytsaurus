@@ -4,7 +4,7 @@ Exact request/response traffic captured while driving ytsaurus-ui through every
 interaction an Iceberg viewer needs, at both capture points:
 
 - `proxy-traffic.jsonl` — UI-server → proxy requests, recorded by the mock backend
-  (start it with `MOCK_RECORD=<path> node ../mock-backend/server.js 8000`). Full
+  (start it with `MOCK_RECORD=<path> python3 ../mock-backend-py/server.py 8000`). Full
   request headers/bodies and response status/bodies.
 - `browser-traffic.jsonl` — browser → UI-server `/api/*` requests, extracted from a
   Playwright HAR (the raw 125MB HAR is deleted after extraction).
@@ -30,19 +30,11 @@ command + attribute + parameter-key set + output format, batch subcommands inclu
 writes:
 
 - `corpus.json` — one full representative example per shape, with hit counts and
-  observed statuses. This is the fixture set for API tests: replay each example against
-  a backend and compare response shapes.
+  observed statuses. This is the reference corpus for designing API tests and checking
+  which response shapes the UI actually consumes.
 - `COVERAGE.md` — two-way diff against `../db/api_catalog.sqlite`: documented-but-not-
   exercised (split mock-critical vs out-of-scope) and exercised endpoint lists.
 - `recorded_requests` table in the SQLite DB (queryable next to `endpoints`).
 
 Result of the 2026-07-25 session: 61 distinct shapes, 110 proxy-side + 119 browser-side
 requests, **0 mock-critical proxy endpoints unexercised**, no unexpected error statuses.
-
-## Differential backend testing
-
-`replay-diff.py` starts the Node backend (:8001) and the Python backend (:8002),
-replays every recorded proxy-side request plus 26 hand-written edge cases (auth
-failures, nested attribute paths, v4 envelopes, ranges, batch errors, unknown
-commands/routes, header/query parameter sources) against both, and diffs status,
-body, and YT error headers. Current result: **191/191 identical**.

@@ -1,16 +1,11 @@
 #!/usr/bin/env python3
-"""Protocol conformance tests for the mock YT backends (Node and Python).
+"""Protocol conformance tests for the Python mock YT backend.
 
 Every test asserts *documented* wire behavior — each carries a reference to the
 doc that specifies it (docs/auth.md, docs/table-viewer.md, docs/bootstrap-config.md,
-docs/empirical-findings.md). The suite runs each assertion against BOTH backends,
-so it is simultaneously:
-  1. a conformance check against the documented protocol, and
-  2. a Node <-> Python consistency check (complements recordings/replay-diff.py,
-     which replays the recorded UI traffic verbatim).
+docs/empirical-findings.md).
 
-Run:  python3 tests/test_protocol.py          (spins up both servers itself)
-      BACKEND=node|python python3 tests/...   (restrict to one backend)
+Run: python3 tests/test_protocol.py
 """
 import base64
 import json
@@ -24,11 +19,8 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PORTS = {'node': 8011, 'python': 8012}
-STRICT_PORTS = {'node': 8013, 'python': 8014}
-_only = os.environ.get('BACKEND')
-BACKENDS = {k: v for k, v in PORTS.items() if not _only or k == _only}
-STRICT_BACKENDS = {k: v for k, v in STRICT_PORTS.items() if not _only or k == _only}
+PORT = 8012
+STRICT_PORT = 8014
 
 _procs = []
 
@@ -38,14 +30,9 @@ def setUpModule():
         key: value for key, value in os.environ.items()
         if key not in ('MOCK_REQUIRE_AUTH', 'MOCK_ROBOT_TOKEN')
     }
-    if 'node' in BACKENDS:
-        _procs.append(subprocess.Popen(
-            ['node', str(ROOT / 'mock-backend' / 'server.js'), str(PORTS['node'])],
-            env=anonymous_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
-    if 'python' in BACKENDS:
-        _procs.append(subprocess.Popen(
-            [sys.executable, str(ROOT / 'mock-backend-py' / 'server.py'), str(PORTS['python'])],
-            env=anonymous_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+    _procs.append(subprocess.Popen(
+        [sys.executable, str(ROOT / 'mock-backend-py' / 'server.py'), str(PORT)],
+        env=anonymous_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
     strict_env = {
         key: value for key, value in anonymous_env.items()
         if key != 'MOCK_PG_DSN'
@@ -54,16 +41,10 @@ def setUpModule():
         'MOCK_REQUIRE_AUTH': '1',
         'MOCK_ROBOT_TOKEN': 'protocol-test-robot',
     })
-    if 'node' in STRICT_BACKENDS:
-        _procs.append(subprocess.Popen(
-            ['node', str(ROOT / 'mock-backend' / 'server.js'), str(STRICT_PORTS['node'])],
-            env=strict_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
-    if 'python' in STRICT_BACKENDS:
-        _procs.append(subprocess.Popen(
-            [sys.executable, str(ROOT / 'mock-backend-py' / 'server.py'),
-             str(STRICT_PORTS['python'])],
-            env=strict_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
-    for port in (*BACKENDS.values(), *STRICT_BACKENDS.values()):
+    _procs.append(subprocess.Popen(
+        [sys.executable, str(ROOT / 'mock-backend-py' / 'server.py'), str(STRICT_PORT)],
+        env=strict_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+    for port in (PORT, STRICT_PORT):
         for _ in range(50):
             try:
                 urllib.request.urlopen(f'http://localhost:{port}/ping', timeout=1)
@@ -102,16 +83,14 @@ def call(port, method, path, body=None, headers=None):
     return status, parsed, rh
 
 
-class Both(unittest.TestCase):
-    """Base: runs each check against every backend via subTest."""
+class BackendTestCase(unittest.TestCase):
+    """Base class for tests against the normal backend process."""
 
     def each(self):
-        for name, port in BACKENDS.items():
-            with self.subTest(backend=name):
-                yield port
+        yield PORT
 
 
-class TestInfrastructure(Both):
+class TestInfrastructure(BackendTestCase):
     def test_readiness_endpoint_is_public(self):
         for port in self.each():
             status, body, _ = call(port, 'GET', '/ready')
@@ -151,7 +130,7 @@ class TestInfrastructure(Both):
             self.assertEqual(body, ['v3', 'v4'])
 
 
-class TestAuth(Both):
+class TestAuth(BackendTestCase):
     ICEBERG_BASIC = 'Basic ' + base64.b64encode(b'iceberg:iceberg').decode()
 
     def test_login_success_sets_cypress_cookie(self):
@@ -266,13 +245,11 @@ class TestAuth(Both):
             self.assertEqual(status, 200)
 
 
-class TestStrictAuth(Both):
+class TestStrictAuth(BackendTestCase):
     """Authentication-required mode used by the PostgreSQL-enabled chart."""
 
     def each(self):
-        for name, port in STRICT_BACKENDS.items():
-            with self.subTest(backend=name):
-                yield port
+        yield STRICT_PORT
 
     def test_readiness_stays_public(self):
         for port in self.each():
@@ -348,7 +325,7 @@ class TestStrictAuth(Both):
             self.assertIs(exists, True)
 
 
-class TestCypressCommands(Both):
+class TestCypressCommands(BackendTestCase):
     def test_get_attribute_and_nested_path(self):
         # table-viewer.md: @-paths address attributes; nested steps traverse into
         # the value ({$attributes,$value} wrappers are transparent, lists accept indices).
@@ -423,7 +400,7 @@ class TestCypressCommands(Both):
             self.assertEqual(p, '//home/iceberg/warehouse/trips')
 
 
-class TestTypedOutputFormat(Both):
+class TestTypedOutputFormat(BackendTestCase):
     TYPED = {'$value': 'json', '$attributes': {'annotate_with_types': True, 'stringify': True}}
 
     def test_scalars_become_type_value_pairs(self):
@@ -453,7 +430,7 @@ class TestTypedOutputFormat(Both):
             self.assertEqual(body, 250)
 
 
-class TestExecuteBatch(Both):
+class TestExecuteBatch(BackendTestCase):
     def test_results_in_request_order_with_per_item_errors(self):
         # coverage-notes.md: batch failures ride inside an HTTP-200 response as
         # per-item {error}; successes as {output}. Order matches the request list.
@@ -469,7 +446,7 @@ class TestExecuteBatch(Both):
             self.assertIn('not registered', body[2]['error']['message'])
 
 
-class TestReadTableWebJson(Both):
+class TestReadTableWebJson(BackendTestCase):
     def read(self, port, path, attrs=None):
         of = {'$value': 'web_json', '$attributes': attrs or {}}
         _, body, _ = call(port, 'POST', '/api/v3/read_table',
@@ -543,7 +520,7 @@ class TestReadTableWebJson(Both):
 
     def test_double_stringification_matches_js(self):
         # Consistency detail: integer-valued doubles print without a decimal point
-        # ("3", not "3.0") — the Python port must match the Node backend byte-for-byte.
+        # ("3", not "3.0") — the encoder must match the JavaScript-facing wire contract.
         for port in self.each():
             body = self.read(port, '//home/iceberg/warehouse/trips[#0:#1]')
             self.assertEqual(body['rows'][0]['distance_km'], {'$type': 'double', '$value': '3'})
@@ -557,7 +534,7 @@ class TestReadTableWebJson(Both):
             self.assertEqual(body['code'], 500)
 
 
-class TestHostsRoleFiltering(Both):
+class TestHostsRoleFiltering(BackendTestCase):
     def test_role_filter_matches_coordinator(self):
         # Ported from test_http_proxy.py test_hosts / test_proxy_roles.py: the
         # default filter is the "data" role (coordinator.cpp:551); this mock is
@@ -571,7 +548,7 @@ class TestHostsRoleFiltering(Both):
             self.assertEqual(control, [])
 
 
-class TestErrorFormatNegotiation(Both):
+class TestErrorFormatNegotiation(BackendTestCase):
     """Ported from test_http_proxy.py test_error_format / test_error_format_type /
     test_error_web_json: X-YT-Error-Format governs the error encoding, reported
     via X-YT-Error-Content-Type."""
@@ -677,7 +654,7 @@ class TestErrorFormatNegotiation(Both):
             self.assertIn('x-yt-error-format', allowed)
 
 
-class TestReadTableYqlFormat(Both):
+class TestReadTableYqlFormat(BackendTestCase):
     """value_format: yql (table-viewer.md §5.4, web_json_writer.cpp:110-345):
     cells are [value, "<registry index>"], present optionals wrap as [inner],
     null stays null; numbers stringified, booleans native JSON; any/Yson values
@@ -733,7 +710,7 @@ class TestReadTableYqlFormat(Both):
             self.assertEqual(body['rows'][0]['trip_id'], {'$type': 'int64', '$value': '1'})
 
 
-class TestErrorEnvelope(Both):
+class TestErrorEnvelope(BackendTestCase):
     def test_error_body_is_yt_error_entity_with_headers(self):
         # coverage-notes.md conventions: every error response is the yt-error
         # entity, mirrored into X-YT-Error / X-YT-Response-Code / X-YT-Response-Message.
@@ -752,14 +729,14 @@ class TestErrorEnvelope(Both):
             self.assertIn('not registered', body['message'])
 
 
-class TestConnectionManagement(Both):
+class TestConnectionManagement(BackendTestCase):
     def test_connection_decision_is_advertised(self):
         # Hard-won empirical rule (see mock-backend-py/server.py send_body): an
         # HTTP/1.1 response with NO Connection header implies keep-alive to Node
         # clients. A server that then closes the socket (as Python's http.server
         # does silently for `Connection: close` requests) leaves clients pooling
         # dead sockets -> intermittent "socket hang up" -> 504s in the UI.
-        # Both backends must therefore say what they'll do:
+        # The backend must therefore say what it will do:
         #   request Connection: keep-alive -> response Connection: keep-alive + Keep-Alive
         #   request Connection: close      -> response Connection: close
         # urllib always injects its own `Connection: close`, so use raw http.client.
@@ -808,7 +785,7 @@ class TestConnectionManagement(Both):
             self.assertEqual(errors, [])
 
 
-class TestParameterSources(Both):
+class TestParameterSources(BackendTestCase):
     def test_query_string_header_and_body_all_work(self):
         # coverage-notes.md parameter-decoding: precedence is query string <-
         # X-YT-Parameters <- JSON body; each source alone must work.

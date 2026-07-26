@@ -1,8 +1,7 @@
 """In-RAM fake cluster data: a Cypress-like tree of map nodes and static tables.
 
-Python port of ../mock-backend/data.js — node creation order, id sequence, and all
-generated values are kept byte-identical to the Node implementation (verified by
-recordings/replay-diff.py).
+Tree-node creation order, ids, timestamps, and generated values are deterministic
+so protocol tests and UI sessions see stable data.
 
 This is the layer to re-implement on top of an Apache Iceberg catalog:
 map nodes <-> namespaces, tables <-> Iceberg tables.
@@ -150,7 +149,7 @@ def _insert(path: str, node: Node) -> Node:
     return node
 
 
-# Creation order matches data.js exactly (ids are sequential).
+# Keep creation order stable because ids are sequential.
 _insert('home', make_map_node())
 _insert('home/iceberg', make_map_node())
 _insert('home/iceberg/warehouse', make_map_node())

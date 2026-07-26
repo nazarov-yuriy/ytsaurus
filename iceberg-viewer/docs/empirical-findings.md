@@ -1,8 +1,8 @@
 # Empirical findings from driving the real UI against the mock
 
 These details were discovered by running ytsaurus-ui (headless Chromium) against
-`mock-backend/` and watching what broke. They are requirements beyond what static
-code reading surfaced, verified 2026-07-25 against ytsaurus-ui@3.20.0.
+`mock-backend-py/` and watching what broke. They are requirements beyond what
+static code reading surfaced, verified 2026-07-25 against ytsaurus-ui@3.20.0.
 
 ## Hard requirements found by testing
 

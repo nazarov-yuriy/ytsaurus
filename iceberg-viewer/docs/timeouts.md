@@ -2,7 +2,7 @@
 
 A slow Iceberg catalog (1–30s per listing/read) must fit inside every timeout on
 the request path. This documents each layer, verified against code, and the
-`MOCK_DELAY` switch both mock backends provide for testing it.
+`MOCK_DELAY` switch the mock backend provides for testing it.
 
 ## The request path and its timeouts
 
@@ -21,8 +21,8 @@ browser (jsw wrapper) ──► [dev: Rspack proxy | prod: nginx] ──► UI n
 | 5 | UI node server → proxy: `/auth/whoami` (cluster-info) | **15 s** | `src/server/components/cluster-queries.ts:14` |
 | 6 | UI node server → proxy: `/version` (cluster-info) | **5 s** | `cluster-queries.ts:77` |
 | 7 | UI node server → proxy: robot batches for cluster-params (`//sys/media`, `@ui_config`, …) | **5 s** | `src/server/components/requestsSetup.ts:61` |
-| 8 | Mock backends: per request | none (a handler may take arbitrarily long) | `mock-backend*/server.*` |
-| 9 | Mock backends: idle keep-alive between requests | 5 s, advertised via `Keep-Alive: timeout=5` | `server.py send_body` / Node default |
+| 8 | Mock backend: per request | none (a handler may take arbitrarily long) | `mock-backend-py/server.py` |
+| 9 | Mock backend: idle keep-alive between requests | 5 s, advertised via `Keep-Alive: timeout=5` | `server.py send_body` |
 | 10 | Mock (python) → PostgreSQL | connect 5 s (chart DSN `connect_timeout=5`); no statement timeout | chart `mock-backend.yaml` |
 | 11 | k8s probes (chart): liveness/readiness `/ping`, `/ready` | 1 s per attempt (k8s default `timeoutSeconds`), period 10 s | `deploy/helm/.../mock-backend.yaml` |
 | 12 | k8s startup probe (pip-install window, PG mode) | up to 300 s (60×5 s) | `mock-backend.yaml` startupProbe |
@@ -40,19 +40,20 @@ browser (jsw wrapper) ──► [dev: Rspack proxy | prod: nginx] ──► UI n
   slow catalog implementation must keep control-plane reads (`//sys`,
   `/version`, `/auth/whoami`, `/ping`, `/ready`) off the slow path.
 - **Probes are on a separate 1 s budget** (11): `/ping` (process alive) and
-  `/ready` (storage reachable) must never touch table data. In the mocks they
-  don't, and slow requests run on other threads (Python) / async timers (Node),
-  so probes stay fast during slow reads (covered by tests).
+  `/ready` (storage reachable) must never touch table data. In the mock it
+  doesn't, and slow requests run on other threads, so probes stay fast during
+  slow reads (covered by tests).
 - The UI shows its usual loading spinners while requests are in flight; nothing
   client-side gives up before 100 s.
 
 ## Simulating slowness: MOCK_DELAY
 
-Both backends accept `MOCK_DELAY` (identical syntax):
+The backend accepts `MOCK_DELAY`:
 
 ```bash
-MOCK_DELAY=1500 python3 server.py 8000                      # all data commands +1.5s
-MOCK_DELAY=read_table:5000,list:2000,get:1000 node server.js  # per command
+MOCK_DELAY=1500 python3 mock-backend-py/server.py 8000  # all data commands +1.5s
+MOCK_DELAY=read_table:5000,list:2000,get:1000 \
+  python3 mock-backend-py/server.py 8000                # per command
 ```
 
 - Applies to `get`/`list`/`exists`/`read_table`, both top-level and per
@@ -60,10 +61,9 @@ MOCK_DELAY=read_table:5000,list:2000,get:1000 node server.js  # per command
 - **`//sys` paths are never delayed** (rule follows from the 5 s boot budget
   above); infrastructure endpoints (`/ping`, `/ready`, `/version`,
   `/auth/whoami`, `/login`) are never delayed.
-- Delays never block other requests (Python: thread per connection; Node:
-  async `setTimeout`).
+- Delays never block other requests (one thread per connection).
 - Helm: `--set mockBackend.delay=read_table:5000,list:2000`.
 
-Covered by `tests/test_slow_backend.py` (6 dual-backend tests: delayed-and-correct
-responses, //sys and infrastructure exemptions, per-sub-command batch delays,
-no head-of-line blocking).
+Covered by `tests/test_slow_backend.py` (6 tests: delayed-and-correct responses,
+//sys and infrastructure exemptions, per-sub-command batch delays, no
+head-of-line blocking).

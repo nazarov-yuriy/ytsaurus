@@ -8,8 +8,7 @@ Reviewed revision: `d82922e8a44`
 
 The primary target is the chart-deployed Python backend, its PostgreSQL
 authentication store, the UI-to-backend proxy hop, and the Helm/Docker
-boundary. The Node backend was checked for security-relevant differences but
-is not deployed by the chart.
+boundary.
 
 The review assumes:
 
@@ -360,19 +359,10 @@ Python maps GET, POST, PUT, and DELETE to the same handler
 would therefore become GET-callable and bypass CSRF unless every author
 remembers to add a separate guard.
 
-The Node implementation also looks commands up on a normal object without an
-own-property check. `/api/v3/constructor` and a batch entry named
-`constructor` resolve inherited JavaScript properties instead of being
-rejected
-([`server.js`](../mock-backend/server.js#L300-L317) and
-[`server.js`](../mock-backend/server.js#L468-L483)). A live check returned
-`200`; current impact is limited to unintended behavior because the service is
-read-only.
-
 **Required change:** define allowed verbs and read/write classification per
 command, return `405` for other methods, and enforce CSRF from operation
-metadata rather than the caller's verb. In Node use a null-prototype map or
-`Object.hasOwn`, and explicitly forbid nested/unknown batch commands.
+metadata rather than the caller's verb. Explicitly forbid nested/unknown batch
+commands.
 
 ### SEC-13 — Recording and administration workflows expose reusable credentials
 
@@ -462,32 +452,10 @@ the listening address
 binds to the IPv6 wildcard and explicitly enables dual-stack IPv4
 ([`server.py`](../mock-backend-py/server.py#L438-L450)). Running the documented
 `python3 server.py 8000` therefore exposes the service to every reachable
-interface, not just loopback. The Node implementation also listens without an
-explicit host.
+interface, not just loopback.
 
 **Required change:** separate advertised host from bind address, default
 direct runs to loopback, and require an explicit wildcard bind for containers.
-
-## Node implementation deployment warnings
-
-The Helm chart deploys Python, so these are not included in the primary
-deployment verdict. They must be fixed before deploying `mock-backend/server.js`
-instead:
-
-- **High — one malformed unauthenticated request target terminates the
-  process.** `new URL(req.url, ...)` executes before the handler's `try`
-  ([`server.js`](../mock-backend/server.js#L336-L382)). A raw
-  `GET http://[invalid HTTP/1.1` request was reproduced on Node 20 and exited
-  the process with an uncaught `ERR_INVALID_URL`. URL parsing and body handling
-  need an outer error boundary plus `clientError` and rejected-promise
-  handling.
-- **Medium — session identifiers are not cryptographically random and never
-  expire.** They use `Math.random()`
-  ([`server.js`](../mock-backend/server.js#L131-L143)). Use
-  `crypto.randomBytes` and the same expiry/revocation design as the Python
-  implementation.
-- Node also buffers request bodies without a limit
-  ([`server.js`](../mock-backend/server.js#L93-L99)); SEC-08 applies equally.
 
 ## Positive controls observed
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Cypress cookie-model and CSRF-construction tests, ported from the YTsaurus
 suites (test_cypress_cookie_auth.py, helpers_ut.cpp TTestCsrfTokenTest) and run
-against BOTH backends with tuned TTLs:
+against the Python backend with tuned TTLs:
 
 - cookie value format: 64 hex chars (GenerateCookieValue parity)
 - browser expiry and Secure/HttpOnly/Path attributes match the server TTL
@@ -25,9 +25,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PORTS = {'node': 8051, 'python': 8052}
-_only = os.environ.get('BACKEND')
-BACKENDS = {k: v for k, v in PORTS.items() if not _only or k == _only}
+PORT = 8052
 
 TTL = 4
 _procs = []
@@ -37,15 +35,10 @@ def setUpModule():
     env = {**{k: v for k, v in os.environ.items() if k != 'MOCK_PG_DSN'},
            'MOCK_COOKIE_TTL_SECONDS': str(TTL),
            'MOCK_CSRF_SECRET': 'cookie-model-test-secret'}
-    if 'node' in BACKENDS:
-        _procs.append(subprocess.Popen(['node', str(ROOT / 'mock-backend' / 'server.js'),
-                                        str(PORTS['node'])], env=env,
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
-    if 'python' in BACKENDS:
-        _procs.append(subprocess.Popen([sys.executable, str(ROOT / 'mock-backend-py' / 'server.py'),
-                                        str(PORTS['python'])], env=env,
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
-    for port in BACKENDS.values():
+    _procs.append(subprocess.Popen(
+        [sys.executable, str(ROOT / 'mock-backend-py' / 'server.py'), str(PORT)],
+        env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+    for port in (PORT,):
         for _ in range(50):
             try:
                 urllib.request.urlopen(f'http://localhost:{port}/ping', timeout=1)
@@ -91,14 +84,12 @@ def login(port, path='/login'):
     return header.split(';')[0].split('=', 1)[1]
 
 
-class Both(unittest.TestCase):
+class BackendTestCase(unittest.TestCase):
     def each(self):
-        for name, port in BACKENDS.items():
-            with self.subTest(backend=name):
-                yield port
+        yield PORT
 
 
-class TestCookieFormat(Both):
+class TestCookieFormat(BackendTestCase):
     def test_value_and_attributes_match_cookie_config(self):
         # test_cookie_format / GenerateCookieValue / TCypressCookie::ToHeader.
         for port in self.each():
@@ -124,7 +115,7 @@ class TestCookieFormat(Both):
                 self.assertIn('YTCypressCookie=', header)
 
 
-class TestCookieStoreIsolation(Both):
+class TestCookieStoreIsolation(BackendTestCase):
     def test_cookie_store_is_not_exposed_to_api_users(self):
         # The real node is privileged; exposing its keys would leak bearer
         # credentials because the mock has no Cypress ACL engine.
@@ -153,7 +144,7 @@ class TestCookieStoreIsolation(Both):
             self.assertEqual(who['realm'], 'mock')
 
 
-class TestCsrfConstruction(Both):
+class TestCsrfConstruction(BackendTestCase):
     def test_token_format_and_verification(self):
         # SignCsrfToken (auth_server/helpers.cpp:160-164): with a shared secret the
         # signature is reproducible: hex(hmac_sha256(secret, "user:ts")) + ":" + ts.

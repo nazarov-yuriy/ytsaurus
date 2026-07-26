@@ -25,7 +25,7 @@ Which doc covers what, and which doc mentions which. Regenerate with `python3 db
 
 ### [docs/empirical-findings.md](../docs/empirical-findings.md)
 *Empirical findings from driving the real UI against the mock*
-- mentioned by: [mock-backend/README.md](../mock-backend/README.md)
+- no cross-references
 
 ### [docs/coverage-notes.md](../docs/coverage-notes.md)
 *Coverage notes: conventions and out-of-scope endpoints*
@@ -54,7 +54,7 @@ Which doc covers what, and which doc mentions which. Regenerate with `python3 db
 - mentions: [README.md](../README.md), [deploy/README.md](../deploy/README.md)
 
 ### [docs/proxy-test-coverage.md](../docs/proxy-test-coverage.md)
-*YTsaurus http-proxy test suites vs the mock backends*
+*YTsaurus http-proxy test suites vs the mock backend*
 - mentions: [docs/table-viewer.md](../docs/table-viewer.md)
 
 ## Generated from the SQLite catalog / recordings — do not edit
@@ -72,10 +72,6 @@ Which doc covers what, and which doc mentions which. Regenerate with `python3 db
 - mentioned by: [docs/iceberg-considerations.md](../docs/iceberg-considerations.md), [recordings/README.md](../recordings/README.md)
 
 ## Component guides
-
-### [mock-backend/README.md](../mock-backend/README.md)
-*Mock YTsaurus HTTP proxy (in-RAM data)*
-- mentions: [docs/empirical-findings.md](../docs/empirical-findings.md)
 
 ### [mock-backend-py/README.md](../mock-backend-py/README.md)
 *Mock YTsaurus HTTP proxy — Python implementation*

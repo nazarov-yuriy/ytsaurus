@@ -68,7 +68,7 @@ Password login: browser POSTs JSON to UI server /api/yt/:cluster/login; UI serve
 | Status | Field | Type | Required | Description |
 |--------|-------|------|----------|-------------|
 | 🟢 implemented | `password` | string | yes | plain password; a wrong pair returns HTTP 401 with generic code 1 ('Incorrect login or password'), matching the real proxy which masks the cause |
-| 🟢 implemented | `username` | string | yes | checked against users map in data.js |
+| 🟢 implemented | `username` | string | yes | checked against the user store in mock-backend-py/userdb.py |
 
 ## node-attributes
 

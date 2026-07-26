@@ -4,7 +4,7 @@ Everything below was verified against the sources in this workspace:
 
 - UI: `/shared/ytsaurus4/iceberg-viewer/ytsaurus-ui` (monorepo, app in `packages/ui`)
 - Proxy semantics: `/shared/ytsaurus4/yt/yt/server/http_proxy`
-- Existing mock: `/shared/ytsaurus4/iceberg-viewer/mock-backend/server.js`
+- Existing mock: `/shared/ytsaurus4/iceberg-viewer/mock-backend-py/server.py`
 
 File references are `path:line` relative to those roots.
 
@@ -15,7 +15,7 @@ File references are `path:line` relative to those roots.
 ```bash
 # 0. mock proxy on :8000 (must answer /version, /auth/whoami and /api/v3|v4/*;
 #    /hosts is needed only when heavy-proxy discovery is enabled)
-node /shared/ytsaurus4/iceberg-viewer/mock-backend/server.js 8000
+python3 /shared/ytsaurus4/iceberg-viewer/mock-backend-py/server.py 8000
 
 # 1. deps (node >= 24 per packages/ui/package.json:"engines")
 cd /shared/ytsaurus4/iceberg-viewer/ytsaurus-ui
@@ -470,7 +470,8 @@ handler keys off.
 Commands with `useBodyForParameters: true` (`get`, `list`, `exists`,
 `read_table`, `execute_batch`, … — `javascript-wrapper/lib/commands/v3.js:35-55,94-106,334-339`)
 send their parameters as a **JSON request body** instead, so a mock must
-merge query string + `X-YT-Parameters*` + body (as `mock-backend/server.js:75-98` does).
+merge query string + `X-YT-Parameters*` + body (as
+`Handler.collect_params` does in `mock-backend-py/server.py:433-445`).
 
 Proxy → client (verified in `yt/yt/server/http_proxy/context.cpp`):
 `X-YT-Request-Id`, `X-YT-Trace-Id`, `X-YT-Proxy`, `Cache-Control: no-store`,
@@ -509,7 +510,8 @@ mock only has to make those four commands work.
   exceptions.
 - Exception 1 — **download-ish reads**, gated by `uiSettings.directDownload` (`src/ui/utils/navigation/index.ts:148-166`): `read_table` (table download), `read_file`, `read_query_result`, `get_job_stderr`, `get_job_fail_context`, `get_job_input` go to `//<externalProxy ?? proxy>/api/v3/<cmd>` with `withCredentials: true` (`.../DownloadManager/DownloadManager.tsx:314`, `src/ui/store/selectors/navigation/content/file.js:11`, `.../Jobs/job-selector.ts:154-168`). Set `directDownload: false` to route these through the node server instead.
 - Exception 2 — **uploads always bypass the node server**: `write_file` (`src/ui/containers/UploadFileManager/uploadFile.ts:18,36`) and `write_table` (`.../UploadManager/UploadManager.tsx:408,426-429`) override the wrapper `proxy` with `externalProxy ?? proxy` regardless of `directDownload`, and set `X-Csrf-Token` manually (`UploadManager.tsx:486-490`). Only relevant if your mock is writable.
-- The existing mock already answers CORS preflights (`mock-backend/server.js:43-64`).
+- The existing mock already answers CORS preflights
+  (`Handler.cors_headers` in `mock-backend-py/server.py:355-364`).
 - No application websockets. The only websocket is the dev-server HMR socket at `/build/sockjs-node`. The only SSE is `text/event-stream` on the AI-chat endpoint (`src/server/controllers/ai-chat.ts:125`), which is off by default.
 
 ---
@@ -558,9 +560,9 @@ wrapper's command table before proxying and rejects unknown ones with 400
 
 ---
 
-## 8. Current `mock-backend/server.js` coverage
+## 8. Current `mock-backend-py/server.py` coverage
 
-Checked against `/shared/ytsaurus4/iceberg-viewer/mock-backend/server.js`:
+Checked against `/shared/ytsaurus4/iceberg-viewer/mock-backend-py/server.py`:
 
 - The bootstrap path is implemented: `/version`, `/auth/whoami`, anonymous
   access for `authentication: "none"`, and `execute_batch` with the
