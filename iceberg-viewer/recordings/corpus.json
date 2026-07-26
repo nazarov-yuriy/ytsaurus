@@ -1113,7 +1113,7 @@
  },
  {
   "signature": "[proxy] POST /api/v3/execute_batch batch[list]",
-  "count": 1,
+  "count": 23,
   "statuses": [
    200
   ],
@@ -1150,7 +1150,7 @@
  },
  {
   "signature": "[proxy] POST /api/v3/execute_batch batch[get,get:@ui_config,get:@ui_config_dev_overrides,list]",
-  "count": 1,
+  "count": 23,
   "statuses": [
    200
   ],

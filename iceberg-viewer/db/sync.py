@@ -309,8 +309,9 @@ def doc_index() -> None:
 
 def check() -> None:
     conn = connect()
+    # Refresh coverage inside this connection for accurate checks, but roll it
+    # back before exit so a sanity check does not rewrite the tracked database.
     update_md_coverage(conn)
-    conn.commit()
     failures = 0
 
     rows = conn.execute(
@@ -350,6 +351,8 @@ def check() -> None:
     if before and all((DOCS / n).read_text() == o for n, o in before.items()):
         print("OK: generated API-INDEX.md, ENTITIES.md and INDEX.md are up to date")
 
+    conn.rollback()
+    conn.close()
     sys.exit(1 if failures else 0)
 
 

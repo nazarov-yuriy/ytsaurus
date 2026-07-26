@@ -1,6 +1,6 @@
 # Play-session coverage vs documented API catalog
 
-Recorded: 121 proxy-side requests, 119 browser-side requests, 61 distinct shapes (see corpus.json).
+Recorded: 165 proxy-side requests, 119 browser-side requests, 61 distinct shapes (see corpus.json).
 
 ## Distinct request shapes recorded
 
@@ -43,13 +43,13 @@ Recorded: 121 proxy-side requests, 119 browser-side requests, 61 distinct shapes
 - `[proxy] POST /api/v3/execute_batch batch[]` ×1 → [200]
 - `[proxy] POST /api/v3/execute_batch batch[check_permission]` ×8 → [200]
 - `[proxy] POST /api/v3/execute_batch batch[check_permission_by_acl]` ×6 → [200]
-- `[proxy] POST /api/v3/execute_batch batch[get,get:@ui_config,get:@ui_config_dev_overrides,list]` ×1 → [200]
+- `[proxy] POST /api/v3/execute_batch batch[get,get:@ui_config,get:@ui_config_dev_overrides,list]` ×23 → [200]
 - `[proxy] POST /api/v3/execute_batch batch[get:@(all)]` ×14 → [200]
 - `[proxy] POST /api/v3/execute_batch batch[get:@acl,get:@effective_acl,get:@revision]` ×1 → [200]
 - `[proxy] POST /api/v3/execute_batch batch[get:@dynamic,get:@type]` ×8 → [200]
 - `[proxy] POST /api/v3/execute_batch batch[get:@mount_config]` ×7 → [200]
 - `[proxy] POST /api/v3/execute_batch batch[get:@path]` ×7 → [200]
-- `[proxy] POST /api/v3/execute_batch batch[list]` ×1 → [200]
+- `[proxy] POST /api/v3/execute_batch batch[list]` ×23 → [200]
 - `[proxy] POST /api/v3/exists params(suppress_access_tracking)` ×7 → [200]
 - `[proxy] POST /api/v3/get @(all) params(output_format,suppress_access_tracking) of=json` ×2 → [200]
 - `[proxy] POST /api/v3/get @default_tree params(suppress_access_tracking)` ×6 → [200]
@@ -68,9 +68,10 @@ Recorded: 121 proxy-side requests, 119 browser-side requests, 61 distinct shapes
 
 ## Proxy endpoints: documented but NOT exercised
 
-Mock-critical (0):
+Mock-critical (1):
+- `/ready` ()
 
-Out-of-scope/optional (11): `/api/v3`, `/api/v4`, `/api/v4/discover_proxies`, `/api/v4/get_current_user`, `/api/v4/issue_token`, `/api/v4/list_user_tokens`, `/api/v4/revoke_token`, `/api/v4/set_user_password`, `/cluster_connection`, `/internal/discover_versions/v2`, `/service`
+Out-of-scope/optional (14): `/api/v3`, `/api/v3/check_permission_by_acl`, `/api/v3/whoami`, `/api/v4`, `/api/v4/discover_proxies`, `/api/v4/get_current_user`, `/api/v4/issue_token`, `/api/v4/list_user_tokens`, `/api/v4/revoke_token`, `/api/v4/set_user_password`, `/cluster_connection`, `/internal/discover_versions/v2`, `/service`, `/service/version`
 
 ## Proxy endpoints: exercised (20)
 
@@ -127,6 +128,7 @@ Out-of-scope/optional (28): `/api/:ytAuthCluster/prometheus/chart-data`, `/api/:
 ## Notes
 
 - HTML page routes (`/`, `/:ytAuthCluster/...`) listed as unexercised were in fact loaded by the play session; the HAR filter only keeps `/api/*` requests, so they never enter the hit set. Treat them as covered by any page navigation.
+- `/ready` is a deployment readiness endpoint, not UI traffic; Helm probes and backend tests exercise it outside this recorded play session.
 - `POST /api/yt/logout` returns 404 because the logout route is only mounted when the UI server's auth policy is enabled; with `authentication: "none"` there is no session to destroy.
 - `POST /api/yt/mock/login` succeeds even in auth-none mode: the UI server forwards Basic auth to the proxy `/login`, which sets `YTCypressCookie`.
 - Batch-level errors (e.g. nonexistent paths) travel inside HTTP-200 `execute_batch` responses as per-item `{error}` objects — HTTP status stays 200.

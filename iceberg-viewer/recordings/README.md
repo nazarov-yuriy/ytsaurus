@@ -45,5 +45,7 @@ writes:
   exercised (split mock-critical vs out-of-scope) and exercised endpoint lists.
 - `recorded_requests` table in the SQLite DB (queryable next to `endpoints`).
 
-Result of the 2026-07-25 session: 61 distinct shapes, 110 proxy-side + 119 browser-side
-requests, **0 mock-critical proxy endpoints unexercised**, no unexpected error statuses.
+Result of the 2026-07-25 session: 61 distinct shapes, 165 proxy-side + 119
+browser-side requests, no unexpected error statuses. `/ready` is the only
+mock-critical endpoint outside the recorded UI session; deployment probes and
+backend tests exercise it separately.

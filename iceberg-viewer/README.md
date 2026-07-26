@@ -22,6 +22,8 @@ mock backend, as a first step toward serving the UI from an Apache Iceberg catal
   - `*.inventory.json` — machine-readable API inventories (source of truth for the DB).
   - `API-INDEX.md`, `ENTITIES.md` — generated from the SQLite DB, do not edit.
 - `db/` — structured API catalog:
+  - `api_catalog.sqlite` — committed generated catalog consumed by sanity checks
+    and recording coverage analysis.
   - `schema.sql` — SQLite schema (endpoints, params, entities/fields with
     support_status, MD coverage, recorded_requests).
   - `entities.json` — hand-curated payload entities (yt-error, web_json, cluster-info,

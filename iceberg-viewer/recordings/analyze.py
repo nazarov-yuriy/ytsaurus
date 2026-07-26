@@ -191,6 +191,8 @@ def main():
               "- HTML page routes (`/`, `/:ytAuthCluster/...`) listed as unexercised were in fact "
               "loaded by the play session; the HAR filter only keeps `/api/*` requests, so they "
               "never enter the hit set. Treat them as covered by any page navigation.",
+              "- `/ready` is a deployment readiness endpoint, not UI traffic; Helm probes and "
+              "backend tests exercise it outside this recorded play session.",
               "- `POST /api/yt/logout` returns 404 because the logout route is only mounted when "
               "the UI server's auth policy is enabled; with `authentication: \"none\"` there is "
               "no session to destroy.",
