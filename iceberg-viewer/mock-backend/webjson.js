@@ -70,6 +70,29 @@ function webJsonScalar(value, columnType) {
   }
 }
 
+function ysonQuote(v) {
+  // Quote UTF-8 bytes exactly like NYson::EscapeC.
+  const data = Buffer.from(String(v), 'utf8');
+  const out = ['"'];
+  const isHex = (byte) =>
+    (byte >= 48 && byte <= 57) || (byte >= 65 && byte <= 70) || (byte >= 97 && byte <= 102);
+  for (let index = 0; index < data.length; index++) {
+    const byte = data[index];
+    const next = index + 1 < data.length ? data[index + 1] : 0;
+    if (byte === 34) out.push('\\"');
+    else if (byte === 92) out.push('\\\\');
+    else if (byte >= 32 && byte <= 126) out.push(String.fromCharCode(byte));
+    else if (byte === 13) out.push('\\r');
+    else if (byte === 10) out.push('\\n');
+    else if (byte === 9) out.push('\\t');
+    else if (byte < 8 && !(next >= 48 && next <= 55)) out.push(`\\${byte.toString(8)}`);
+    else if (!isHex(next)) out.push(`\\x${byte.toString(16).padStart(2, '0')}`);
+    else out.push(`\\${byte.toString(8).padStart(3, '0')}`);
+  }
+  out.push('"');
+  return out.join('');
+}
+
 // Minimal YSON text encoding (maps/lists/scalars) for X-YT-Error-Format: yson.
 function ysonText(v) {
   if (v === null || v === undefined) return '#';
@@ -79,7 +102,7 @@ function ysonText(v) {
   if (typeof v === 'object') {
     return '{' + Object.entries(v).map(([k, x]) => ysonText(k) + '=' + ysonText(x) + ';').join('') + '}';
   }
-  return '"' + String(v).split('\\').join('\\\\').split('"').join('\\"') + '"';
+  return ysonQuote(v);
 }
 
 // Build the full web_json read_table response body.

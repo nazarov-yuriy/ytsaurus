@@ -65,6 +65,78 @@ def resolve_error(path):
     return CommandError(400, yt_error(500, f'Error resolving path {path}', {'path': path, 'code': 500}))
 
 
+def gather_header(headers, name):
+    """Gather a direct YT header or its base64-encoded numbered parts."""
+    if (value := headers.get(name)) is not None:
+        return value
+    parts = []
+    for index in range(1001):
+        value = headers.get(f'{name}{index}')
+        if value is None:
+            value = headers.get(f'{name}-{index}')
+        if value is None:
+            break
+        if index == 1000:
+            raise ValueError(f'Too many {name} header parts')
+        parts.append(value)
+    if not parts:
+        return None
+    try:
+        return base64.b64decode(''.join(parts), validate=True).decode()
+    except (binascii.Error, UnicodeDecodeError) as error:
+        raise ValueError(f'Unable to parse {name} header') from error
+
+
+def parse_error_format(headers):
+    """Parse the structured X-YT-Error-Format header used by the real proxy."""
+    def validate(name, annotate_with_types):
+        if name not in ('json', 'web_json', 'yson'):
+            raise ValueError(f'Unsupported X-YT-Error-Format: {name}')
+        return (name, annotate_with_types)
+
+    raw = gather_header(headers, 'X-YT-Error-Format')
+    if raw is None:
+        return ('json', False)
+
+    header_format = (headers.get('X-YT-Header-Format') or 'json').strip()
+    header_format_name = header_format.rsplit('>', 1)[-1].strip().strip('"')
+    if header_format_name == 'yson':
+        match = re.fullmatch(r'(?:<(?P<attrs>[^>]*)>)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)',
+                             raw.strip())
+        if not match:
+            raise ValueError('Unable to parse X-YT-Error-Format header')
+        attrs = match.group('attrs') or ''
+        return validate(match.group('name'), bool(re.search(
+            r'(?:^|[; ])annotate_with_types\s*=\s*%true(?:[; ]|$)', attrs)))
+
+    if header_format_name != 'json':
+        raise ValueError('Unsupported X-YT-Header-Format')
+    try:
+        node = json.loads(raw)
+    except (TypeError, ValueError) as error:
+        raise ValueError('Unable to parse X-YT-Error-Format header') from error
+    if isinstance(node, str):
+        return validate(node, False)
+    if isinstance(node, dict) and isinstance(node.get('$value'), str):
+        attrs = node.get('$attributes') or {}
+        return validate(node['$value'], attrs.get('annotate_with_types') is True)
+    raise ValueError('Unable to parse X-YT-Error-Format header')
+
+
+def format_error_header(err, error_format):
+    name, annotate_with_types = error_format
+    if name == 'yson':
+        return yson_text(err), 'application/x-yt-yson-text'
+    if name in ('json', 'web_json'):
+        obj = typed_annotate(err) if annotate_with_types else err
+        return json.dumps(obj, ensure_ascii=True), 'application/json'
+    raise ValueError(f'Unsupported X-YT-Error-Format: {name}')
+
+
+def escape_header_value(value):
+    return json.dumps(str(value), ensure_ascii=True)[1:-1]
+
+
 # ---- auth (user/session storage lives in userdb: PostgreSQL or in-RAM) -----
 
 CSRF_TTL = int(os.environ.get('MOCK_CSRF_TTL_SECONDS') or 24 * 3600)
@@ -296,7 +368,8 @@ RAW_OUTPUT = {'read_table', 'get_table_columnar_statistics'}
 
 CORS_ALLOW = ('Content-Type, Accept, Authorization, Origin, Referer, X-Csrf-Token, '
               'X-YT-Parameters, X-YT-Parameters-0, X-YT-Parameters-1, X-YT-Response-Parameters, '
-              'X-YT-Input-Format, X-YT-Output-Format, X-YT-Header-Format, X-YT-Suppress-Redirect, '
+              'X-YT-Input-Format, X-YT-Output-Format, X-YT-Error-Format, X-YT-Header-Format, '
+              'X-YT-Suppress-Redirect, '
               'X-YT-Omit-Trailers, X-YT-Request-Format-Options, X-YT-Response-Format-Options, '
               'X-YT-Request-Id, X-YT-Correlation-Id, X-YT-Trace-Id, X-YT-User-Tag')
 CORS_EXPOSE = ('Content-Type, X-YT-Error, X-YT-Response-Code, X-YT-Response-Message, '
@@ -342,23 +415,19 @@ class Handler(BaseHTTPRequestHandler):
         data = json.dumps(body, ensure_ascii=False).encode()
         self.send_body(status, data, {'Content-Type': 'application/json', **(extra or {})})
 
-    def send_yt_error(self, status, err, extra=None):
-        # X-YT-Error-Format negotiation (test_http_proxy.py test_error_format*):
-        # "<format=text>yson" -> YSON text; "<annotate_with_types=%true>json" ->
-        # typed scalars; default/web_json -> plain JSON. Mirrored into the body.
-        fmt = self.headers.get('X-YT-Error-Format') or ''
-        name = fmt.rsplit('>', 1)[-1].strip()
-        if name == 'yson':
-            text, ctype = yson_text(err), 'application/x-yt-yson-text'
-        else:
-            obj = typed_annotate(err) if 'annotate_with_types=%true' in fmt else err
-            text, ctype = json.dumps(obj, ensure_ascii=False), 'application/json'
-        self.send_body(status, text.encode(), {
-            'Content-Type': ctype,
-            'X-YT-Error': text,
-            'X-YT-Error-Content-Type': ctype,
+    def send_yt_error(self, status, err, extra=None, error_format=None):
+        # X-YT-Error-Format governs the X-YT-Error header only. The real proxy
+        # keeps the pre-flush response body as ordinary JSON (context.cpp).
+        header_text, header_ctype = format_error_header(
+            err, error_format or ('json', False))
+        body = json.dumps(err, ensure_ascii=False).encode()
+        self.send_body(status, body, {
+            'Content-Type': 'application/json',
+            'X-YT-Error': header_text,
+            'X-YT-Error-Content-Type': header_ctype,
             'X-YT-Response-Code': str(err['code']),
-            'X-YT-Response-Message': err['message'], **(extra or {})})
+            'X-YT-Response-Message': escape_header_value(err['message']),
+            **(extra or {})})
 
     def record(self, status, body_bytes):
         if not RECORD_PATH:
@@ -500,10 +569,14 @@ class Handler(BaseHTTPRequestHandler):
                 log(f'  !! unimplemented command: {command}')
                 return self.send_yt_error(404, yt_error(1, f'Command {command} is not registered'), cors)
             try:
+                error_format = parse_error_format(self.headers)
+            except ValueError as error:
+                return self.send_yt_error(400, yt_error(1, str(error)), cors)
+            try:
                 maybe_delay(command, params)
                 result = impl(params, auth)
             except CommandError as e:
-                return self.send_yt_error(e.status, e.err, cors)
+                return self.send_yt_error(e.status, e.err, cors, error_format)
             of = params.get('output_format')
             typed = isinstance(of, dict) and of.get('$attributes', {}).get('annotate_with_types')
             if command in RAW_OUTPUT:

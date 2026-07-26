@@ -58,32 +58,94 @@ function sendJson(res, status, body, extraHeaders = {}) {
   res.end(data);
 }
 
-function sendYtError(req, res, status, err, extraHeaders = {}) {
-  // X-YT-Error-Format negotiation (test_http_proxy.py test_error_format*):
-  // '<format=text>yson' -> YSON text; '<annotate_with_types=%true>json' ->
-  // typed scalars; default/web_json -> plain JSON. Mirrored into the body.
-  const fmt = (req && req.headers['x-yt-error-format']) || '';
-  const name = fmt.split('>').pop().trim();
-  let text, ctype;
-  if (name === 'yson') {
-    text = ysonText(err);
-    ctype = 'application/x-yt-yson-text';
-  } else {
-    const obj = fmt.includes('annotate_with_types=%true') ? typedAnnotate(err) : err;
-    text = JSON.stringify(obj);
-    ctype = 'application/json';
+function gatherHeader(req, name) {
+  const key = name.toLowerCase();
+  if (req.headers[key] !== undefined) return String(req.headers[key]);
+  const parts = [];
+  for (let index = 0; index <= 1000; index++) {
+    const part = req.headers[`${key}${index}`] ?? req.headers[`${key}-${index}`];
+    if (part === undefined) break;
+    if (index === 1000) throw new Error(`Too many ${name} header parts`);
+    parts.push(String(part));
   }
-  const data = Buffer.from(text);
+  if (!parts.length) return null;
+  const encoded = parts.join('');
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
+    throw new Error(`Unable to parse ${name} header`);
+  }
+  return Buffer.from(encoded, 'base64').toString('utf8');
+}
+
+function parseErrorFormat(req) {
+  function validate(name, annotateWithTypes) {
+    if (!['json', 'web_json', 'yson'].includes(name)) {
+      throw new Error(`Unsupported X-YT-Error-Format: ${name}`);
+    }
+    return {name, annotateWithTypes};
+  }
+
+  const raw = gatherHeader(req, 'X-YT-Error-Format');
+  if (raw === null) return {name: 'json', annotateWithTypes: false};
+
+  const headerFormat = String(req.headers['x-yt-header-format'] || 'json').trim();
+  const headerFormatName = headerFormat.split('>').pop().trim().replace(/^"|"$/g, '');
+  if (headerFormatName === 'yson') {
+    const match = raw.trim().match(/^(?:<([^>]*)>)?([A-Za-z_][A-Za-z0-9_]*)$/);
+    if (!match) throw new Error('Unable to parse X-YT-Error-Format header');
+    return validate(
+      match[2],
+      /(?:^|[; ])annotate_with_types\s*=\s*%true(?:[; ]|$)/.test(match[1] || ''),
+    );
+  }
+  if (headerFormatName !== 'json') throw new Error('Unsupported X-YT-Header-Format');
+
+  let node;
+  try {
+    node = JSON.parse(raw);
+  } catch {
+    throw new Error('Unable to parse X-YT-Error-Format header');
+  }
+  if (typeof node === 'string') return validate(node, false);
+  if (node && typeof node === 'object' && typeof node.$value === 'string') {
+    return validate(node.$value, node.$attributes?.annotate_with_types === true);
+  }
+  throw new Error('Unable to parse X-YT-Error-Format header');
+}
+
+function formatErrorHeader(err, errorFormat) {
+  if (errorFormat.name === 'yson') {
+    return {text: ysonText(err), contentType: 'application/x-yt-yson-text'};
+  }
+  if (errorFormat.name === 'json' || errorFormat.name === 'web_json') {
+    const obj = errorFormat.annotateWithTypes ? typedAnnotate(err) : err;
+    return {text: JSON.stringify(obj), contentType: 'application/json'};
+  }
+  throw new Error(`Unsupported X-YT-Error-Format: ${errorFormat.name}`);
+}
+
+function escapeHeaderValue(value) {
+  return JSON.stringify(String(value)).slice(1, -1).replace(
+    /[\u007f-\uffff]/g,
+    (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'),
+  );
+}
+
+function sendYtError(req, res, status, err, extraHeaders = {}, errorFormat = null) {
+  // X-YT-Error-Format governs the X-YT-Error header only. The real proxy
+  // keeps the pre-flush response body as ordinary JSON (context.cpp).
+  const formatted = formatErrorHeader(
+    err, errorFormat || {name: 'json', annotateWithTypes: false});
+  const body = JSON.stringify(err);
   res.writeHead(status, {
-    'Content-Type': ctype,
-    'Content-Length': data.length,
-    'X-YT-Error': text,
-    'X-YT-Error-Content-Type': ctype,
+    'Content-Type': 'application/json',
+    'Content-Length': Buffer.byteLength(body),
+    'X-YT-Error': formatted.text,
+    'X-YT-Error-Content-Type': formatted.contentType,
     'X-YT-Response-Code': String(err.code),
-    'X-YT-Response-Message': err.message,
+    'X-YT-Response-Message': escapeHeaderValue(err.message),
     ...extraHeaders,
   });
-  res.end(data);
+  res.end(body);
 }
 
 function corsHeaders(req) {
@@ -97,7 +159,7 @@ function corsHeaders(req) {
       'Content-Type', 'Accept', 'Authorization', 'Origin', 'Referer',
       'X-Csrf-Token', 'X-YT-Parameters', 'X-YT-Parameters-0', 'X-YT-Parameters-1',
       'X-YT-Response-Parameters', 'X-YT-Input-Format', 'X-YT-Output-Format',
-      'X-YT-Header-Format', 'X-YT-Suppress-Redirect', 'X-YT-Omit-Trailers',
+      'X-YT-Error-Format', 'X-YT-Header-Format', 'X-YT-Suppress-Redirect', 'X-YT-Omit-Trailers',
       'X-YT-Request-Format-Options', 'X-YT-Response-Format-Options',
       'X-YT-Request-Id', 'X-YT-Correlation-Id', 'X-YT-Trace-Id', 'X-YT-User-Tag',
     ].join(', '),
@@ -575,12 +637,20 @@ const server = http.createServer(async (req, res) => {
         log(`  !! unimplemented command: ${command} params=${JSON.stringify(params).slice(0, 500)}`);
         return void sendYtError(req, res, 404, ytError(1, `Command ${command} is not registered`), cors);
       }
+      let errorFormat;
+      try {
+        errorFormat = parseErrorFormat(req);
+      } catch (e) {
+        return void sendYtError(req, res, 400, ytError(1, e.message), cors);
+      }
       let result;
       try {
         await maybeDelay(command, params);
         result = await impl(params, auth);
       } catch (e) {
-        if (e && e.err) return void sendYtError(req, res, e.status, e.err, cors);
+        if (e && e.err) {
+          return void sendYtError(req, res, e.status, e.err, cors, errorFormat);
+        }
         throw e;
       }
       const RAW_OUTPUT = new Set(['read_table', 'get_table_columnar_statistics']);

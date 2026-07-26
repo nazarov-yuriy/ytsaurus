@@ -575,9 +575,14 @@ class TestErrorFormatNegotiation(Both):
     test_error_web_json: X-YT-Error-Format governs the error encoding, reported
     via X-YT-Error-Content-Type."""
 
-    def fail_get(self, port, error_format=None):
-        headers = {'X-YT-Error-Format': error_format} if error_format else {}
-        return call(port, 'POST', '/api/v3/get', body={'path': '//does_not_exist'},
+    def fail_get(self, port, error_format=None, path='//does_not_exist', headers=None):
+        headers = dict(headers or {})
+        if error_format:
+            # X-YT-Error-Format is a structured value encoded according to the
+            # header format, exactly as in the upstream integration tests.
+            headers.update({'X-YT-Header-Format': '<format=text>yson',
+                            'X-YT-Error-Format': error_format})
+        return call(port, 'POST', '/api/v3/get', body={'path': path},
                     headers=headers)
 
     def test_default_is_plain_json(self):
@@ -589,17 +594,67 @@ class TestErrorFormatNegotiation(Both):
 
     def test_annotate_with_types_json(self):
         for port in self.each():
-            _, _, hdrs = self.fail_get(port, '<annotate_with_types=%true>json')
+            _, body, hdrs = self.fail_get(port, '<annotate_with_types=%true>json')
             err = json.loads(hdrs['X-YT-Error'])
             self.assertEqual(err['code'], {'$type': 'int64', '$value': '500'})
             self.assertIn('$type', err['attributes']['code'])
+            self.assertIsInstance(body['code'], int)
+            self.assertEqual(hdrs['Content-Type'], 'application/json')
 
     def test_yson_text(self):
         for port in self.each():
             _, body, hdrs = self.fail_get(port, '<format=text>yson')
             self.assertEqual(hdrs['X-YT-Error-Content-Type'], 'application/x-yt-yson-text')
             self.assertTrue(hdrs['X-YT-Error'].startswith('{"code"=500;'))
-            self.assertEqual(body, hdrs['X-YT-Error'])  # body mirrors the header
+            self.assertIsInstance(body, dict)
+            self.assertEqual(body['code'], 500)
+            self.assertEqual(hdrs['Content-Type'], 'application/json')
+
+    def test_yson_escapes_control_characters(self):
+        for port in self.each():
+            _, body, hdrs = self.fail_get(port, '<format=text>yson',
+                                          path='//missing\nline')
+            self.assertIn('\\n', hdrs['X-YT-Error'])
+            self.assertNotIn('\n', hdrs['X-YT-Error'])
+            self.assertIn('\n', body['message'])
+
+    def test_yson_escapes_unicode_as_utf8_bytes(self):
+        for port in self.each():
+            _, body, hdrs = self.fail_get(port, '<format=text>yson',
+                                          path='//missing/café/😀')
+            self.assertIn('\\xc3\\xa9', hdrs['X-YT-Error'])
+            self.assertIn('\\xf0\\x9f\\x98\\x80', hdrs['X-YT-Error'])
+            self.assertIn('café/😀', body['message'])
+
+    def test_numbered_header_parts_are_base64_decoded(self):
+        encoded = base64.b64encode(b'<format=text>yson').decode()
+        for port in self.each():
+            _, body, hdrs = self.fail_get(port, headers={
+                'X-YT-Header-Format': '<format=text>yson',
+                'X-YT-Error-Format-0': encoded[:12],
+                'X-YT-Error-Format-1': encoded[12:],
+            })
+            self.assertEqual(body['code'], 500)
+            self.assertEqual(hdrs['X-YT-Error-Content-Type'],
+                             'application/x-yt-yson-text')
+
+    def test_raw_yson_requires_yson_header_format(self):
+        for port in self.each():
+            status, body, _ = self.fail_get(
+                port, headers={'X-YT-Error-Format': '<format=text>yson'})
+            self.assertEqual(status, 400)
+            self.assertIn('Unable to parse X-YT-Error-Format', body['message'])
+
+    def test_unsupported_format_is_rejected_before_execution(self):
+        headers = {'X-YT-Header-Format': '<format=text>yson',
+                   'X-YT-Error-Format': 'bogus'}
+        for port in self.each():
+            for path in ('//tmp', '//does_not_exist'):
+                status, body, _ = call(
+                    port, 'POST', '/api/v3/exists', body={'path': path},
+                    headers=headers)
+                self.assertEqual(status, 400)
+                self.assertIn('Unsupported X-YT-Error-Format', body['message'])
 
     def test_web_json_keeps_small_ints_plain(self):
         # The real test accepts plain ints when they fit in 2^53-1.
@@ -608,6 +663,17 @@ class TestErrorFormatNegotiation(Both):
             err = json.loads(hdrs['X-YT-Error'])
             self.assertIsInstance(err['code'], int)
             self.assertLessEqual(err['code'], 2 ** 53 - 1)
+
+    def test_error_format_is_allowed_by_cors_preflight(self):
+        for port in self.each():
+            status, _, hdrs = call(port, 'OPTIONS', '/api/v3/get', headers={
+                'Origin': 'https://viewer.internal',
+                'Access-Control-Request-Headers': 'X-YT-Error-Format',
+            })
+            self.assertEqual(status, 200)
+            allowed = {part.strip().lower() for part in
+                       hdrs['Access-Control-Allow-Headers'].split(',')}
+            self.assertIn('x-yt-error-format', allowed)
 
 
 class TestReadTableYqlFormat(Both):

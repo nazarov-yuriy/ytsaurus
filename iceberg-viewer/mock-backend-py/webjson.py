@@ -59,6 +59,36 @@ def web_json_scalar(v, t):
     return {'$type': 'string', '$value': str(v)}
 
 
+def _yson_quote(v):
+    """Quote UTF-8 bytes exactly like NYson::EscapeC."""
+    data = str(v).encode()
+    out = ['"']
+    for index, byte in enumerate(data):
+        next_byte = data[index + 1] if index + 1 < len(data) else 0
+        if byte == ord('"'):
+            out.append('\\"')
+        elif byte == ord('\\'):
+            out.append('\\\\')
+        elif 32 <= byte <= 126:
+            out.append(chr(byte))
+        elif byte == ord('\r'):
+            out.append('\\r')
+        elif byte == ord('\n'):
+            out.append('\\n')
+        elif byte == ord('\t'):
+            out.append('\\t')
+        elif byte < 8 and not ord('0') <= next_byte <= ord('7'):
+            out.append(f'\\{byte:o}')
+        elif not (ord('0') <= next_byte <= ord('9')
+                  or ord('A') <= next_byte <= ord('F')
+                  or ord('a') <= next_byte <= ord('f')):
+            out.append(f'\\x{byte:02x}')
+        else:
+            out.append(f'\\{byte:03o}')
+    out.append('"')
+    return ''.join(out)
+
+
 def yson_text(v):
     """Minimal YSON text encoding (maps/lists/scalars) for X-YT-Error-Format: yson."""
     if v is None:
@@ -71,7 +101,7 @@ def yson_text(v):
         return '[' + ''.join(yson_text(x) + ';' for x in v) + ']'
     if isinstance(v, dict):
         return '{' + ''.join(yson_text(k) + '=' + yson_text(x) + ';' for k, x in v.items()) + '}'
-    return '"' + str(v).replace('\\', '\\\\').replace('"', '\\"') + '"'
+    return _yson_quote(v)
 
 
 # value_format=yql: names from web_json_writer.cpp GetSimpleYqlTypeName (Any -> Yson).
