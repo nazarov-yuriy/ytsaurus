@@ -70,9 +70,22 @@ function webJsonScalar(value, columnType) {
   }
 }
 
+// Minimal YSON text encoding (maps/lists/scalars) for X-YT-Error-Format: yson.
+function ysonText(v) {
+  if (v === null || v === undefined) return '#';
+  if (typeof v === 'boolean') return v ? '%true' : '%false';
+  if (typeof v === 'number') return String(v);
+  if (Array.isArray(v)) return '[' + v.map((x) => ysonText(x) + ';').join('') + ']';
+  if (typeof v === 'object') {
+    return '{' + Object.entries(v).map(([k, x]) => ysonText(k) + '=' + ysonText(x) + ';').join('') + '}';
+  }
+  return '"' + String(v).split('\\').join('\\\\').split('"').join('\\"') + '"';
+}
+
 // Build the full web_json read_table response body.
 // column_names, when present, fully replaces max_selected_column_count
 // (the UI's column-discovery preload sends column_names: [] with range [#0:#0]).
+
 // value_format=yql: names from web_json_writer.cpp GetSimpleYqlTypeName (Any -> Yson).
 const YQL_TYPE_NAMES = {
   int64: 'Int64', int32: 'Int32', int16: 'Int16', int8: 'Int8',
@@ -167,4 +180,4 @@ function typedAnnotate(v) {
   return {$type: 'string', $value: String(v)};
 }
 
-module.exports = {annotated, typedAnnotate, webJsonBody, webJsonScalar, ytTypeOf};
+module.exports = {annotated, typedAnnotate, webJsonBody, webJsonScalar, ytTypeOf, ysonText};

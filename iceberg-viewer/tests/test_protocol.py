@@ -296,6 +296,19 @@ class TestStrictAuth(Both):
             self.assertEqual(status, 401)
             self.assertEqual(body['code'], 900)
 
+    def test_whoami_error_header_only_on_failure(self):
+        # Ported from test_cypress_token_auth.py (test_whoami_invalid_token_
+        # yt_error_header / test_whoami_valid_token_no_yt_error_header).
+        for port in self.each():
+            status, _, hdrs = call(port, 'GET', '/auth/whoami',
+                                   headers={'Authorization': 'OAuth bogus'})
+            self.assertEqual(status, 401)
+            self.assertIn('code', json.loads(hdrs['X-YT-Error']))
+            status, _, hdrs = call(port, 'GET', '/auth/whoami',
+                                   headers={'Authorization': 'OAuth protocol-test-robot'})
+            self.assertEqual(status, 200)
+            self.assertIsNone(hdrs.get('X-YT-Error'))
+
     def test_robot_token_authenticates_without_csrf(self):
         headers = {'Authorization': 'OAuth protocol-test-robot'}
         for port in self.each():
@@ -541,6 +554,60 @@ class TestReadTableWebJson(Both):
                                          'output_format': 'json'})
             self.assertEqual(status, 400)
             self.assertEqual(body['code'], 500)
+
+
+class TestHostsRoleFiltering(Both):
+    def test_role_filter_matches_coordinator(self):
+        # Ported from test_http_proxy.py test_hosts / test_proxy_roles.py: the
+        # default filter is the "data" role (coordinator.cpp:551); this mock is
+        # one data-role proxy, so any other role has no members.
+        for port in self.each():
+            _, default, _ = call(port, 'GET', '/hosts')
+            _, data, _ = call(port, 'GET', '/hosts?role=data')
+            _, control, _ = call(port, 'GET', '/hosts?role=control')
+            self.assertEqual(default, [f'localhost:{port}'])
+            self.assertEqual(data, default)
+            self.assertEqual(control, [])
+
+
+class TestErrorFormatNegotiation(Both):
+    """Ported from test_http_proxy.py test_error_format / test_error_format_type /
+    test_error_web_json: X-YT-Error-Format governs the error encoding, reported
+    via X-YT-Error-Content-Type."""
+
+    def fail_get(self, port, error_format=None):
+        headers = {'X-YT-Error-Format': error_format} if error_format else {}
+        return call(port, 'POST', '/api/v3/get', body={'path': '//does_not_exist'},
+                    headers=headers)
+
+    def test_default_is_plain_json(self):
+        for port in self.each():
+            status, body, hdrs = self.fail_get(port)
+            self.assertEqual(status, 400)
+            self.assertEqual(hdrs['X-YT-Error-Content-Type'], 'application/json')
+            self.assertIsInstance(json.loads(hdrs['X-YT-Error'])['code'], int)
+
+    def test_annotate_with_types_json(self):
+        for port in self.each():
+            _, _, hdrs = self.fail_get(port, '<annotate_with_types=%true>json')
+            err = json.loads(hdrs['X-YT-Error'])
+            self.assertEqual(err['code'], {'$type': 'int64', '$value': '500'})
+            self.assertIn('$type', err['attributes']['code'])
+
+    def test_yson_text(self):
+        for port in self.each():
+            _, body, hdrs = self.fail_get(port, '<format=text>yson')
+            self.assertEqual(hdrs['X-YT-Error-Content-Type'], 'application/x-yt-yson-text')
+            self.assertTrue(hdrs['X-YT-Error'].startswith('{"code"=500;'))
+            self.assertEqual(body, hdrs['X-YT-Error'])  # body mirrors the header
+
+    def test_web_json_keeps_small_ints_plain(self):
+        # The real test accepts plain ints when they fit in 2^53-1.
+        for port in self.each():
+            _, _, hdrs = self.fail_get(port, 'web_json')
+            err = json.loads(hdrs['X-YT-Error'])
+            self.assertIsInstance(err['code'], int)
+            self.assertLessEqual(err['code'], 2 ** 53 - 1)
 
 
 class TestReadTableYqlFormat(Both):

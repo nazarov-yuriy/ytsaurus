@@ -21,7 +21,7 @@ from urllib.parse import parse_qsl, urlsplit
 
 import userdb
 from data import resolve
-from webjson import annotated, typed_annotate, web_json_body
+from webjson import annotated, typed_annotate, web_json_body, yson_text
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
 HOST = os.environ.get('MOCK_HOST', f'localhost:{PORT}')
@@ -277,9 +277,22 @@ class Handler(BaseHTTPRequestHandler):
         self.send_body(status, data, {'Content-Type': 'application/json', **(extra or {})})
 
     def send_yt_error(self, status, err, extra=None):
-        self.send_json(status, err, {'X-YT-Error': json.dumps(err, ensure_ascii=False),
-                                     'X-YT-Response-Code': str(err['code']),
-                                     'X-YT-Response-Message': err['message'], **(extra or {})})
+        # X-YT-Error-Format negotiation (test_http_proxy.py test_error_format*):
+        # "<format=text>yson" -> YSON text; "<annotate_with_types=%true>json" ->
+        # typed scalars; default/web_json -> plain JSON. Mirrored into the body.
+        fmt = self.headers.get('X-YT-Error-Format') or ''
+        name = fmt.rsplit('>', 1)[-1].strip()
+        if name == 'yson':
+            text, ctype = yson_text(err), 'application/x-yt-yson-text'
+        else:
+            obj = typed_annotate(err) if 'annotate_with_types=%true' in fmt else err
+            text, ctype = json.dumps(obj, ensure_ascii=False), 'application/json'
+        self.send_body(status, text.encode(), {
+            'Content-Type': ctype,
+            'X-YT-Error': text,
+            'X-YT-Error-Content-Type': ctype,
+            'X-YT-Response-Code': str(err['code']),
+            'X-YT-Response-Message': err['message'], **(extra or {})})
 
     def record(self, status, body_bytes):
         if not RECORD_PATH:
@@ -356,7 +369,10 @@ class Handler(BaseHTTPRequestHandler):
         if p == '/hosts/all':
             return self.send_json(200, [], cors)
         if p == '/hosts' or p.startswith('/hosts/'):
-            return self.send_json(200, [HOST], cors)
+            # Role filtering like coordinator.cpp: this mock is one "data"-role
+            # proxy (the default role filter); other roles have no members.
+            role = dict(parse_qsl(query)).get('role', 'data')
+            return self.send_json(200, [HOST] if role == 'data' else [], cors)
         if p in ('/api', '/api/'):
             return self.send_json(200, ['v3', 'v4'], cors)
 

@@ -65,7 +65,7 @@ Verified equivalent to the Node backend by:
 1. `../recordings/replay-diff.py` — replays all 165 recorded UI requests plus 26
    edge cases against both servers side by side and diffs status, body, and YT
    headers: **191/191 identical**.
-2. `../tests/test_protocol.py` — 43 documented-behavior conformance tests run
+2. `../tests/test_protocol.py` — 49 documented-behavior conformance tests run
    against both backends.
 3. Headless-Chromium runs of the real UI against this server: repeated runs with
    zero request failures and zero page errors.

@@ -61,10 +61,10 @@ browser (React SPA + javascript-wrapper)
 
 ## 3. Known simplifications inside the proxy tier (accepted, documented)
 
-1. **`/hosts` ignores the `?role=` query parameter** and always returns
-   `[self]`. The real endpoint filters by role and orders by load. Harmless
-   here: the UI's wrapper version sends no role parameter (verified in
-   table-viewer.md §3.9), and the UI server takes `res.data[0]`.
+1. ~~`/hosts` ignores the `?role=` query parameter~~ **Fixed:** `/hosts` now
+   filters by role (`data`/default → `[self]`, others → `[]`), matching
+   coordinator.cpp with the mock as a single data-role proxy. Load-ordered
+   multi-proxy fitness remains out of scope (one instance).
 2. **No role attribute, no control-role behavior**: the mock never redirects or
    refuses heavy commands. Reachable only by non-UI clients that omit
    `X-YT-Suppress-Redirect`.
@@ -78,8 +78,7 @@ browser (React SPA + javascript-wrapper)
 
 Ordered by value:
 
-1. **Role-aware `/hosts`**: accept `?role=`, return `[]` for unknown roles,
-   keep `data` as default — makes the mock honest for non-UI SDK clients.
+1. ~~Role-aware `/hosts`~~ — done (see §3.1).
 2. **Two-instance mode in the Helm chart**: a `control`-role and a `data`-role
    mock Deployment plus role-filtering `/hosts`, to rehearse the real
    topology (`http-proxies-lb` → control, heavy redirect → data). Only worth it

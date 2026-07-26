@@ -59,6 +59,21 @@ def web_json_scalar(v, t):
     return {'$type': 'string', '$value': str(v)}
 
 
+def yson_text(v):
+    """Minimal YSON text encoding (maps/lists/scalars) for X-YT-Error-Format: yson."""
+    if v is None:
+        return '#'
+    if v is True or v is False:
+        return '%true' if v else '%false'
+    if isinstance(v, (int, float)):
+        return js_num_str(v)
+    if isinstance(v, list):
+        return '[' + ''.join(yson_text(x) + ';' for x in v) + ']'
+    if isinstance(v, dict):
+        return '{' + ''.join(yson_text(k) + '=' + yson_text(x) + ';' for k, x in v.items()) + '}'
+    return '"' + str(v).replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+
 # value_format=yql: names from web_json_writer.cpp GetSimpleYqlTypeName (Any -> Yson).
 YQL_TYPE_NAMES = {'int64': 'Int64', 'int32': 'Int32', 'int16': 'Int16', 'int8': 'Int8',
                   'uint64': 'Uint64', 'uint32': 'Uint32', 'uint16': 'Uint16', 'uint8': 'Uint8',

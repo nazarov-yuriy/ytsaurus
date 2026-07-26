@@ -12,7 +12,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const {URL} = require('url');
 const {CLUSTER_ID, resolve, users} = require('./data');
-const {annotated, typedAnnotate, webJsonBody} = require('./webjson');
+const {annotated, typedAnnotate, webJsonBody, ysonText} = require('./webjson');
 
 const PORT = Number(process.argv[2] || 8000);
 const HOST = process.env.MOCK_HOST || `localhost:${PORT}`;
@@ -58,13 +58,32 @@ function sendJson(res, status, body, extraHeaders = {}) {
   res.end(data);
 }
 
-function sendYtError(res, status, err, extraHeaders = {}) {
-  sendJson(res, status, err, {
-    'X-YT-Error': JSON.stringify(err),
+function sendYtError(req, res, status, err, extraHeaders = {}) {
+  // X-YT-Error-Format negotiation (test_http_proxy.py test_error_format*):
+  // '<format=text>yson' -> YSON text; '<annotate_with_types=%true>json' ->
+  // typed scalars; default/web_json -> plain JSON. Mirrored into the body.
+  const fmt = (req && req.headers['x-yt-error-format']) || '';
+  const name = fmt.split('>').pop().trim();
+  let text, ctype;
+  if (name === 'yson') {
+    text = ysonText(err);
+    ctype = 'application/x-yt-yson-text';
+  } else {
+    const obj = fmt.includes('annotate_with_types=%true') ? typedAnnotate(err) : err;
+    text = JSON.stringify(obj);
+    ctype = 'application/json';
+  }
+  const data = Buffer.from(text);
+  res.writeHead(status, {
+    'Content-Type': ctype,
+    'Content-Length': data.length,
+    'X-YT-Error': text,
+    'X-YT-Error-Content-Type': ctype,
     'X-YT-Response-Code': String(err.code),
     'X-YT-Response-Message': err.message,
     ...extraHeaders,
   });
+  res.end(data);
 }
 
 function corsHeaders(req) {
@@ -392,7 +411,10 @@ const server = http.createServer(async (req, res) => {
       return void sendJson(res, 200, [], cors);
     }
     if (p === '/hosts' || p.startsWith('/hosts/')) {
-      return void sendJson(res, 200, [HOST], cors);
+      // Role filtering like coordinator.cpp: this mock is one 'data'-role
+      // proxy (the default role filter); other roles have no members.
+      const role = url.searchParams.get('role') || 'data';
+      return void sendJson(res, 200, role === 'data' ? [HOST] : [], cors);
     }
     if (p === '/api' || p === '/api/') {
       return void sendJson(res, 200, ['v3', 'v4'], cors);
@@ -409,7 +431,7 @@ const server = http.createServer(async (req, res) => {
 
       const separator = authorization.indexOf(' ');
       if (separator === -1) {
-        return void sendYtError(res, 400, ytError(
+        return void sendYtError(req, res, 400, ytError(
           1, 'Malformed "Authorization" header: failed to parse authorization method'), cors);
       }
 
@@ -417,25 +439,25 @@ const server = http.createServer(async (req, res) => {
       const encodedCredentials = authorization.slice(separator + 1);
       if (method !== 'Basic') {
         return void sendYtError(
-          res, 400, ytError(1, `Unsupported authorization method "${method}"`), cors);
+          req, res, 400, ytError(1, `Unsupported authorization method "${method}"`), cors);
       }
       if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
         .test(encodedCredentials)) {
         return void sendYtError(
-          res, 400, ytError(1, 'Failed to decode user credentials'), cors);
+          req, res, 400, ytError(1, 'Failed to decode user credentials'), cors);
       }
 
       const credentials = Buffer.from(encodedCredentials, 'base64').toString('utf8');
       const colon = credentials.indexOf(':');
       if (colon === -1) {
         return void sendYtError(
-          res, 400, ytError(1, 'Failed to parse user credentials'), cors);
+          req, res, 400, ytError(1, 'Failed to parse user credentials'), cors);
       }
       const user = credentials.slice(0, colon);
       const password = credentials.slice(colon + 1);
       if (!(user in users) || users[user].password !== password) {
         // Real proxy masks the cause: generic code 1 (cypress_cookie_login.cpp:83).
-        return void sendYtError(res, 401, ytError(1, 'Incorrect login or password'), {
+        return void sendYtError(req, res, 401, ytError(1, 'Incorrect login or password'), {
           ...cors,
           'WWW-Authenticate': 'Basic',
         });
@@ -455,7 +477,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/auth/whoami') {
       const auth = authenticate(req);
       if (!auth) {
-        return void sendYtError(res, 401, ytError(900, 'Authentication failed'), cors);
+        return void sendYtError(req, res, 401, ytError(900, 'Authentication failed'), cors);
       }
       const user = auth.user;
       return void sendJson(res, 200, {
@@ -472,23 +494,23 @@ const server = http.createServer(async (req, res) => {
       const [, version, command] = m;
       const auth = authenticate(req);
       if (!auth) {
-        return void sendYtError(res, 401, ytError(900, 'Authentication failed'), cors);
+        return void sendYtError(req, res, 401, ytError(900, 'Authentication failed'), cors);
       }
       if (!checkCsrf(req, auth)) {
-        return void sendYtError(res, 401, ytError(901, 'CSRF token mismatch'), cors);
+        return void sendYtError(req, res, 401, ytError(901, 'CSRF token mismatch'), cors);
       }
       const params = collectParams(req, url, bodyBuf);
       const impl = commands[command];
       if (!impl) {
         log(`  !! unimplemented command: ${command} params=${JSON.stringify(params).slice(0, 500)}`);
-        return void sendYtError(res, 404, ytError(1, `Command ${command} is not registered`), cors);
+        return void sendYtError(req, res, 404, ytError(1, `Command ${command} is not registered`), cors);
       }
       let result;
       try {
         await maybeDelay(command, params);
         result = await impl(params, auth);
       } catch (e) {
-        if (e && e.err) return void sendYtError(res, e.status, e.err, cors);
+        if (e && e.err) return void sendYtError(req, res, e.status, e.err, cors);
         throw e;
       }
       const RAW_OUTPUT = new Set(['read_table', 'get_table_columnar_statistics']);
@@ -504,10 +526,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     log(`  !! unhandled route`);
-    sendYtError(res, 404, ytError(1, `No such route: ${p}`), cors);
+    sendYtError(req, res, 404, ytError(1, `No such route: ${p}`), cors);
   } catch (e) {
     log('  !! internal error', e);
-    sendYtError(res, 500, ytError(1, String(e && e.message || e)), cors);
+    sendYtError(req, res, 500, ytError(1, String(e && e.message || e)), cors);
   }
 });
 
