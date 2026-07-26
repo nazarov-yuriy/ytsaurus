@@ -120,14 +120,25 @@ def cmd_list(params, auth):
     return out
 
 
+def strip_ranges(p):
+    if isinstance(p, dict):
+        p = p.get('$value', p)
+    return re.sub(r'\[.*\]$', '', str(p))
+
+
 def range_of(p):
+    if isinstance(p, dict) and p.get('$attributes', {}).get('ranges'):
+        rng = (p['$attributes']['ranges'] or [{}])[0]
+        start = (rng.get('lower_limit') or {}).get('row_index', 0)
+        end = (rng.get('upper_limit') or {}).get('row_index')
+        return start, (None if end is None else end - start)
     m = re.search(r'\[#(\d+):#(\d+)\]$', str(p))
     return (int(m.group(1)), int(m.group(2)) - int(m.group(1))) if m else (0, None)
 
 
 def cmd_read_table(params, auth):
     path = params.get('path')
-    r = resolve(re.sub(r'\[.*\]$', '', str(path)))
+    r = resolve(strip_ranges(path))
     if not r or r[0].kind != 'table':
         raise CommandError(400, yt_error(500, f'Error resolving path {path}', {'code': 500}))
     node = r[0]

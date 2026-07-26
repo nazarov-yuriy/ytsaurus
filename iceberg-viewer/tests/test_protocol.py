@@ -371,6 +371,23 @@ class TestReadTableWebJson(Both):
             # trip_id is 1-based; row #10 -> id 11. Cells are {$type,$value:string}.
             self.assertEqual(body['rows'][0]['trip_id'], {'$type': 'int64', '$value': '11'})
 
+    def test_annotated_ypath_range_selects_rows(self):
+        # table/table.js sends this annotated-YPath form when an unmounted,
+        # unsorted dynamic table falls back to the static-table reader.
+        path = {
+            '$value': '//home/iceberg/warehouse/trips',
+            '$attributes': {
+                'ranges': [{
+                    'lower_limit': {'tablet_index': 0, 'row_index': 10},
+                    'upper_limit': {'tablet_index': 0, 'row_index': 13},
+                }],
+            },
+        }
+        for port in self.each():
+            body = self.read(port, path)
+            self.assertEqual(len(body['rows']), 3)
+            self.assertEqual(body['rows'][0]['trip_id'], {'$type': 'int64', '$value': '11'})
+
     def test_column_discovery_preload(self):
         # table-viewer.md §5: the first read_table per table-open is
         # `column_names: []` + range [#0:#0] — zero row payload, but
