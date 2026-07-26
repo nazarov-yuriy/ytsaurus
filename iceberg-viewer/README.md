@@ -8,7 +8,8 @@ mock backend, as a first step toward serving the UI from an Apache Iceberg catal
 - `ytsaurus-ui/` — shallow clone of https://github.com/ytsaurus/ytsaurus-ui (the frontend:
   React app + its Node/Express server). The real backend it talks to is the C++ HTTP proxy
   in this repo (`yt/yt/server/http_proxy`).
-- `docs/` — protocol documentation:
+- `docs/` — protocol documentation (**start at `docs/INDEX.md`** — the generated map of
+  every doc and its cross-references):
   - `auth.md` — login, cookies, CSRF, token flow.
   - `table-viewer.md` — navigation & static-table viewing wire protocol (get/list/exists,
     `read_table` with `web_json`, error format).
