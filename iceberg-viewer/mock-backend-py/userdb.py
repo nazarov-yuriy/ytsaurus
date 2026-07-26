@@ -20,18 +20,30 @@ PBKDF2_MAX_VERIFY_ITERATIONS = 5_000_000
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
-    login         text PRIMARY KEY,
-    salt          text NOT NULL,
-    password_hash text NOT NULL,
-    created_at    timestamptz NOT NULL DEFAULT now());
+    login             text PRIMARY KEY,
+    salt              text NOT NULL,
+    password_hash     text NOT NULL,
+    password_revision bigint NOT NULL DEFAULT 0,
+    created_at        timestamptz NOT NULL DEFAULT now());
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS password_revision bigint NOT NULL DEFAULT 0;
 CREATE TABLE IF NOT EXISTS settings (
     key   text PRIMARY KEY,
     value text NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (
-    cookie     text PRIMARY KEY,
-    login      text NOT NULL REFERENCES users(login) ON DELETE CASCADE,
-    created_at timestamptz NOT NULL DEFAULT now(),
-    expires_at timestamptz NOT NULL);
+    cookie             text PRIMARY KEY,
+    login              text NOT NULL REFERENCES users(login) ON DELETE CASCADE,
+    password_revision  bigint NOT NULL DEFAULT 0,
+    created_at         timestamptz NOT NULL DEFAULT now(),
+    expires_at         timestamptz NOT NULL);
+ALTER TABLE sessions
+    ADD COLUMN IF NOT EXISTS password_revision bigint NOT NULL DEFAULT 0;
+WITH installed AS (
+    INSERT INTO settings (key, value)
+    VALUES ('session_password_revision_migration', '1')
+    ON CONFLICT (key) DO NOTHING
+    RETURNING key)
+DELETE FROM sessions WHERE EXISTS (SELECT 1 FROM installed);
 """
 
 
@@ -159,23 +171,69 @@ if DSN:
 
     def create_session(login):
         cookie = _new_cookie(login)
-        _query('INSERT INTO sessions (cookie, login, expires_at) VALUES (%s, %s, %s) RETURNING cookie',
-               (cookie, login, datetime.now(timezone.utc) + SESSION_TTL),
-               retry=False)
-        return cookie
+        rows = _query(
+            'WITH expired AS (DELETE FROM sessions WHERE expires_at <= now())'
+            ' INSERT INTO sessions (cookie, login, password_revision, expires_at)'
+            ' SELECT %s, login, password_revision, %s FROM users WHERE login = %s'
+            ' RETURNING cookie',
+            (cookie, datetime.now(timezone.utc) + SESSION_TTL, login),
+            retry=False)
+        return rows[0][0] if rows else None
+
+    def authenticate_and_create_session(login, password):
+        rows = _query(
+            'SELECT salt, password_hash, password_revision'
+            ' FROM users WHERE login = %s',
+            (login,))
+        if not rows:
+            return None
+
+        salt, password_hash, password_revision = rows[0]
+        if not _password_matches(password, salt, password_hash):
+            return None
+        if _password_needs_upgrade(password_hash):
+            new_salt, new_hash = _new_password(password)
+            upgraded = _query(
+                'UPDATE users SET salt = %s, password_hash = %s'
+                ' WHERE login = %s AND salt = %s AND password_hash = %s'
+                ' AND password_revision = %s'
+                ' RETURNING password_revision',
+                (new_salt, new_hash, login, salt, password_hash, password_revision),
+                retry=False)
+            if not upgraded:
+                return None
+            salt, password_hash = new_salt, new_hash
+
+        cookie = _new_cookie(login)
+        created = _query(
+            'WITH expired AS (DELETE FROM sessions WHERE expires_at <= now())'
+            ' INSERT INTO sessions (cookie, login, password_revision, expires_at)'
+            ' SELECT %s, login, password_revision, %s FROM users'
+            ' WHERE login = %s AND salt = %s AND password_hash = %s'
+            ' AND password_revision = %s'
+            ' RETURNING cookie',
+            (cookie, datetime.now(timezone.utc) + SESSION_TTL,
+             login, salt, password_hash, password_revision),
+            retry=False)
+        return created[0][0] if created else None
 
     def session_user(cookie):
-        rows = _query('SELECT login FROM sessions WHERE cookie = %s AND expires_at > now()', (cookie,))
+        rows = _query(
+            'SELECT sessions.login FROM sessions'
+            ' JOIN users ON users.login = sessions.login'
+            ' WHERE sessions.cookie = %s AND sessions.expires_at > now()'
+            ' AND sessions.password_revision = users.password_revision',
+            (cookie,))
         return rows[0][0] if rows else None
 
     def session_info(cookie):
-        rows = _query('SELECT login, created_at, expires_at FROM sessions'
-                      ' WHERE cookie = %s AND expires_at > now()', (cookie,))
+        rows = _query(
+            'SELECT sessions.login, sessions.created_at, sessions.expires_at'
+            ' FROM sessions JOIN users ON users.login = sessions.login'
+            ' WHERE sessions.cookie = %s AND sessions.expires_at > now()'
+            ' AND sessions.password_revision = users.password_revision',
+            (cookie,))
         return rows[0] if rows else None
-
-    def list_sessions():
-        return _query('SELECT cookie, login, created_at, expires_at FROM sessions'
-                      ' WHERE expires_at > now() ORDER BY cookie')
 
     def csrf_secret():
         if secret := os.environ.get('MOCK_CSRF_SECRET'):
@@ -187,10 +245,14 @@ if DSN:
 
     def set_password(login, password):
         salt, password_hash = _new_password(password)
-        _query('INSERT INTO users (login, salt, password_hash) VALUES (%s, %s, %s)'
+        _query('WITH changed AS ('
+               ' INSERT INTO users (login, salt, password_hash) VALUES (%s, %s, %s)'
                ' ON CONFLICT (login) DO UPDATE'
-               ' SET salt = EXCLUDED.salt, password_hash = EXCLUDED.password_hash'
-               ' RETURNING login',
+               ' SET salt = EXCLUDED.salt, password_hash = EXCLUDED.password_hash,'
+               ' password_revision = users.password_revision + 1'
+               ' RETURNING login)'
+               ' DELETE FROM sessions WHERE login = (SELECT login FROM changed)'
+               ' RETURNING cookie',
                (login, salt, password_hash),
                retry=False)
 
@@ -199,8 +261,10 @@ if DSN:
 
 else:  # in-RAM fallback: same behavior, nothing persisted
     _users = {}
+    _password_revisions = {}
     for _login, _password in SEED_USERS.items():
         _users[_login] = _new_password(_password)
+        _password_revisions[_login] = 0
     _sessions = {}
     _lock = threading.RLock()
 
@@ -224,12 +288,33 @@ else:  # in-RAM fallback: same behavior, nothing persisted
 
     _csrf_secret = os.environ.get('MOCK_CSRF_SECRET') or secrets.token_hex(32)
 
-    def create_session(login):
+    def _create_session_locked(login):
         cookie = _new_cookie(login)
         now = datetime.now(timezone.utc)
-        with _lock:
-            _sessions[cookie] = (login, now, now + SESSION_TTL)
+        for expired_cookie, info in list(_sessions.items()):
+            if info[3] <= now:
+                del _sessions[expired_cookie]
+        _sessions[cookie] = (
+            login, _password_revisions.get(login, 0), now, now + SESSION_TTL)
         return cookie
+
+    def create_session(login):
+        with _lock:
+            if login not in _users:
+                return None
+            return _create_session_locked(login)
+
+    def authenticate_and_create_session(login, password):
+        with _lock:
+            credentials = _users.get(login)
+            if not credentials:
+                return None
+            salt, password_hash = credentials
+            if not _password_matches(password, salt, password_hash):
+                return None
+            if _password_needs_upgrade(password_hash):
+                _users[login] = _new_password(password)
+            return _create_session_locked(login)
 
     def session_user(cookie):
         info = session_info(cookie)
@@ -238,21 +323,29 @@ else:  # in-RAM fallback: same behavior, nothing persisted
     def session_info(cookie):
         with _lock:
             info = _sessions.get(cookie)
-        if info and info[2] > datetime.now(timezone.utc):
-            return info
-        return None
-
-    def list_sessions():
-        now = datetime.now(timezone.utc)
-        with _lock:
-            return sorted((c, *info) for c, info in _sessions.items() if info[2] > now)
+            if info and info[3] <= datetime.now(timezone.utc):
+                del _sessions[cookie]
+                return None
+            if info and (
+                    info[0] not in _users
+                    or info[1] != _password_revisions.get(info[0], 0)):
+                del _sessions[cookie]
+                return None
+            return (info[0], info[2], info[3]) if info else None
 
     def csrf_secret():
         return _csrf_secret
 
     def set_password(login, password):
         with _lock:
+            if login in _users:
+                _password_revisions[login] = _password_revisions.get(login, 0) + 1
+            else:
+                _password_revisions[login] = 0
             _users[login] = _new_password(password)
+            for cookie, info in list(_sessions.items()):
+                if info[0] == login:
+                    del _sessions[cookie]
 
     def list_users():
         with _lock:

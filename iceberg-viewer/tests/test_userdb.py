@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import os
 import sys
+import threading
 import types
 import unittest
 import uuid
@@ -107,6 +108,61 @@ class TestPasswordStorage(unittest.TestCase):
 
     def test_ram_store_is_always_healthy(self):
         self.assertTrue(self.userdb.healthy())
+
+    def test_password_change_revokes_existing_sessions(self):
+        self.userdb.set_password('session-owner', 'old-secret')
+        cookie = self.userdb.create_session('session-owner')
+        self.assertEqual(self.userdb.session_user(cookie), 'session-owner')
+
+        self.userdb.set_password('session-owner', 'new-secret')
+        self.assertIsNone(self.userdb.session_user(cookie))
+        self.assertFalse(self.userdb.verify('session-owner', 'old-secret'))
+        self.assertTrue(self.userdb.verify('session-owner', 'new-secret'))
+
+    def test_password_change_cannot_leave_racing_login_authenticated(self):
+        self.userdb.set_password('racing-owner', 'old-secret')
+        password_checked = threading.Event()
+        allow_login_to_finish = threading.Event()
+        original_matches = self.userdb._password_matches
+
+        def paused_password_matches(password, salt, password_hash):
+            matched = original_matches(password, salt, password_hash)
+            password_checked.set()
+            allow_login_to_finish.wait(timeout=5)
+            return matched
+
+        login_result = []
+        password_change_started = threading.Event()
+
+        def login():
+            login_result.append(
+                self.userdb.authenticate_and_create_session(
+                    'racing-owner', 'old-secret'))
+
+        def change_password():
+            password_change_started.set()
+            self.userdb.set_password('racing-owner', 'new-secret')
+
+        with mock.patch.object(
+                self.userdb, '_password_matches', side_effect=paused_password_matches):
+            login_thread = threading.Thread(target=login)
+            login_thread.start()
+            self.assertTrue(password_checked.wait(timeout=5))
+
+            password_thread = threading.Thread(target=change_password)
+            password_thread.start()
+            self.assertTrue(password_change_started.wait(timeout=5))
+            allow_login_to_finish.set()
+            login_thread.join(timeout=5)
+            password_thread.join(timeout=5)
+
+        self.assertFalse(login_thread.is_alive())
+        self.assertFalse(password_thread.is_alive())
+        self.assertEqual(len(login_result), 1)
+        self.assertIsNotNone(login_result[0])
+        self.assertIsNone(self.userdb.session_user(login_result[0]))
+        self.assertFalse(self.userdb.verify('racing-owner', 'old-secret'))
+        self.assertTrue(self.userdb.verify('racing-owner', 'new-secret'))
 
     def test_malformed_or_excessive_pbkdf2_hashes_fail_closed(self):
         malformed_hashes = [

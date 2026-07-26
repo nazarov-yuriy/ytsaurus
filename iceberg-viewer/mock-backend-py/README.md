@@ -22,8 +22,9 @@ Environment:
 - `MOCK_CSRF_SECRET`, `MOCK_CSRF_TTL_SECONDS` (default 86400) — CSRF HMAC secret
   and token validity; without the env the secret is persisted in PostgreSQL
   (`settings` table) or random per process in RAM mode.
-- `MOCK_COOKIE_TTL_SECONDS` (default 30d), `MOCK_COOKIE_RENEWAL_SECONDS`
-  (default 7d) — cookie lifetime and the near-expiry rotation window.
+- `MOCK_COOKIE_TTL_SECONDS` (default 30d) — server and browser-cookie lifetime.
+  Cookies are `Secure`; local HTTP password-auth testing requires the UI's
+  `ytAuthAllowInsecure` option.
 
 ## User management (PostgreSQL)
 
@@ -32,16 +33,23 @@ Users and login sessions are the one piece of real state; table data stays fake.
 in-RAM storage (seed users `iceberg`/`iceberg`, `root`/empty) otherwise — the
 Node backend and all parity tests run in the fallback mode.
 
-- Schema (auto-created on start): `users(login PK, salt, password_hash, created_at)`
-  and `sessions(cookie PK, login FK, created_at, expires_at)`. Passwords are
-  stored using PBKDF2-HMAC-SHA256 with 600,000 iterations and 128-bit salts,
-  never in plaintext. Existing salted-SHA256 rows remain valid and are upgraded
-  after a successful login. Sessions expire after 30 days, matching the
-  `YTCypressCookie` lifetime.
-- Cookies are 64-hex values (GenerateCookieValue parity), visible read-only at
-  the virtual `//sys/cypress_cookies/<value>` node, and rotate near expiry like
-  the real authenticator; CSRF tokens use the real SignCsrfToken HMAC
-  construction (`tests/test_cookie_model.py`).
+- Schema (auto-created on start): `users(login PK, salt, password_hash,
+  password_revision, created_at)` and `sessions(cookie PK, login FK,
+  password_revision, created_at, expires_at)`. Passwords are stored using
+  PBKDF2-HMAC-SHA256 with 600,000 iterations and 128-bit salts, never in
+  plaintext. Existing salted-SHA256 rows remain valid and are upgraded after a
+  successful login. Sessions expire after the configured cookie TTL (30 days by
+  default), matching the browser's `YTCypressCookie` lifetime.
+- Cookies are 64-hex values (GenerateCookieValue parity) with matching
+  server/browser expiry. The privileged `//sys/cypress_cookies` store is not
+  exposed through this authorization-light mock API. CSRF tokens use the real
+  SignCsrfToken HMAC construction (`tests/test_cookie_model.py`).
+- Password changes revoke the user's existing sessions and increment a revision
+  checked during authentication, so a racing login with the old password cannot
+  leave a valid session. Upgrading an older database invalidates pre-revision
+  sessions once. The backend does not emulate near-expiry cookie renewal because
+  the UI tunnel does not propagate a renewed proxy cookie into its
+  cluster-prefixed authentication cookie.
 - With PostgreSQL, password logins and their cookies survive server restarts,
   connection loss is recovered lazily, and users added out-of-band are visible
   without a restart:

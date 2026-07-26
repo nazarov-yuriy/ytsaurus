@@ -15,7 +15,7 @@ import secrets
 import socket
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from email.utils import format_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qsl, urlsplit
@@ -140,7 +140,6 @@ def escape_header_value(value):
 # ---- auth (user/session storage lives in userdb: PostgreSQL or in-RAM) -----
 
 CSRF_TTL = int(os.environ.get('MOCK_CSRF_TTL_SECONDS') or 24 * 3600)
-COOKIE_RENEWAL = int(os.environ.get('MOCK_COOKIE_RENEWAL_SECONDS') or 7 * 24 * 3600)
 
 
 def csrf_token_for(user):
@@ -152,30 +151,24 @@ def csrf_token_for(user):
 
 
 def check_csrf_token(token, user):
-    """CheckCsrfToken parity: returns an error message or None."""
-    sig, _, ts = (token or '').partition(':')
-    if not ts:
-        return 'Malformed CSRF token'
-    if not ts.isdigit() or int(ts) < time.time() - CSRF_TTL:
-        return 'CSRF token expired'
+    """CheckCsrfToken parity: returns (HTTP status, YT error) or None."""
+    parts = token.strip().split(':')
+    if len(parts) != 2 or not parts[1].isdigit():
+        return 503, yt_error(1, 'Malformed CSRF token')
+    sig, ts = parts
+    try:
+        sign_time = int(ts)
+    except ValueError:
+        return 503, yt_error(1, 'Malformed CSRF token')
+    if sign_time > 2 ** 53 - 1:
+        return 503, yt_error(1, 'Malformed CSRF token')
+    if sign_time < time.time() - CSRF_TTL:
+        return 401, yt_error(110, 'CSRF token expired')
     expected = hmac.new(userdb.csrf_secret().encode(), f'{user}:{ts}'.encode(), 'sha256').hexdigest()
     if not hmac.compare_digest(expected, sig):
-        return 'Invalid CSFR token signature'  # typo as in helpers.cpp:187
+        # Typo preserved from auth_server/helpers.cpp:187.
+        return 401, yt_error(110, 'Invalid CSFR token signature')
     return None
-
-
-def renewal_cookie_header(auth, headers):
-    """Cookie rotation (cypress_cookie_authenticator.cpp:164): when the presented
-    cookie is within the renewal window of its expiry, issue a fresh one."""
-    if not auth or not auth.get('via_cookie'):
-        return {}
-    cookies = dict(p.strip().split('=', 1) for p in (headers.get('Cookie') or '').split(';') if '=' in p)
-    info = userdb.session_info(cookies.get('YTCypressCookie', ''))
-    if not info or (info[2] - datetime.now(timezone.utc)).total_seconds() > COOKIE_RENEWAL:
-        return {}
-    cookie = userdb.create_session(auth['user'])
-    expires = format_datetime(datetime.now(timezone.utc) + userdb.SESSION_TTL, usegmt=True)
-    return {'Set-Cookie': f'YTCypressCookie={cookie}; Expires={expires}; HttpOnly; Path=/'}
 
 
 def authenticate(headers):
@@ -196,10 +189,13 @@ def authenticate(headers):
 
 
 def check_csrf(method, headers, auth):
-    """Returns an error message, or None when the request passes."""
+    """Returns (HTTP status, YT error), or None when the request passes."""
     if not auth['via_cookie'] or method in ('GET', 'HEAD', 'OPTIONS'):
         return None
-    return check_csrf_token(headers.get('X-Csrf-Token'), auth['user'])
+    token = headers.get('X-Csrf-Token')
+    if token is None:
+        return 401, yt_error(111, 'CSRF token is missing')
+    return check_csrf_token(token, auth['user'])
 
 
 # ---- commands --------------------------------------------------------------
@@ -213,34 +209,7 @@ def attributes_for(node, requested):
     return {k: node.attrs[k] for k in keys if node.attrs.get(k) is not None}
 
 
-COOKIE_STORE_PATH = '//sys/cypress_cookies'
-
-
-def cookie_store_node(path):
-    """Virtual //sys/cypress_cookies/<value>[/<field>] view over the session store
-    (cypress_cookie_store.cpp:282 keeps cookies by value under that map node)."""
-    rest = path[len(COOKIE_STORE_PATH):].strip('/')
-    if not rest:
-        return {c: None for c, *_ in userdb.list_sessions()}
-    value, _, field = rest.partition('/')
-    info = userdb.session_info(value)
-    if not info:
-        raise resolve_error(path)
-    login, created_at, expires_at = info
-    record = {'value': value, 'user': login, 'auth_source': 'password',
-              'password_revision': 0,
-              'expires_at': expires_at.strftime('%Y-%m-%dT%H:%M:%S.%fZ')}
-    if not field:
-        return record
-    if field not in record:
-        raise resolve_error(path)
-    return record[field]
-
-
 def cmd_get(params, auth):
-    path = str(params.get('path') or '')
-    if path == COOKIE_STORE_PATH or path.startswith(COOKIE_STORE_PATH + '/'):
-        return cookie_store_node(path)
     r = resolve(params.get('path'))
     if not r:
         raise resolve_error(params.get('path'))
@@ -274,8 +243,6 @@ def cmd_get(params, auth):
 
 
 def cmd_list(params, auth):
-    if str(params.get('path') or '') == COOKIE_STORE_PATH:
-        return [c for c, *_ in userdb.list_sessions()]
     r = resolve(params.get('path'))
     if not r or r[0].kind != 'map_node':
         raise resolve_error(params.get('path'))
@@ -511,7 +478,8 @@ class Handler(BaseHTTPRequestHandler):
         if p in ('/api', '/api/'):
             return self.send_json(200, ['v3', 'v4'], cors)
 
-        if p == '/login':  # HTTP Basic; real proxy sets YTCypressCookie, no SameSite
+        if p == '/login' or p.startswith('/login/'):
+            # HTTP Basic; real proxy sets YTCypressCookie, no SameSite.
             authorization = self.headers.get('Authorization')
             if authorization is None:
                 return self.send_body(
@@ -535,15 +503,17 @@ class Handler(BaseHTTPRequestHandler):
             user_bytes, password_bytes = credentials.split(b':', 1)
             user = user_bytes.decode('utf-8', 'replace')
             password = password_bytes.decode('utf-8', 'replace')
-            if not userdb.verify(user, password):
+            cookie = userdb.authenticate_and_create_session(user, password)
+            if cookie is None:
                 # Real proxy masks the cause: generic code 1 (cypress_cookie_login.cpp:83).
                 return self.send_yt_error(
                     401, yt_error(1, 'Incorrect login or password'),
                     {**cors, 'WWW-Authenticate': 'Basic'})
-            cookie = userdb.create_session(user)
-            expires = format_datetime(datetime.now(timezone.utc) + timedelta(days=30), usegmt=True)
+            expires = format_datetime(datetime.now(timezone.utc) + userdb.SESSION_TTL, usegmt=True)
             return self.send_body(200, b'', {
-                **cors, 'Set-Cookie': f'YTCypressCookie={cookie}; Expires={expires}; HttpOnly; Path=/'})
+                **cors,
+                'Set-Cookie': (
+                    f'YTCypressCookie={cookie}; Expires={expires}; Secure; HttpOnly; Path=/')})
 
         if p == '/auth/whoami':  # must succeed with truthy csrf_token even without credentials
             auth = authenticate(self.headers)
@@ -552,8 +522,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {
                 'login': auth['user'],
                 'realm': 'cypress_cookie' if auth['via_cookie'] else 'mock',
-                'real_login': auth['user'], 'csrf_token': csrf_token_for(auth['user'])},
-                {**cors, **renewal_cookie_header(auth, self.headers)})
+                'real_login': auth['user'], 'csrf_token': csrf_token_for(auth['user'])}, cors)
 
         if m := re.match(r'^/api/(v3|v4)/(\w+)$', p):
             version, command = m.groups()
@@ -561,8 +530,8 @@ class Handler(BaseHTTPRequestHandler):
             if not auth:
                 return self.send_yt_error(401, yt_error(900, 'Authentication failed'), cors)
             if csrf_error := check_csrf(self.command, self.headers, auth):
-                # NRpc::EErrorCode::InvalidCsrfToken = 110 (core/rpc/public.h:207)
-                return self.send_yt_error(401, yt_error(110, csrf_error), cors)
+                status, error = csrf_error
+                return self.send_yt_error(status, error, cors)
             params = self.collect_params(query, self.body_buf)
             impl = COMMANDS.get(command)
             if not impl:
@@ -585,8 +554,7 @@ class Handler(BaseHTTPRequestHandler):
                 payload = typed_annotate(result) if typed else annotated(result)
             if version == 'v4' and command in ('get', 'list', 'exists'):
                 payload = {'value': payload}
-            return self.send_json(200, payload, {
-                **cors, 'X-YT-Proxy': HOST, **renewal_cookie_header(auth, self.headers)})
+            return self.send_json(200, payload, {**cors, 'X-YT-Proxy': HOST})
 
         log('  !! unhandled route')
         self.send_yt_error(404, yt_error(1, f'No such route: {p}'), cors)

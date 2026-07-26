@@ -24,6 +24,10 @@ HTTP Basic; users in `data.js`: iceberg/iceberg).
 
 Set `MOCK_REQUIRE_AUTH=1` to reject missing/expired credentials and set
 `MOCK_ROBOT_TOKEN=<token>` for the OAuth robot token accepted in that mode.
+`MOCK_COOKIE_TTL_SECONDS` controls both session and browser-cookie expiry
+(30 days by default); `MOCK_CSRF_SECRET` and `MOCK_CSRF_TTL_SECONDS` control
+signed CSRF tokens. Cookies are `Secure`, so local HTTP password-auth testing
+requires the UI's `ytAuthAllowInsecure` option.
 
 ## Files
 

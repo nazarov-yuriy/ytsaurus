@@ -244,11 +244,12 @@ class TestAuth(Both):
                               headers={'Authorization': self.ICEBERG_BASIC})
             cookie = hdrs.get('Set-Cookie', '').split(';')[0]
 
-            # cookie without CSRF token -> 401 code 110 (NRpc InvalidCsrfToken)
+            # A missing CSRF header is InvalidCredentials (111); malformed or
+            # bad signed values have their own semantics in test_cookie_model.
             status, body, _ = call(port, 'POST', '/api/v3/exists',
                                    body={'path': '//tmp'}, headers={'Cookie': cookie})
             self.assertEqual(status, 401)
-            self.assertEqual(body['code'], 110)
+            self.assertEqual(body['code'], 111)
 
             # same request with the matching X-Csrf-Token -> accepted.
             # The token is derived from whoami for this user (auth.md §2).
@@ -338,7 +339,7 @@ class TestStrictAuth(Both):
                 port, 'POST', '/api/v3/exists', body={'path': '//tmp'},
                 headers={'Cookie': cookie})
             self.assertEqual(status, 401)
-            self.assertEqual(body['code'], 110)
+            self.assertEqual(body['code'], 111)
 
             status, exists, _ = call(
                 port, 'POST', '/api/v3/exists', body={'path': '//tmp'},

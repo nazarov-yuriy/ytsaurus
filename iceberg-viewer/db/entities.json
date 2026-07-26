@@ -9,7 +9,7 @@
         "type": "int",
         "required": true,
         "support_status": "implemented",
-        "description": "numeric YT error code; the mock uses 1 (generic, incl. wrong-password /login), 500 (resolve/NODE_DOES_NOT_EXIST), 110 (NRpc InvalidCsrfToken, real code) and mock-only 900 for strict-mode auth failures. The real proxy also uses 111 for cookie-auth failures"
+        "description": "numeric YT error code; the mock uses 1 (generic, including malformed CSRF and wrong-password /login), 500 (resolve/NODE_DOES_NOT_EXIST), 110 (expired/invalid signed CSRF), 111 (missing CSRF header), and mock-only 900 for strict-mode auth failures"
       },
       {
         "name": "message",
@@ -467,6 +467,13 @@
         "description": "versioned PBKDF2-HMAC-SHA256 digest (600,000 iterations); legacy sha256(salt:password) rows are upgraded after successful login; plaintext is never stored"
       },
       {
+        "name": "password_revision",
+        "type": "bigint",
+        "required": true,
+        "support_status": "implemented",
+        "description": "monotonic credential revision; incremented on password changes so a concurrently-issued old-password session cannot authenticate"
+      },
+      {
         "name": "created_at",
         "type": "timestamptz",
         "required": true,
@@ -478,7 +485,7 @@
   {
     "entry_type": "schema",
     "name": "pg-sessions-table",
-    "description": "PostgreSQL table `sessions` (userdb.py): login sessions backing YTCypressCookie (64-hex values, GenerateCookieValue parity), surviving server restarts; also exposed read-only as the virtual //sys/cypress_cookies map node (cypress_cookie_store parity).",
+    "description": "PostgreSQL table `sessions` (userdb.py): login sessions backing 64-hex YTCypressCookie values and surviving server restarts. The table is not exposed through the mock command API; password changes revoke the user's rows.",
     "fields": [
       {
         "name": "cookie",
@@ -495,6 +502,13 @@
         "description": "session owner; cascade-deleted with the user"
       },
       {
+        "name": "password_revision",
+        "type": "bigint",
+        "required": true,
+        "support_status": "implemented",
+        "description": "credential revision captured at login; authentication requires it to match the user's current revision"
+      },
+      {
         "name": "created_at",
         "type": "timestamptz",
         "required": true,
@@ -506,28 +520,28 @@
         "type": "timestamptz",
         "required": true,
         "support_status": "implemented",
-        "description": "now()+30d, matching the cookie Expires; expired sessions stop authenticating"
+        "description": "now()+MOCK_COOKIE_TTL_SECONDS (30d default), matching cookie Expires; expired sessions stop authenticating and are pruned opportunistically"
       }
     ]
   },
   {
     "entry_type": "schema",
     "name": "pg-settings-table",
-    "description": "PostgreSQL table `settings` (userdb.py): persisted server-wide values; currently only the CSRF HMAC secret, so signed tokens survive restarts and are shared across replicas.",
+    "description": "PostgreSQL table `settings` (userdb.py): persisted server-wide values for the CSRF HMAC secret and idempotent schema migrations.",
     "fields": [
       {
         "name": "key",
         "type": "text PK",
         "required": true,
         "support_status": "implemented",
-        "description": "currently only 'csrf_secret'"
+        "description": "'csrf_secret' or an internal schema-migration marker"
       },
       {
         "name": "value",
         "type": "text",
         "required": true,
         "support_status": "implemented",
-        "description": "random 64-hex secret, generated once (MOCK_CSRF_SECRET env overrides)"
+        "description": "random 64-hex CSRF secret (MOCK_CSRF_SECRET env overrides) or a migration version"
       }
     ]
   }

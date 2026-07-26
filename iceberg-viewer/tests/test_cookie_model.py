@@ -4,23 +4,24 @@ suites (test_cypress_cookie_auth.py, helpers_ut.cpp TTestCsrfTokenTest) and run
 against BOTH backends with tuned TTLs:
 
 - cookie value format: 64 hex chars (GenerateCookieValue parity)
-- //sys/cypress_cookies/<value>[/<field>] virtual store view
-- cookie rotation near expiry; the old cookie stays valid until it expires
+- browser expiry and Secure/HttpOnly/Path attributes match the server TTL
+- the privileged //sys/cypress_cookies store is not exposed by the mock API
 - CSRF token: hex(hmac_sha256(secret, "user:ts")) + ":" + ts, tamper-rejected
-  with the real NRpc code 110
+  with YTsaurus-compatible status/error distinctions
 
 Run: python3 tests/test_cookie_model.py
 """
 import base64
 import json
 import os
-import re
 import subprocess
 import sys
 import time
 import unittest
 import urllib.error
 import urllib.request
+from email.utils import parsedate_to_datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -28,14 +29,13 @@ PORTS = {'node': 8051, 'python': 8052}
 _only = os.environ.get('BACKEND')
 BACKENDS = {k: v for k, v in PORTS.items() if not _only or k == _only}
 
-TTL, RENEWAL = 4, 3  # rotate when < 3s of the 4s TTL remain (i.e. after ~1s)
+TTL = 4
 _procs = []
 
 
 def setUpModule():
     env = {**{k: v for k, v in os.environ.items() if k != 'MOCK_PG_DSN'},
            'MOCK_COOKIE_TTL_SECONDS': str(TTL),
-           'MOCK_COOKIE_RENEWAL_SECONDS': str(RENEWAL),
            'MOCK_CSRF_SECRET': 'cookie-model-test-secret'}
     if 'node' in BACKENDS:
         _procs.append(subprocess.Popen(['node', str(ROOT / 'mock-backend' / 'server.js'),
@@ -80,10 +80,15 @@ def call(port, method, path, body=None, headers=None):
     return status, parsed, rh
 
 
-def login(port):
-    _, _, hdrs = call(port, 'POST', '/login', headers={
+def login_header(port, path='/login'):
+    status, _, hdrs = call(port, 'POST', path, headers={
         'Authorization': 'Basic ' + base64.b64encode(b'iceberg:iceberg').decode()})
-    return hdrs['Set-Cookie'].split(';')[0].split('=', 1)[1]
+    return status, hdrs['Set-Cookie']
+
+
+def login(port, path='/login'):
+    _, header = login_header(port, path)
+    return header.split(';')[0].split('=', 1)[1]
 
 
 class Both(unittest.TestCase):
@@ -94,71 +99,58 @@ class Both(unittest.TestCase):
 
 
 class TestCookieFormat(Both):
-    def test_value_is_64_hex(self):
-        # test_cookie_format / GenerateCookieValue (cypress_cookie.cpp:47-53)
+    def test_value_and_attributes_match_cookie_config(self):
+        # test_cookie_format / GenerateCookieValue / TCypressCookie::ToHeader.
         for port in self.each():
-            value = login(port)
+            before = datetime.now(timezone.utc)
+            status, header = login_header(port)
+            self.assertEqual(status, 200)
+            cookie, expires, secure, http_only, path = header.split(';')
+            value = cookie.split('=', 1)[1]
             self.assertRegex(value, r'^[0-9a-f]{64}$')
+            expiry = parsedate_to_datetime(expires.strip().removeprefix('Expires='))
+            self.assertGreaterEqual(expiry, before)
+            self.assertLessEqual(
+                expiry, datetime.now(timezone.utc) + timedelta(seconds=TTL + 1))
+            self.assertEqual(secure, ' Secure')
+            self.assertEqual(http_only, ' HttpOnly')
+            self.assertEqual(path, ' Path=/')
+
+    def test_login_route_variants_match_real_proxy(self):
+        for port in self.each():
+            for path in ('/login', '/login/', '/login/foo?bar=a&baz=b'):
+                status, header = login_header(port, path)
+                self.assertEqual(status, 200, path)
+                self.assertIn('YTCypressCookie=', header)
 
 
-class TestCypressCookieStore(Both):
-    def test_cookie_visible_in_cypress_store(self):
-        # test_cookie_in_cypress: get //sys/cypress_cookies/<cookie>/{value,user}
+class TestCookieStoreIsolation(Both):
+    def test_cookie_store_is_not_exposed_to_api_users(self):
+        # The real node is privileged; exposing its keys would leak bearer
+        # credentials because the mock has no Cypress ACL engine.
         for port in self.each():
             value = login(port)
-            _, got, _ = call(port, 'POST', '/api/v3/get',
-                             body={'path': f'//sys/cypress_cookies/{value}/value'})
-            self.assertEqual(got, value)
-            _, user, _ = call(port, 'POST', '/api/v3/get',
-                              body={'path': f'//sys/cypress_cookies/{value}/user'})
-            self.assertEqual(user, 'iceberg')
-            _, record, _ = call(port, 'POST', '/api/v3/get',
-                                body={'path': f'//sys/cypress_cookies/{value}'})
-            self.assertEqual(record['auth_source'], 'password')
-            self.assertIn('expires_at', record)
-            _, listing, _ = call(port, 'POST', '/api/v3/list',
-                                 body={'path': '//sys/cypress_cookies'})
-            self.assertIn(value, listing)
-
-    def test_unknown_cookie_resolves_as_error(self):
-        for port in self.each():
-            status, body, _ = call(port, 'POST', '/api/v3/get',
-                                   body={'path': '//sys/cypress_cookies/' + '0' * 64})
-            self.assertEqual(status, 400)
-            self.assertEqual(body['code'], 500)
-
-
-class TestCookieRotation(Both):
-    def test_rotation_and_old_cookie_validity(self):
-        # test_cookie_rotation: once inside the renewal window an authenticated
-        # request yields a fresh Set-Cookie; the old cookie stays valid meanwhile.
-        for port in self.each():
-            value = login(port)
-            _, _, hdrs = call(port, 'GET', '/auth/whoami',
-                              headers={'Cookie': f'YTCypressCookie={value}'})
-            self.assertIsNone(hdrs.get('Set-Cookie'))  # too fresh to rotate
-
-            time.sleep(TTL - RENEWAL + 0.3)  # enter the renewal window
-            _, who, hdrs = call(port, 'GET', '/auth/whoami',
-                                headers={'Cookie': f'YTCypressCookie={value}'})
-            self.assertEqual(who['realm'], 'cypress_cookie')
-            new_value = re.search(r'YTCypressCookie=([0-9a-f]{64})', hdrs.get('Set-Cookie', ''))
-            self.assertIsNotNone(new_value)
-            self.assertNotEqual(new_value.group(1), value)
-
-            # old cookie still authenticates until its expiry...
             _, who, _ = call(port, 'GET', '/auth/whoami',
                              headers={'Cookie': f'YTCypressCookie={value}'})
-            self.assertEqual(who['realm'], 'cypress_cookie')
-            # ...and stops afterwards (anonymous fallback realm in default mode)
-            time.sleep(RENEWAL + 0.3)
+            auth_headers = {'Cookie': f'YTCypressCookie={value}',
+                            'X-Csrf-Token': who['csrf_token']}
+            for command, path in (
+                    ('list', '//sys/cypress_cookies'),
+                    ('get', '//sys/cypress_cookies'),
+                    ('get', f'//sys/cypress_cookies/{value}/value')):
+                status, body, _ = call(
+                    port, 'POST', f'/api/v3/{command}', body={'path': path},
+                    headers=auth_headers)
+                self.assertEqual(status, 400, path)
+                self.assertEqual(body['code'], 500)
+
+    def test_cookie_expires_server_side(self):
+        for port in self.each():
+            value = login(port)
+            time.sleep(TTL + 0.3)
             _, who, _ = call(port, 'GET', '/auth/whoami',
                              headers={'Cookie': f'YTCypressCookie={value}'})
             self.assertEqual(who['realm'], 'mock')
-            # the rotated cookie was issued later and still works
-            _, who, _ = call(port, 'GET', '/auth/whoami',
-                             headers={'Cookie': f'YTCypressCookie={new_value.group(1)}'})
-            self.assertEqual(who['realm'], 'cypress_cookie')
 
 
 class TestCsrfConstruction(Both):
@@ -180,22 +172,29 @@ class TestCsrfConstruction(Both):
                       headers={'Cookie': f'YTCypressCookie={value}', 'X-Csrf-Token': token})
             self.assertEqual(ok[0], 200)
 
-    def test_tampered_and_malformed_tokens_rejected_with_code_110(self):
+    def test_invalid_token_errors_match_real_status_and_code(self):
         for port in self.each():
             value = login(port)
             _, who, _ = call(port, 'GET', '/auth/whoami',
                              headers={'Cookie': f'YTCypressCookie={value}'})
             sig, ts = who['csrf_token'].split(':')
             tampered = ('0' * 64) + ':' + ts
-            for token, expected_message in (
-                    (tampered, 'Invalid CSFR token signature'),  # typo as in helpers.cpp
-                    ('garbage', 'Malformed CSRF token'),
-                    (sig + ':1', 'CSRF token expired')):
+            cases = (
+                (None, 401, 111, 'CSRF token is missing'),
+                (tampered, 401, 110, 'Invalid CSFR token signature'),
+                ('garbage', 503, 1, 'Malformed CSRF token'),
+                (f'{sig}:{ts}:extra', 503, 1, 'Malformed CSRF token'),
+                (sig + ':1', 401, 110, 'CSRF token expired'),
+            )
+            for token, expected_status, expected_code, expected_message in cases:
+                headers = {'Cookie': f'YTCypressCookie={value}'}
+                if token is not None:
+                    headers['X-Csrf-Token'] = token
                 status, body, _ = call(
                     port, 'POST', '/api/v3/exists', body={'path': '//tmp'},
-                    headers={'Cookie': f'YTCypressCookie={value}', 'X-Csrf-Token': token})
-                self.assertEqual(status, 401, token)
-                self.assertEqual(body['code'], 110)
+                    headers=headers)
+                self.assertEqual(status, expected_status, token)
+                self.assertEqual(body['code'], expected_code)
                 self.assertEqual(body['message'], expected_message)
 
 

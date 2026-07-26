@@ -165,23 +165,24 @@ Cypress node attributes: union of what the UI requests (navigation ~70-attribute
 
 ## pg-sessions-table
 
-PostgreSQL table `sessions` (userdb.py): login sessions backing YTCypressCookie (64-hex values, GenerateCookieValue parity), surviving server restarts; also exposed read-only as the virtual //sys/cypress_cookies map node (cypress_cookie_store parity).
+PostgreSQL table `sessions` (userdb.py): login sessions backing 64-hex YTCypressCookie values and surviving server restarts. The table is not exposed through the mock command API; password changes revoke the user's rows.
 
 | Status | Field | Type | Required | Description |
 |--------|-------|------|----------|-------------|
 | 🟢 implemented | `cookie` | text PK | yes | the YTCypressCookie value issued by /login |
-| 🟢 implemented | `expires_at` | timestamptz | yes | now()+30d, matching the cookie Expires; expired sessions stop authenticating |
+| 🟢 implemented | `expires_at` | timestamptz | yes | now()+MOCK_COOKIE_TTL_SECONDS (30d default), matching cookie Expires; expired sessions stop authenticating and are pruned opportunistically |
 | 🟢 implemented | `login` | text FK users(login) | yes | session owner; cascade-deleted with the user |
+| 🟢 implemented | `password_revision` | bigint | yes | credential revision captured at login; authentication requires it to match the user's current revision |
 | 🟡 constant | `created_at` | timestamptz | yes | defaulted by the database |
 
 ## pg-settings-table
 
-PostgreSQL table `settings` (userdb.py): persisted server-wide values; currently only the CSRF HMAC secret, so signed tokens survive restarts and are shared across replicas.
+PostgreSQL table `settings` (userdb.py): persisted server-wide values for the CSRF HMAC secret and idempotent schema migrations.
 
 | Status | Field | Type | Required | Description |
 |--------|-------|------|----------|-------------|
-| 🟢 implemented | `key` | text PK | yes | currently only 'csrf_secret' |
-| 🟢 implemented | `value` | text | yes | random 64-hex secret, generated once (MOCK_CSRF_SECRET env overrides) |
+| 🟢 implemented | `key` | text PK | yes | 'csrf_secret' or an internal schema-migration marker |
+| 🟢 implemented | `value` | text | yes | random 64-hex CSRF secret (MOCK_CSRF_SECRET env overrides) or a migration version |
 
 ## pg-users-table
 
@@ -191,6 +192,7 @@ PostgreSQL table `users` (mock-backend-py/userdb.py, active when MOCK_PG_DSN is 
 |--------|-------|------|----------|-------------|
 | 🟢 implemented | `login` | text PK | yes | user login; seeded with iceberg/root, extendable via `userdb.py add-user` |
 | 🟢 implemented | `password_hash` | text | yes | versioned PBKDF2-HMAC-SHA256 digest (600,000 iterations); legacy sha256(salt:password) rows are upgraded after successful login; plaintext is never stored |
+| 🟢 implemented | `password_revision` | bigint | yes | monotonic credential revision; incremented on password changes so a concurrently-issued old-password session cannot authenticate |
 | 🟢 implemented | `salt` | text | yes | per-user random salt (hex) |
 | 🟡 constant | `created_at` | timestamptz | yes | defaulted by the database |
 
@@ -251,6 +253,6 @@ YT TError JSON envelope; body of every error response, mirrored in X-YT-Error he
 | Status | Field | Type | Required | Description |
 |--------|-------|------|----------|-------------|
 | 🟢 implemented | `attributes` | map | yes | extra context (path, code, ...) |
-| 🟢 implemented | `code` | int | yes | numeric YT error code; the mock uses 1 (generic, incl. wrong-password /login), 500 (resolve/NODE_DOES_NOT_EXIST), 110 (NRpc InvalidCsrfToken, real code) and mock-only 900 for strict-mode auth failures. The real proxy also uses 111 for cookie-auth failures |
+| 🟢 implemented | `code` | int | yes | numeric YT error code; the mock uses 1 (generic, including malformed CSRF and wrong-password /login), 500 (resolve/NODE_DOES_NOT_EXIST), 110 (expired/invalid signed CSRF), 111 (missing CSRF header), and mock-only 900 for strict-mode auth failures |
 | 🟢 implemented | `message` | string | yes | human-readable message |
 | 🟡 constant | `inner_errors` | list<yt-error> | yes | mock always returns [] |
