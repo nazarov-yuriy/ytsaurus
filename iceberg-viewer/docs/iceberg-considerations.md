@@ -44,11 +44,8 @@ this project's code/tests; **[likely]** — strong evidence, not fully tested;
 - **[verified]** Richer complex-type rendering via `value_format: "yql"` is now
   implemented in both mocks (`yql_type_registry` + `[value, type_index]` cells,
   per table-viewer.md §5.4): the UI requests it and renders nested any/Yson
-  values as an expandable structured tree (verified live on the events table).
-  Not covered yet: base64 (`b64`) for non-UTF-8 strings, truncation (`inc`),
-  and composite registry types (Struct/List/Dict) — the mock's columns are
-  scalars + Yson; a real Iceberg backend mapping structs natively would extend
-  the registry with `["StructType", [["field", <t>], ...]]` entries.
+  values as an expandable tree. Base64 (`b64`), truncation (`inc`), and native
+  Struct/List/Dict registry types remain uncovered.
 - **[uncertain]** Iceberg **sort orders → `key_columns`/`sorted_by`** is honest;
   mapping **partition fields** there is not (different semantics). Partition spec
   probably belongs in user attributes; whether the UI can show a per-column
@@ -65,10 +62,6 @@ this project's code/tests; **[likely]** — strong evidence, not fully tested;
 - **[verified]** Truncation exists in the protocol: `field_weight_limit`/
   `string_weight_limit` + `$incomplete` cells. Worth implementing for real data
   (a 100MB binary cell must not reach the browser); the mock never truncates.
-- **[verified]** Slow access works within budgets: data commands have a
-  **100s end-to-end budget**, but `//sys`, `/version`, `/auth/whoami` sit on
-  5–15s budgets and probes on 1s — keep control-plane answers cached/local
-  (docs/timeouts.md). MOCK_DELAY exists to rehearse this.
 - **[idea]** Cache namespace listings and table metadata (REST catalogs can be
   slow); snapshot-id-keyed caches invalidate naturally. An async refresh with
   slightly stale listings beats a 30s navigation click.
@@ -151,11 +144,10 @@ new backend implementation, they are the real spec:
 ## 9. Suggested next steps (ordered)
 
 1. Spike `data.py` → pyiceberg against a real REST catalog (read-only, one
-   namespace), reusing MOCK_DELAY learnings for latency.
+   namespace).
 2. Click-through audit with `check_permission` denying writes; list surviving
    mutating controls.
 3. UIFactory spike: hide dead pages, rebrand, decide fork-vs-custom-package.
-4. Type-fidelity pass: decimal/timestamp/nested rendering, then evaluate
-   `value_format: yql` support.
+4. Type-fidelity pass: decimal/timestamp and native composite YQL types.
 5. Identifier-encoding decision (YPath-special characters) before any real
    catalog is attached.

@@ -498,31 +498,18 @@ and must carry `YTCypressCookie` itself (`withCredentials`, `core.js:246,260`).
 
 ### 2.7 Direct-to-proxy OAuth token (server side, "robot")
 
-`jsw/lib/core.js:161-165`:
-
-```js
-const authentication = setup.getOption(localSetup, 'authentication');
-if (authentication.type === 'oauth' && authentication.token) {
-    headers['Authorization'] = 'OAuth ' + authentication.token;
-}
-```
-
-Used by `getRobotYTApiSetup` (`requestsSetup.ts:84-111`) for cluster-params and
-remote user-settings requests. Token source: `ytInterfaceSecret` JSON file
-(`{"oauthToken": "..."}`, optionally keyed per cluster) or `YT_TOKEN` env.
+The wrapper adds `Authorization: OAuth <token>` when its authentication type is
+`oauth` (`jsw/lib/core.js:161-165`). `getRobotYTApiSetup`
+(`requestsSetup.ts:84-111`) uses this for cluster-params and remote
+user-settings requests. The token comes from `ytInterfaceSecret`
+(`{"oauthToken": "..."}`, optionally keyed per cluster) or `YT_TOKEN`.
 
 ### 2.8 Logout
 
-`ui/src/server/controllers/logout.ts:5-12`:
-
-```ts
-if (isOAuthAllowed(req) && isUserOAuthLogged(req)) res.redirect(getOAuthLogoutPath(req));
-else if (isYtAuthEnabled(req.ctx.config)) YTAuthLogout(res);
-res.redirect('/');
-```
-
-`YTAuthLogout` (`ui/src/server/components/yt-auth.ts:11-22`) writes a single
-`set-cookie` header with one deletion per cluster:
+`ui/src/server/controllers/logout.ts:5-12` redirects OAuth users through the
+OAuth logout path; password-auth users go through `YTAuthLogout`
+(`ui/src/server/components/yt-auth.ts:11-22`), which writes one cookie deletion
+per cluster:
 
 ```http
 HTTP/1.1 302 Found
@@ -547,16 +534,10 @@ produce a 401, render the page instead" (`middlewares/authorization.ts:34-37`).
 
 ### 3.1 `POST /api/yt/:ytAuthCluster/login` — `routes.ts:61`, `ui: true`
 
-* Handler `handleLogin`, `controllers/login.ts:23`.
-* Body: raw JSON `{"username": string, "password": string}` (parsers disabled for
-  `/api/yt/*`, `configs/common.ts:16-21`). Empty username/password ⇒ 500
-  `{"message":"Error: Username and password must not be empty"}`.
-* Upstream: `POST http(s)://<cluster.proxy>/login` with
-  `Authorization: Basic base64(user:pass)`.
-* Response: the proxy's status/body/headers, plus a duplicated
-  `<cluster>_YTCypressCookie` `Set-Cookie`.
-  An upstream `401` is returned to the browser as `400`, with the proxy error
-  body preserved (§1.4).
+`handleLogin` (`controllers/login.ts:23`) implements the exchange in
+§§1.1–1.4: raw `{"username","password"}` in, Basic-auth `/login` upstream, and
+the proxy response plus a duplicated cluster cookie out. Empty credentials
+produce 500; an upstream 401 becomes browser-facing 400 with its body preserved.
 
 ### 3.2 `POST /api/yt/:ytAuthCluster/change-password` — `routes.ts:77`, `ui: true`
 
@@ -594,20 +575,9 @@ the authorization request (`oauth.ts:12-22,89-101`).
 
 ### 3.5 `GET /api/cluster-info/:ytAuthCluster` — `routes.ts:56`
 
-Not an "auth endpoint" per se but it is where the browser learns **who it is**.
-
-```http
-GET /api/cluster-info/mock HTTP/1.1
-Cookie: mock_YTCypressCookie=<opaque>
-```
-```json
-{"token": {"login": "admin", "csrf_token": "b3f1…"},
- "version": "24.1.0",
- "tokenError": null, "versionError": null}
-```
-
-`getClusterInfo` (`components/cluster-queries.ts:122-155`) runs `/auth/whoami`
-and `/version` in `Promise.allSettled`; failures are wrapped as
+This is where the browser learns its login and CSRF token. `getClusterInfo`
+(`components/cluster-queries.ts:122-155`) runs `/auth/whoami` and `/version` in
+`Promise.allSettled`; failures are wrapped as
 `{message, code: <http status>, inner_errors: [<proxy body>]}`
 (`cluster-queries.ts:102-120`).
 
@@ -723,23 +693,10 @@ match `[A-Za-z_]+` else `404 Malformed command name`.
 
 `THttpAuthenticator::HandleRequest`, `yt/server/http_proxy/http_authenticator.cpp:67-94`:
 
-```cpp
-auto result = Authenticate(req, true);            // :69  ← CSRF check DISABLED for whoami
-if (result.IsOK()) {
-    rsp->SetStatus(EStatusCode::OK);              // :71
-    ProtectCsrfToken(rsp);                        // :72
-    auto csrfSecret = Config_->GetCsrfSecret();   // :74
-    auto csrfToken  = SignCsrfToken(result.Value().Result.Login, csrfSecret, TInstant::Now());  // :75
-    ReplyJson(rsp, ... .Item("login")      .Value(result.Value().Result.Login)      // :80
-                       .Item("realm")      .Value(result.Value().Result.Realm)      // :81
-                       .Item("real_login") .Value(GetRealLogin(result.Value().Result))  // :82
-                       .Item("csrf_token") .Value(csrfToken));                       // :83
-} else {
-    SetStatusFromAuthError(rsp, TError(result));  // :87
-    FillYTErrorHeaders(rsp, TError(result));      // :88
-    ReplyJson(rsp, ... .Value(TError(result)));   // :89-92
-}
-```
+It authenticates with CSRF checking disabled, adds no-cache/browser-protection
+headers, signs a token for the resolved login, and returns
+`login`, `realm`, `real_login`, and `csrf_token`. Authentication failures use
+the normal YT error headers and body.
 
 Success wire:
 
@@ -812,15 +769,8 @@ ignored.
   * lifetime = `cookie_expiration_timeout` (default 90 days), or
     `ldap_cookie_expiration_timeout` (default 8h) for LDAP logins.
 
-Concrete example (matches `yt/tests/integration/proxies/test_cypress_cookie_auth.py:110-129`):
-
-```http
-POST /login HTTP/1.1
-Authorization: Basic YWRtaW46c2VjcmV0
-
-HTTP/1.1 200 OK
-Set-Cookie: YTCypressCookie=51f3…8b; Expires=Fri, 23 Oct 2026 12:00:00 GMT; Secure; HttpOnly; Path=/
-```
+The exchange in §1 matches
+`yt/tests/integration/proxies/test_cypress_cookie_auth.py:110-129`.
 
 ### 4.4 Credential resolution for `/api/v3|v4/*`
 
@@ -894,28 +844,9 @@ CORS-enabled.
 error becomes 503**, which is a common surprise when mocking.
 
 `FillYTErrorHeaders` → `FillYTError` (`yt/core/http/helpers.cpp:51-74`, names at
-`helpers.h:56-59`) adds:
-
-```
-X-YT-Error: {"code":111,"message":"Client is missing credentials","attributes":{…}}
-X-YT-Error-Content-Type: application/json
-X-YT-Response-Code: 111
-X-YT-Response-Message: Client is missing credentials
-```
-
-Body is the same serialized `TError` as JSON (`yt/core/misc/error.cpp:329,363-373`):
-
-```json
-{
-  "code": 111,
-  "message": "Client is missing credentials",
-  "attributes": {"pid": 1, "tid": 1, "thread": "…", "fid": 1, "host": "…",
-                 "datetime": "2026-07-25T12:00:00.000000Z", "trace_id": "…", "span_id": "…"},
-  "inner_errors": []
-}
-```
-
-Full 401 example:
+`helpers.h:56-59`) adds the four `X-YT-*` fields shown in this complete 401
+example; the body is the same serialized `TError` JSON
+(`yt/core/misc/error.cpp:329,363-373`):
 
 ```http
 HTTP/1.1 401 Unauthorized
@@ -1012,7 +943,7 @@ endpoints are:
 | method | path | why | response |
 |---|---|---|---|
 | GET | `/version` | `getVersions`, `getClusterInfo` (`cluster-queries.ts:72-81,122-155`) | `text/plain` body like `24.1.0-mock`; `getVersions` extracts `(\d+)\.(\d+)\.(\d+)` for the cluster menu, while cluster bootstrap only requires a truthy raw string |
-| GET | `/auth/whoami` | still called by `getClusterInfo` even with auth off — see 5.2 | `{"login":"root","realm":"YT","real_login":"root","csrf_token":"mock:9999999999"}` |
+| GET | `/auth/whoami` | still called by `getClusterInfo` even with auth off — see §5.1 below | `{"login":"root","realm":"YT","real_login":"root","csrf_token":"mock:9999999999"}` |
 | POST | `/api/v3/execute_batch` | `/api/cluster-params/:cluster` | batch results for `list //sys/media`, `get //sys/scheduler/orchid/service/version`, `get //sys/@ui_config`, `get //sys/@ui_config_dev_overrides`, `list //sys/primary_masters` (+ its version) |
 | GET/POST | `/api/v3/<command>` or `/api/v4/<command>` | everything the pages do | per-command |
 | GET | `/hosts` | heavy commands (`yt-api.ts:94-100`) | `["127.0.0.1:8000"]` |
@@ -1025,20 +956,10 @@ cluster (`cluster-params.ts:249-257`). The mock may ignore all credentials and
 always return a fixed body.
 
 Minimal `/auth/whoami` response that satisfies the UI (only `login` and
-`csrf_token` are read):
-
-```http
-HTTP/1.1 200 OK
-Content-Type: application/json
-
-{"login":"root","realm":"YT","real_login":"root","csrf_token":"mock-csrf:9999999999"}
-```
-
-The client will then set the browser cookie
-`ytfront_mock_xsrf_token=mock-csrf:9999999999`. With
-`authentication: "none"` the wrapper sets `withXSRFToken: false`, so it does
-**not** copy that cookie into `X-Csrf-Token`; an unauthenticated mock does not
-need the header. Password/cookie mode does send it (§2.5).
+`csrf_token` are read) is already shown in the endpoint table above. The client
+stores the token in `ytfront_mock_xsrf_token`, but with
+`authentication: "none"` it does not copy the cookie into `X-Csrf-Token`;
+password/cookie mode does (§2.5).
 
 Note the username shortcut: if the UI runs in local mode
 (`APP_ENV=local` / `YT_LOCAL_CLUSTER_ID`), `home.ts:29` hard-codes

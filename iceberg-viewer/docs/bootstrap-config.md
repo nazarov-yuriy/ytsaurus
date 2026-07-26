@@ -52,11 +52,6 @@ LOCAL_DEV_PORT=8080 npm run dev:app
 # 5. open http://localhost:8080/mock/navigation?path=//
 ```
 
-With `authentication: "none"` the file needs no token data, but the stock common
-config still requires the path to be loadable at boot. The empty object above is
-sufficient. An installation config can instead set `ytInterfaceSecret:
-undefined` (see §2.4).
-
 ---
 
 ## 1. `clusters-config.json`
@@ -120,30 +115,10 @@ when it is off, `GET /api/clusters/auth-status` reports every cluster as
 
 ### 1.4 Ready-to-use mock config
 
-`packages/ui/clusters-config.json`:
-
-```json
-{
-  "clusters": [
-    {
-      "id": "mock",
-      "name": "Mock cluster",
-      "proxy": "localhost:8000",
-      "secure": false,
-      "authentication": "none",
-      "theme": "grapefruit",
-      "description": "Local mock proxy",
-      "environment": "development",
-      "group": "Mock",
-      "primaryMaster": {"cellTag": 1},
-      "disableHeavyProxies": true
-    }
-  ]
-}
-```
-
-`disableHeavyProxies: true` is optional if your mock implements `/hosts`
-correctly (§6), but it removes one round-trip per heavy command.
+Use the complete `packages/ui/clusters-config.json` from §0.
+`primaryMaster.cellTag` is optional; `disableHeavyProxies: true` can also be
+omitted when the mock implements `/hosts`, at the cost of one extra round-trip
+per heavy command (§6).
 
 ---
 
@@ -239,19 +214,8 @@ exist. Two ways out:
 
 ## 3. Running in dev mode
 
-```bash
-cd /shared/ytsaurus4/iceberg-viewer/ytsaurus-ui
-npm ci                                   # root; postinstall -> lerna run deps:install
-cd packages/ui
-# clusters-config.json must exist (scripts/check-start-files.sh:1-9)
-mkdir -p secrets && echo '{}' > secrets/yt-interface-secret.json
-
-LOCAL_DEV_PORT=8080 npm run dev:app
-# -> client dev server  http://localhost:8080   (open this)
-# -> node server        http://localhost:8081
-```
-
-`npm run dev:app` expands to (`packages/ui/package.json`, `scripts.dev:app`):
+Use the commands in §0. The `npm run dev:app` invocation expands to
+(`packages/ui/package.json`, `scripts.dev:app`):
 
 ```
 ./scripts/check-start-files.sh && npm run copy:icons &&
@@ -274,11 +238,6 @@ Without `LOCAL_DEV_PORT` the node server binds the unix socket
 `dist/run/server.sock` and you need nginx in front — see
 `packages/ui/deploy/nginx/yt.development.conf.example` and the README
 ("Development" section). With `LOCAL_DEV_PORT` nginx is unnecessary.
-
-Notes:
-
-- `packages/ui/package.json` declares `"engines": {"node": ">=24"}`.
-- The dev-server serves `/build/*` itself; everything else is proxied to the node server (`@gravity-ui/app-builder/dist/commands/dev/client.js:153-172`). It also opens a **webpack HMR websocket** at `/build/sockjs-node` (`dist/commands/dev/client.js:53`) — the only websocket in the stack; it is dev-only and unrelated to the mock.
 
 ### 3.1 Docker
 
@@ -319,25 +278,6 @@ container is the container itself.)
 The runtime paths come from `configs/common.ts`:
 `/opt/app/clusters-config.json` and
 `/opt/app/secrets/yt-interface-secret.json`.
-
-For reference, the way the official launcher starts the image
-(`/shared/ytsaurus4/yt/docker/local/run_local_cluster.sh:464-478`) uses
-**local mode** instead of a cluster file:
-
-```
-docker run -itd --network <net> --name yt.frontend -p 8001:80 \
-  -e YT_LOCAL_CLUSTER_ID=<cluster> \
-  -e PROXY=<docker_hostname>:<proxy_port> \
-  -e PROXY_INTERNAL=<yt_container>:80 \
-  -e APP_ENV=local \
-  -e APP_INSTALLATION=<installation> \
-  -e LOCALMODE_EXTERNAL_PROXY=… -e AUTH_COOKIE_DOMAIN=… \
-  ghcr.io/ytsaurus/ui:<ver>
-```
-
-`LOCALMODE_EXTERNAL_PROXY` and `AUTH_COOKIE_DOMAIN` are **not** consumed by
-the OSS server code (no references in `src/server`); they exist for
-downstream builds.
 
 ---
 
@@ -580,13 +520,10 @@ Three independent layers, all of which must point at the mock:
 
 1. **Browser wrapper** — disabled outright: `yt.setup.setGlobalOption('useHeavyProxy', false)` (`src/ui/common/yt-api.ts:28`); the wrapper default is `true` (`lib/utils/setup.js:108`). The generic path (`javascript-wrapper/lib/core.js:331-359`) would otherwise `GET <proto>://<proxy>/hosts` (**no `role` query param in this version**), take `proxies[0]`, store it as the *global* `heavyProxy` option and build the URL from it (`core.js:197-211`) — with **no caching**, one `/hosts` call per heavy request (see the `XXX New proxy is requested every time` comment at `core.js:339-341`). Heavy commands are `read_file`, `write_file`, `read_table`, `write_table`, `select_rows`, `insert_rows` (`lib/commands/v3.js:66,84,99,119,132,177`), surfaced to the node server through `yt.getSupportedCommands()` (`lib/index.js:3-13`). Net effect: `grep '/hosts' src/ui` finds only the `/api/yt-proxy/:c/hosts-all` calls.
 2. **Node server tunnel** — `controllers/yt-api.ts:92-101`:
-   ```ts
-   if (commandInfo?.heavy && !isLocalCluster && !setup.disableHeavyProxies) {
-       const res = await axios.request({method: 'GET', url: `${proto}://${proxy}/hosts`, ...});
-       requestProxy = res.data[0];
-   }
-   ```
-   → `GET http://localhost:8000/hosts` must return a **JSON array of strings** whose first element is a host the node server can reach. `["localhost:8000"]` works. Alternatively set `disableHeavyProxies: true` in the cluster entry, or run the cluster in local mode (`isLocalCluster`).
+   `GET http://localhost:8000/hosts` must return a **JSON array of strings**
+   whose first element is a host the node server can reach.
+   `["localhost:8000"]` works. Alternatively set `disableHeavyProxies: true`
+   in the cluster entry, or run the cluster in local mode (`isLocalCluster`).
    `scripts/dev.localmode-env.sh:25` sanity-checks exactly this shape: `curl http://$PROXY/hosts | head -n 1 | grep '\["'`. Also uncached — one `/hosts` round-trip per heavy request. Note the node server's *own* wrapper setup hard-sets `useHeavyProxy: false` (`components/requestsSetup.ts:60`), so this handler is the **only** place heavy-proxy selection happens.
 3. **Direct browser URLs** — `makeDirectDownloadPath` (`src/ui/utils/navigation/index.ts:148-166`) uses `externalProxy ?? proxy` when `uiSettings.directDownload` is true. Leave `externalProxy` unset so it falls back to `proxy`.
 

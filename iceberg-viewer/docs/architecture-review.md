@@ -1,12 +1,8 @@
 # Architecture review: does the mock match YTsaurus' high-level design?
 
-**Question:** aren't there two types of backend — one for the UI API and an
-"http-proxy" for data/control-plane requests? Does our implementation respect
-that split? **Short answer: yes, there are — in fact three tiers — and the
-current stack matches the design, with the mock playing the role of a single
-data-role HTTP proxy (a valid degenerate cluster). A few conscious
-simplifications inside the proxy tier are listed below.** No code was changed
-for this review.
+**Short answer:** the real stack has three tiers, and this implementation
+matches them: the mock occupies the HTTP-proxy tier as a single data-role proxy.
+The accepted simplifications are listed below.
 
 ## 1. The real YTsaurus design (verified in this repo)
 
@@ -63,17 +59,12 @@ browser (React SPA + javascript-wrapper)
 | Redirect/refusal on control proxies | Not implemented | ✅ unreachable in the UI topology (suppress-redirect always set, browser requests exempt anyway) — see gaps |
 | RPC proxy | Not implemented | ✅ by design; UI never uses it |
 
-**Conclusion:** the two-backend intuition is right, and the current
-implementation already respects it — we did **not** collapse the UI API into
-the mock; the real UI server sits in front, and the mock stands strictly where
-`http-proxies` (behind `http-proxies-lb` in the operator deployment) would be.
-
 ## 3. Known simplifications inside the proxy tier (accepted, documented)
 
 1. **`/hosts` ignores the `?role=` query parameter** and always returns
    `[self]`. The real endpoint filters by role and orders by load. Harmless
    here: the UI's wrapper version sends no role parameter (verified in
-   table-viewer.md §heavy), and the UI server takes `res.data[0]`.
+   table-viewer.md §3.9), and the UI server takes `res.data[0]`.
 2. **No role attribute, no control-role behavior**: the mock never redirects or
    refuses heavy commands. Reachable only by non-UI clients that omit
    `X-YT-Suppress-Redirect`.
@@ -85,7 +76,7 @@ the mock; the real UI server sits in front, and the mock stands strictly where
 
 ## 4. Optional fidelity plan (if ever needed — not now)
 
-Ordered by value; all are small and none block the Iceberg work:
+Ordered by value:
 
 1. **Role-aware `/hosts`**: accept `?role=`, return `[]` for unknown roles,
    keep `data` as default — makes the mock honest for non-UI SDK clients.

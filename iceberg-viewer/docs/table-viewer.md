@@ -248,63 +248,15 @@ uses it for stats only (`UI/src/server/controllers/yt-api.ts:25,64,82,107`).
 Note: with `authentication: 'none'`, `withCredentials` is false, hence
 `withXSRFToken` is false and **no `X-Csrf-Token` is sent**. Same-origin cookies still flow.
 
-### 1.5 Concrete example — navigation attributes (`execute_batch`)
+### 1.5 Navigation attributes (`execute_batch`)
 
-```http
-POST /api/yt/mock/api/v3/execute_batch HTTP/1.1
-Host: localhost:3000
-Accept: application/json
-Content-Type: application/json
-X-YT-Suppress-Redirect: 1
-X-Custom-Request-Id: navigationAttributes
-Origin: http://localhost:3000
+The exact navigation batch and attribute set are in §6.2. Its typed response
+uses the conventions in §4.1; v3/v4 batch envelopes are compared in §4.2.
 
-{"requests":[{"command":"get","parameters":{"path":"//home/project/@","attributes":["_format","account","chunk_count","chunk_row_count","dynamic","id","modification_time","path","resource_usage","schema","sorted","type","..."]}}],"output_format":{"$value":"json","$attributes":{"stringify":true,"annotate_with_types":true}}}
-```
+### 1.6 `read_table` requests
 
-Response:
-
-```http
-HTTP/1.1 200 OK
-Content-Type: application/json
-X-YT-Proxy: mock-proxy-0
-X-YT-Request-Id: 0-1-2-3
-Trailer: X-YT-Error, X-YT-Response-Code, X-YT-Response-Message
-Access-Control-Expose-Headers: ...
-
-[{"output":{
-  "type":{"$type":"string","$value":"map_node"},
-  "id":{"$type":"string","$value":"1-2-3-4"},
-  "account":{"$type":"string","$value":"tmp"},
-  "modification_time":{"$type":"string","$value":"2026-07-25T10:00:00.000000Z"}
-}}]
-```
-
-(v3 `execute_batch` returns a bare list; v4 returns `{"results": [...]}` — §4.2.)
-
-### 1.6 Concrete example — `read_table`
-
-```http
-POST /api/yt/mock/api/v3/read_table HTTP/1.1
-Host: localhost:3000
-Accept: application/json
-Content-Type: application/json
-X-YT-Suppress-Redirect: 1
-X-Custom-Request-Id: tableRead
-
-{"path":"//home/project/table[#0:#51]","table_reader":{"workload_descriptor":{"category":"user_interactive"}},"output_format":{"$value":"web_json","$attributes":{"field_weight_limit":1024,"string_weight_limit":102,"max_selected_column_count":50,"max_all_column_names_count":3000}},"suppress_access_tracking":"true","dump_error_into_response":true,"omit_inaccessible_columns":true,"omit_inaccessible_rows":true}
-```
-
-Response:
-
-```http
-HTTP/1.1 200 OK
-Content-Type: application/json
-Trailer: X-YT-Error, X-YT-Response-Code, X-YT-Response-Message
-X-YT-Response-Parameters: {"approximate_row_count":1234,"omitted_inaccessible_columns":[],"start_row_index":0}
-
-{"rows":[...],"incomplete_columns":"false","incomplete_all_column_names":"false","all_column_names":["a","b"]}
-```
+The preload and page requests are specified in §6.4; the response body is
+defined in §5.2.
 
 Note `read_table`'s output **MIME is `application/json`** because `FormatToMime(WebJson)`
 returns `application/json` (`YT/yt/server/http_proxy/formats.cpp:183-184`), yet the wrapper's
@@ -345,13 +297,7 @@ Output: `ProduceSingleOutputValue(context, "value", result)`
 ### 2.2 `list`
 
 `cypress_commands.cpp:169-208` — same parameter set, **but** `attributes` defaults to an
-*empty* filter, not the universal one:
-
-```cpp
-// NB: Default value is an empty filter in contrast to GetCommand, for which it is the universal filter.
-registrar.ParameterWithUniversalAccessor<TAttributeFilter>("attributes", ...)
-    .Default(TAttributeFilter({}, {}));
-```
+*empty* filter, not the universal one.
 
 Output is the list of child keys; when `attributes` is non-empty each entry is a string carrying
 `$attributes` (§4.1).
@@ -366,17 +312,8 @@ Output is the list of child keys; when `attributes` is non-empty each entry is a
 `concurrency` (default 50, > 0). Sub-request schema `etc_commands.cpp:303-309`:
 `{command, parameters, input?}`.
 
-Per-subrequest result (`etc_commands.cpp:418-430`):
-
-```cpp
-.BeginMap()
-    .DoIf(!error.IsOK(), ...  .Item("error").Value(error) )
-    .DoIf(error.IsOK() && Descriptor_.OutputType == EDataType::Structured,
-          ... .Item("output").Value(TYsonStringBuf(Output_)) )
-.EndMap()
-```
-
-So each element is `{}`, `{"output": …}`, or `{"error": {...}}`. **Sub-requests always run
+Per-subrequest result (`etc_commands.cpp:418-430`) is `{}`,
+`{"output": …}`, or `{"error": {...}}`. **Sub-requests always run
 against the driver's own YSON format** — `parameters->Set("output_format", TFormat(EFormatType::Yson))`
 (`etc_commands.cpp:380`) — which means the batch's own `output_format` governs the *outer*
 envelope only. Commands whose output is `Tabular` or `Binary` (e.g. `read_table`) are **rejected**
@@ -677,23 +614,7 @@ default (non-CORS) UI configuration none of this matters because everything is s
 
 ### 3.9 Heavy-command redirect and `X-YT-Suppress-Redirect`
 
-`context.cpp:290-308`:
-
-```cpp
-bool suppressRedirect = Request_->GetHeaders()->Find("X-YT-Suppress-Redirect");
-if (Descriptor_->Heavy &&
-    !Api_->GetCoordinator()->CanHandleHeavyRequests() &&
-    !suppressRedirect &&
-    !IsBrowserRequest(Request_))
-{
-    if (Descriptor_->InputType != NFormats::EDataType::Null) {
-        DispatchUnavailable(TError{"Control proxy may not serve heavy requests with input data"});
-        return false;
-    }
-    RedirectToDataProxy(Request_, Response_, Api_->GetCoordinator());
-    return false;
-}
-```
+The redirect decision is in `context.cpp:290-308`:
 
 * `CanHandleHeavyRequests()` is `GetSelfEntry()->Role != "control"` (`coordinator.cpp:213-216`),
   so the redirect only ever happens on proxies whose role is literally `"control"`.
@@ -815,16 +736,7 @@ navigation `execute_batch` requests:
 
 ### 4.2 v3 vs v4 envelope
 
-`YT/yt/client/driver/command.cpp:41-60`:
-
-```cpp
-void ProduceSingleOutput(ICommandContextPtr context, TStringBuf name, const producer&) {
-    switch (context->GetConfig()->ApiVersion) {
-        case ApiVersion3: ProduceOutput(context, producer); break;      // bare value
-        default:          /* {name: value} */                break;
-    }
-}
-```
+`YT/yt/client/driver/command.cpp:41-60` implements the envelope difference:
 
 | command | v3 body | v4 body |
 |---|---|---|

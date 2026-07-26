@@ -41,7 +41,7 @@ mock backend, as a first step toward serving the UI from an Apache Iceberg catal
   - `webjson.js` — YT `web_json` / annotated-JSON encoders.
 - `mock-backend-py/` — Python (stdlib-only) port of the mock, wire-identical to the
   Node one (`python3 server.py 8000`); see its README for the porting gotchas.
-- `tests/test_protocol.py` — 39 documented-behavior conformance tests, each run
+- `tests/test_protocol.py` — documented-behavior conformance tests, each run
   against BOTH backends (`python3 tests/test_protocol.py`).
 - `tests/test_userdb.py` — always-running PBKDF2, legacy-migration, and reconnect
   unit tests; `test_user_persistence.py` adds isolated PostgreSQL integration

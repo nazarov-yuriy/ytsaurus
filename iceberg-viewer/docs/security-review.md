@@ -4,17 +4,12 @@ Review date: 2026-07-26
 
 Reviewed revision: `d82922e8a44`
 
-Status: findings only; no executable code was changed as part of this review.
-
 ## Scope and threat model
 
-The primary target is the Python backend deployed by
-`deploy/helm/iceberg-ui-mock`, including its PostgreSQL authentication store,
-the UI-to-backend proxy hop, and the Helm/Docker security boundary. The
-ConfigMap copies under `deploy/helm/iceberg-ui-mock/files/` were byte-identical
-to `mock-backend-py/` at review time. The Node backend was checked for
-security-relevant protocol differences, but it is not the implementation
-deployed by the chart.
+The primary target is the chart-deployed Python backend, its PostgreSQL
+authentication store, the UI-to-backend proxy hop, and the Helm/Docker
+boundary. The Node backend was checked for security-relevant differences but
+is not deployed by the chart.
 
 The review assumes:
 
@@ -496,17 +491,10 @@ instead:
 
 ## Positive controls observed
 
-- SQL statements use parameters; no SQL injection path was found in the
-  reviewed user store.
-- New Python password hashes use PBKDF2-HMAC-SHA256 and comparisons use
-  constant-time helpers.
-- Python session tokens use `secrets.token_hex(16)`.
-- Session cookies are `HttpOnly`.
-- UI, backend, and PostgreSQL are ClusterIP Services, and Ingress is disabled
-  by default.
-- The optional baked backend image runs as a non-root UID.
-
-These controls are useful but do not compensate for the deployment blockers
+The user store uses parameterized SQL, PBKDF2-HMAC-SHA256, constant-time
+comparisons, cryptographically random Python session tokens, and `HttpOnly`
+cookies. Services default to ClusterIP with Ingress disabled, and the optional
+baked image is non-root. These controls do not compensate for the blockers
 above.
 
 ## Recommended remediation order
@@ -524,9 +512,7 @@ above.
 8. Complete session, secret, workload, and supply-chain hardening
    (SEC-10 and SEC-13 through SEC-16).
 
-Each numbered finding is intended to be independently testable and suitable
-for a focused remediation commit. Some deployment fixes require coordinated
-credential rotation; those commits should include explicit migration notes.
+Deployment fixes that rotate credentials must include migration notes.
 
 ## Review limitations
 
