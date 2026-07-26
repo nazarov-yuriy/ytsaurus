@@ -1,0 +1,72 @@
+[
+  {
+    "layer": "proxy",
+    "method": "GET",
+    "path": "/ready",
+    "description": "Mock-only readiness endpoint (not part of the real YT proxy surface): 200 {} when the process is up and, in PostgreSQL mode, the user store is reachable; 503 {} while storage is unavailable. Consumed by the Helm readinessProbe and the compose healthcheck so the UI only receives traffic once sessions can be validated.",
+    "request": {
+      "headers": {}
+    },
+    "response": {
+      "status": 200,
+      "body_schema": "{} with HTTP 200|503"
+    },
+    "needed_for_mock": true,
+    "source_refs": [
+      "mock-backend-py/server.py:/ready",
+      "deploy/helm/iceberg-ui-mock/templates/mock-backend.yaml:readinessProbe",
+      "docker-compose.yml:healthcheck"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "GET",
+    "path": "/service/version",
+    "description": "Convenience alias the mock serves next to /version (same plain-text body). The real proxy exposes /service returning {version, start_time} instead; that endpoint stays unimplemented.",
+    "request": {
+      "headers": {}
+    },
+    "response": {
+      "status": 200,
+      "body_schema": "text/plain version string"
+    },
+    "needed_for_mock": false,
+    "source_refs": [
+      "mock-backend-py/server.py:/version"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "POST",
+    "path": "/api/v3/whoami",
+    "command": "whoami",
+    "description": "Driver command variant of identity lookup: {login, realm} for the authenticated caller. The UI uses GET /auth/whoami instead; the mock serves the command for SDK-style clients.",
+    "request": {
+      "headers": {}
+    },
+    "response": {
+      "body_schema": "{login, realm}"
+    },
+    "needed_for_mock": false,
+    "source_refs": [
+      "mock-backend-py/server.py:COMMANDS"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "POST",
+    "path": "/api/v3/check_permission_by_acl",
+    "command": "check_permission_by_acl",
+    "description": "Permission probe against an explicit ACL; the mock always allows. The UI issues it only inside execute_batch, but the command is also dispatchable top-level.",
+    "request": {
+      "headers": {}
+    },
+    "response": {
+      "body_schema": "{action, subject_id, subject_name, missing_subjects}"
+    },
+    "needed_for_mock": false,
+    "source_refs": [
+      "mock-backend-py/server.py:COMMANDS"
+    ]
+  }
+]

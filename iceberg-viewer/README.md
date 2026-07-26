@@ -32,9 +32,11 @@ mock backend, as a first step toward serving the UI from an Apache Iceberg catal
     `implemented` (dynamic, reimplement over Iceberg) / `constant` (stubbed, keep) /
     `unused` (not needed).
   - `sync.py` — `load` (inventories + entities + statuses → DB), `export`
-    (DB → generated `API-INDEX.md` + `ENTITIES.md`), `check` (fails unless every
-    endpoint is mentioned in a handwritten doc, everything has a status, and the
-    generated MD matches the DB), `query "SQL"`.
+    (DB → generated `API-INDEX.md` + `ENTITIES.md` + `INDEX.md`), `check` (fails
+    unless every endpoint is mentioned in a handwritten doc, everything has a
+    status, and the generated MD matches the DB), `audit` (fails when the
+    catalog's implemented/constant claims drift from the actual
+    `mock-backend-py/server.py` surface), `query "SQL"`.
 - `mock-backend-py/` — Python HTTP server mimicking the YT HTTP proxy with in-RAM
   fake catalog data and optional PostgreSQL-backed users and sessions
   (`python3 server.py 8000`); see its README for configuration and implementation

@@ -5,16 +5,20 @@ Usage:
     python3 sync.py load    # (re)build api_catalog.sqlite from docs/*.inventory.json
     python3 sync.py export  # regenerate docs/API-INDEX.md, ENTITIES.md, INDEX.md
     python3 sync.py check   # report endpoints not mentioned in any .md doc
+    python3 sync.py audit   # cross-check catalog statuses vs mock-backend-py/server.py
     python3 sync.py query "SQL"  # ad-hoc query, prints rows as TSV
+
+The DB location can be overridden with API_CATALOG_DB (e.g. for read-only checkouts).
 """
 import json
+import os
 import re
 import sqlite3
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DB_PATH = Path(__file__).resolve().parent / "api_catalog.sqlite"
+DB_PATH = Path(os.environ.get("API_CATALOG_DB") or Path(__file__).resolve().parent / "api_catalog.sqlite")
 DOCS = ROOT / "docs"
 
 
@@ -349,6 +353,57 @@ def check() -> None:
     sys.exit(1 if failures else 0)
 
 
+def audit() -> None:
+    """Cross-check the catalog's implemented/constant claims against the actual
+    backend source (mock-backend-py/server.py): every route and command the
+    server dispatches must exist in the DB with a non-'unused' status, and every
+    non-'unused' proxy /api command in the DB must exist in the server."""
+    server = (ROOT / "mock-backend-py" / "server.py").read_text()
+    served_paths = set(re.findall(r"if p == '(/[^']*)'", server))
+    served_paths |= {p for group in re.findall(r"if p in \(([^)]*)\)", server)
+                     for p in re.findall(r"'(/[^']*)'", group)}
+    for prefix in re.findall(r"p\.startswith\('(/[^']+?)/?'\)", server):
+        served_paths.add(prefix.rstrip("/"))
+    commands_block = server.split("COMMANDS = {", 1)[1].split("\n}", 1)[0]
+    served_commands = set(re.findall(r"^    '(\w+)':", commands_block, re.M))
+
+    conn = connect()
+    failures = 0
+    db_paths = {path.strip() for row in conn.execute(
+        "SELECT path FROM endpoints WHERE layer='proxy' AND support_status != 'unused'")
+        for path in row[0].split(",")}
+    db_commands = {c for (c,) in conn.execute(
+        "SELECT DISTINCT command FROM endpoints WHERE layer='proxy'"
+        " AND support_status != 'unused' AND command IS NOT NULL")}
+
+    def covered(path):
+        candidates = {path, path.rstrip("/") or "/"}
+        return candidates & db_paths or any(d.endswith("*") and path.startswith(d[:-1])
+                                            for d in db_paths)
+
+    for path in sorted(served_paths):
+        if not covered(path):
+            failures += 1
+            print(f"NOT IN CATALOG: server route {path}")
+    for command in sorted(served_commands):
+        if not any(f"/api/v3/{command}" in d or f"/api/v4/{command}" in d for d in db_paths) \
+                and command not in db_commands:
+            failures += 1
+            print(f"NOT IN CATALOG: server command {command}")
+    for (path, command) in conn.execute(
+            "SELECT path, command FROM endpoints WHERE layer='proxy'"
+            " AND support_status='implemented' AND path LIKE '/api/v_/%'"
+            " AND path NOT LIKE '%*%' AND path NOT LIKE '%:%'"):
+        for part in path.split(","):
+            name = part.strip().rsplit("/", 1)[-1]
+            if name and name not in served_commands and not (command or "").startswith("execute_batch:"):
+                failures += 1
+                print(f"NOT IN SERVER: catalog claims implemented {part.strip()}")
+    print("OK: catalog matches the server surface" if not failures
+          else f"{failures} drift(s) between catalog and server")
+    sys.exit(1 if failures else 0)
+
+
 def query(sql: str) -> None:
     conn = connect()
     for row in conn.execute(sql):
@@ -363,6 +418,8 @@ if __name__ == "__main__":
         export()
     elif cmd == "check":
         check()
+    elif cmd == "audit":
+        audit()
     elif cmd == "query":
         query(sys.argv[2])
     else:
