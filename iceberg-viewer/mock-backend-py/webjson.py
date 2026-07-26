@@ -59,8 +59,32 @@ def web_json_scalar(v, t):
     return {'$type': 'string', '$value': str(v)}
 
 
+# value_format=yql: names from web_json_writer.cpp GetSimpleYqlTypeName (Any -> Yson).
+YQL_TYPE_NAMES = {'int64': 'Int64', 'int32': 'Int32', 'int16': 'Int16', 'int8': 'Int8',
+                  'uint64': 'Uint64', 'uint32': 'Uint32', 'uint16': 'Uint16', 'uint8': 'Uint8',
+                  'double': 'Double', 'boolean': 'Boolean', 'string': 'String', 'utf8': 'Utf8',
+                  'any': 'Yson', 'yson': 'Yson'}
+
+
+def yql_cell(v, t, type_index):
+    """Cell = [value, "<registry index>"]; optional present -> [inner], null stays null.
+    Numbers stringified, booleans native JSON, any/Yson = {"val": <$type/$value tree>}."""
+    if v is None:
+        return [None, str(type_index)]
+    if t == 'boolean':
+        inner = bool(v)
+    elif t in ('any', 'yson'):
+        inner = {'val': typed_annotate(v)}
+    elif t in INT_TYPES or t == 'double':
+        inner = js_num_str(v)
+    else:
+        inner = str(v)
+    return [[inner], str(type_index)]
+
+
 def web_json_body(schema, rows, start_row=0, row_limit=50, column_names=None,
-                  max_selected_column_count=50, max_all_column_names_count=2000):
+                  max_selected_column_count=50, max_all_column_names_count=2000,
+                  value_format=None):
     """read_table web_json body; column_names replaces max_selected_column_count."""
     all_columns = [c['name'] for c in schema]
     if isinstance(column_names, list):
@@ -68,11 +92,31 @@ def web_json_body(schema, rows, start_row=0, row_limit=50, column_names=None,
     else:
         selected = all_columns[:max_selected_column_count]
     types = {c['name']: c['type'] for c in schema}
-    return {
-        'rows': [{n: web_json_scalar(row.get(n), types[n]) for n in selected}
-                 for row in rows[start_row:start_row + row_limit]],
+    row_slice = rows[start_row:start_row + row_limit]
+
+    if value_format == 'yql':
+        registry, index_of, col_index = [], {}, {}
+        for n in selected:
+            yql_type = ['OptionalType', ['DataType', YQL_TYPE_NAMES.get(types[n], 'String')]]
+            key = json.dumps(yql_type)
+            if key not in index_of:
+                index_of[key] = len(registry)
+                registry.append(yql_type)
+            col_index[n] = index_of[key]
+        out_rows = [{n: yql_cell(row.get(n), types[n], col_index[n]) for n in selected}
+                    for row in row_slice]
+    else:
+        registry = None
+        out_rows = [{n: web_json_scalar(row.get(n), types[n]) for n in selected}
+                    for row in row_slice]
+
+    body = {
+        'rows': out_rows,
         # both flags are strings on the wire, not booleans
         'incomplete_columns': str(len(selected) < len(all_columns)).lower(),
         'incomplete_all_column_names': str(len(all_columns) > max_all_column_names_count).lower(),
         'all_column_names': sorted(all_columns)[:max_all_column_names_count],
     }
+    if registry is not None:
+        body['yql_type_registry'] = registry
+    return body

@@ -543,6 +543,62 @@ class TestReadTableWebJson(Both):
             self.assertEqual(body['code'], 500)
 
 
+class TestReadTableYqlFormat(Both):
+    """value_format: yql (table-viewer.md §5.4, web_json_writer.cpp:110-345):
+    cells are [value, "<registry index>"], present optionals wrap as [inner],
+    null stays null; numbers stringified, booleans native JSON; any/Yson values
+    are {"val": <$type/$value tree>}; yql_type_registry is deduplicated."""
+
+    def read(self, port, path, attrs):
+        of = {'$value': 'web_json', '$attributes': {**attrs, 'value_format': 'yql'}}
+        _, body, _ = call(port, 'POST', '/api/v3/read_table',
+                          body={'path': path, 'output_format': of})
+        return body
+
+    def test_registry_and_scalar_cells(self):
+        for port in self.each():
+            body = self.read(port, '//home/iceberg/warehouse/trips[#0:#2]', {})
+            # trips: int64, string, double, string, boolean -> 4 distinct types,
+            # the two string columns share one registry entry.
+            self.assertEqual(body['yql_type_registry'], [
+                ['OptionalType', ['DataType', 'Int64']],
+                ['OptionalType', ['DataType', 'String']],
+                ['OptionalType', ['DataType', 'Double']],
+                ['OptionalType', ['DataType', 'Boolean']]])
+            row = body['rows'][0]
+            self.assertEqual(row['trip_id'], [['1'], '0'])
+            self.assertEqual(row['city'], [['Amsterdam'], '1'])
+            self.assertEqual(row['distance_km'], [['3'], '2'])       # stringified, JS-style
+            self.assertEqual(row['started_at'][1], '1')              # shares String entry
+            self.assertEqual(row['is_completed'], [[False], '3'])    # native JSON boolean
+
+    def test_yson_column_wraps_typed_tree(self):
+        for port in self.each():
+            body = self.read(port, '//home/iceberg/warehouse/events[#0:#1]', {})
+            self.assertEqual(body['yql_type_registry'][2], ['OptionalType', ['DataType', 'Yson']])
+            cell = body['rows'][0]['payload']
+            self.assertEqual(cell[1], '2')
+            val = cell[0][0]['val']
+            self.assertEqual(val['kind'], {'$type': 'string', '$value': 'click'})
+            self.assertEqual(val['coords'][0], {'$type': 'int64', '$value': '0'})
+
+    def test_column_projection_still_applies(self):
+        for port in self.each():
+            body = self.read(port, '//home/iceberg/warehouse/trips[#0:#1]',
+                             {'column_names': ['is_completed']})
+            self.assertEqual(list(body['rows'][0]), ['is_completed'])
+            self.assertEqual(len(body['yql_type_registry']), 1)
+
+    def test_schemaless_stays_default(self):
+        # Without value_format the cells keep the $type/$value shape and no registry.
+        for port in self.each():
+            _, body, _ = call(port, 'POST', '/api/v3/read_table',
+                              body={'path': '//home/iceberg/warehouse/trips[#0:#1]',
+                                    'output_format': {'$value': 'web_json', '$attributes': {}}})
+            self.assertNotIn('yql_type_registry', body)
+            self.assertEqual(body['rows'][0]['trip_id'], {'$type': 'int64', '$value': '1'})
+
+
 class TestErrorEnvelope(Both):
     def test_error_body_is_yt_error_entity_with_headers(self):
         # coverage-notes.md conventions: every error response is the yt-error

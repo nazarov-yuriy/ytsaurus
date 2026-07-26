@@ -73,12 +73,32 @@ function webJsonScalar(value, columnType) {
 // Build the full web_json read_table response body.
 // column_names, when present, fully replaces max_selected_column_count
 // (the UI's column-discovery preload sends column_names: [] with range [#0:#0]).
+// value_format=yql: names from web_json_writer.cpp GetSimpleYqlTypeName (Any -> Yson).
+const YQL_TYPE_NAMES = {
+  int64: 'Int64', int32: 'Int32', int16: 'Int16', int8: 'Int8',
+  uint64: 'Uint64', uint32: 'Uint32', uint16: 'Uint16', uint8: 'Uint8',
+  double: 'Double', boolean: 'Boolean', string: 'String', utf8: 'Utf8',
+  any: 'Yson', yson: 'Yson',
+};
+
+// Cell = [value, "<registry index>"]; optional present -> [inner], null stays null.
+// Numbers stringified, booleans native JSON, any/Yson = {"val": <$type/$value tree>}.
+function yqlCell(v, t, typeIndex) {
+  if (v === null || v === undefined) return [null, String(typeIndex)];
+  let inner;
+  if (t === 'boolean') inner = Boolean(v);
+  else if (t === 'any' || t === 'yson') inner = {val: typedAnnotate(v)};
+  else inner = String(v);  // numbers stringify identically to strings in JS
+  return [[inner], String(typeIndex)];
+}
+
 function webJsonBody(schema, rows, {
   startRow = 0,
   rowLimit = 50,
   columnNames,
   maxSelectedColumnCount = 50,
   maxAllColumnNamesCount = 2000,
+  valueFormat,
 } = {}) {
   const allColumns = schema.map((c) => c.name);
   const selected = Array.isArray(columnNames)
@@ -86,15 +106,40 @@ function webJsonBody(schema, rows, {
     : allColumns.slice(0, maxSelectedColumnCount);
   const slice = rows.slice(startRow, startRow + rowLimit);
   const typeByName = Object.fromEntries(schema.map((c) => [c.name, c.type]));
-  return {
-    rows: slice.map((row) =>
+
+  let outRows;
+  let registry = null;
+  if (valueFormat === 'yql') {
+    registry = [];
+    const indexOf = {};
+    const colIndex = {};
+    for (const n of selected) {
+      const yqlType = ['OptionalType', ['DataType', YQL_TYPE_NAMES[typeByName[n]] || 'String']];
+      const key = JSON.stringify(yqlType);
+      if (!(key in indexOf)) {
+        indexOf[key] = registry.length;
+        registry.push(yqlType);
+      }
+      colIndex[n] = indexOf[key];
+    }
+    outRows = slice.map((row) =>
+      Object.fromEntries(selected.map((n) => [n, yqlCell(row[n], typeByName[n], colIndex[n])]))
+    );
+  } else {
+    outRows = slice.map((row) =>
       Object.fromEntries(selected.map((name) => [name, webJsonScalar(row[name], typeByName[name])]))
-    ),
+    );
+  }
+
+  const body = {
+    rows: outRows,
     // Note: these two are strings "true"/"false" on the wire, not booleans.
     incomplete_columns: String(selected.length < allColumns.length),
     incomplete_all_column_names: String(allColumns.length > maxAllColumnNamesCount),
     all_column_names: [...allColumns].sort().slice(0, maxAllColumnNamesCount),
   };
+  if (registry !== null) body.yql_type_registry = registry;
+  return body;
 }
 
 // Typed annotation for output_format {"$value":"json","$attributes":{"annotate_with_types":true,"stringify":true}}:

@@ -270,6 +270,7 @@ const commands = {
         columnNames: ofAttrs.column_names,
         maxSelectedColumnCount: Number(ofAttrs.max_selected_column_count) || 50,
         maxAllColumnNamesCount: Number(ofAttrs.max_all_column_names_count) || 2000,
+        valueFormat: ofAttrs.value_format,
       });
     }
     // json format fallback: newline-delimited rows

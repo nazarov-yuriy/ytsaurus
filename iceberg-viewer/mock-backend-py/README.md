@@ -55,7 +55,7 @@ Node backend and all parity tests run in the fallback mode.
 - `data.py` ← `data.js` — the in-RAM cluster. Node-id sequence, timestamps, and
   generated rows are identical to the Node version. **Swap this file for an
   Apache Iceberg catalog implementation; everything else stays.**
-- `webjson.py` ← `webjson.js` — annotated JSON, typed annotation, web_json.
+- `webjson.py` ← `webjson.js` — annotated JSON, typed annotation, web_json (schemaless and yql value formats).
   Includes JS-compatible number stringification (`3`, not `3.0`).
 
 ## Consistency guarantees
@@ -65,7 +65,7 @@ Verified equivalent to the Node backend by:
 1. `../recordings/replay-diff.py` — replays all 165 recorded UI requests plus 26
    edge cases against both servers side by side and diffs status, body, and YT
    headers: **191/191 identical**.
-2. `../tests/test_protocol.py` — 39 documented-behavior conformance tests run
+2. `../tests/test_protocol.py` — 43 documented-behavior conformance tests run
    against both backends.
 3. Headless-Chromium runs of the real UI against this server: repeated runs with
    zero request failures and zero page errors.

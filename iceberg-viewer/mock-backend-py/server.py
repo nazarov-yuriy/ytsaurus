@@ -184,7 +184,8 @@ def cmd_read_table(params, auth):
             schema, node.rows, start_row=start, row_limit=50 if limit is None else limit,
             column_names=of_attrs.get('column_names'),
             max_selected_column_count=_int(of_attrs.get('max_selected_column_count'), 50),
-            max_all_column_names_count=_int(of_attrs.get('max_all_column_names_count'), 2000))
+            max_all_column_names_count=_int(of_attrs.get('max_all_column_names_count'), 2000),
+            value_format=of_attrs.get('value_format'))
     return node.rows[start:start + (50 if limit is None else limit)]
 
 

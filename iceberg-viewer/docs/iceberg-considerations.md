@@ -41,11 +41,14 @@ this project's code/tests; **[likely]** — strong evidence, not fully tested;
   the UI renders for cell values is untested — a string fallback is safe.
 - **[verified]** Nested types (struct/list/map) work as legacy `any` +
   JSON-stringified cells (the `events.payload` column proves the render path).
-- **[uncertain]** Richer complex-type rendering: the UI actually requests
-  `value_format: "yql"` in web_json (seen live). Our mock serves schemaless and
-  the UI copes, but implementing `yql_type_registry` + the `[value, type_index]`
-  encoding would give structured expansion of nested values. Grammar is
-  documented in table-viewer.md §5.4; effort is nontrivial.
+- **[verified]** Richer complex-type rendering via `value_format: "yql"` is now
+  implemented in both mocks (`yql_type_registry` + `[value, type_index]` cells,
+  per table-viewer.md §5.4): the UI requests it and renders nested any/Yson
+  values as an expandable structured tree (verified live on the events table).
+  Not covered yet: base64 (`b64`) for non-UTF-8 strings, truncation (`inc`),
+  and composite registry types (Struct/List/Dict) — the mock's columns are
+  scalars + Yson; a real Iceberg backend mapping structs natively would extend
+  the registry with `["StructType", [["field", <t>], ...]]` entries.
 - **[uncertain]** Iceberg **sort orders → `key_columns`/`sorted_by`** is honest;
   mapping **partition fields** there is not (different semantics). Partition spec
   probably belongs in user attributes; whether the UI can show a per-column

@@ -202,15 +202,15 @@ One column in the @schema attribute ({$attributes: {strict, unique_keys}, $value
 
 ## web-json-cell
 
-Scalar cell encoding inside web_json rows (value_format schemaless).
+Scalar cell encoding inside web_json rows. Schemaless: {$type,$value}. yql value_format: [value, "<type index>"] with present optionals wrapped as [inner], numbers stringified, booleans native JSON, any/Yson as {"val": <$type/$value tree>}.
 
 | Status | Field | Type | Required | Description |
 |--------|-------|------|----------|-------------|
 | 🟢 implemented | `$type` | string | yes | int64/uint64/double/boolean/string/any |
 | 🟢 implemented | `$value` | string | yes | stringified value; JSON-encoded for 'any' |
 | ⚪ unused | `$incomplete` | bool |  | set when value truncated by field_weight_limit; mock never truncates |
-| ⚪ unused | `$tag` | string |  | yql value_format only |
-| ⚪ unused | `b64` | bool |  | yql value_format only (val/inc/b64 convention) |
+| ⚪ unused | `$tag` | string |  | yql value_format only; mock emits neither (ASCII-only data, no truncation) |
+| ⚪ unused | `b64` | bool |  | yql value_format only (val/inc/b64 convention); mock emits neither (ASCII-only data, no truncation) |
 
 ## web-json-response
 
@@ -222,7 +222,7 @@ read_table response body in output_format web_json (the table viewer format).
 | 🟢 implemented | `incomplete_all_column_names` | string | yes | STRING 'true'/'false' |
 | 🟢 implemented | `incomplete_columns` | string | yes | STRING 'true'/'false', not boolean |
 | 🟢 implemented | `rows` | list<map<column, web-json-cell>> | yes | row slice per requested range |
-| ⚪ unused | `yql_type_registry` | list |  | only with value_format: yql; UI works without it (schemaless mode) |
+| 🟢 implemented | `yql_type_registry` | list |  | emitted when value_format: yql — deduplicated tag-first type list (["OptionalType", ["DataType", "Int64"]], Any -> "Yson"); cells become [value, "<registry index>"] |
 
 ## whoami-response
 
