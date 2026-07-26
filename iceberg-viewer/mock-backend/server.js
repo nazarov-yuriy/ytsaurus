@@ -366,14 +366,44 @@ const server = http.createServer(async (req, res) => {
     // ---- password login: HTTP Basic auth to /login, per cypress_cookie_login.cpp.
     // Real proxy replies with empty 200 + Set-Cookie: YTCypressCookie (no SameSite).
     if (p === '/login') {
-      const basic = (req.headers.authorization || '').match(/^Basic (.+)$/);
-      const [user, ...pw] = basic
-        ? Buffer.from(basic[1], 'base64').toString('utf8').split(':')
-        : [];
-      const password = pw.join(':');
+      const authorization = req.headers.authorization;
+      if (authorization === undefined) {
+        res.writeHead(401, {...cors, 'WWW-Authenticate': 'Basic', 'Content-Length': '0'});
+        return void res.end();
+      }
+
+      const separator = authorization.indexOf(' ');
+      if (separator === -1) {
+        return void sendYtError(res, 400, ytError(
+          1, 'Malformed "Authorization" header: failed to parse authorization method'), cors);
+      }
+
+      const method = authorization.slice(0, separator);
+      const encodedCredentials = authorization.slice(separator + 1);
+      if (method !== 'Basic') {
+        return void sendYtError(
+          res, 400, ytError(1, `Unsupported authorization method "${method}"`), cors);
+      }
+      if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
+        .test(encodedCredentials)) {
+        return void sendYtError(
+          res, 400, ytError(1, 'Failed to decode user credentials'), cors);
+      }
+
+      const credentials = Buffer.from(encodedCredentials, 'base64').toString('utf8');
+      const colon = credentials.indexOf(':');
+      if (colon === -1) {
+        return void sendYtError(
+          res, 400, ytError(1, 'Failed to parse user credentials'), cors);
+      }
+      const user = credentials.slice(0, colon);
+      const password = credentials.slice(colon + 1);
       if (!(user in users) || users[user].password !== password) {
         // Real proxy masks the cause: generic code 1 (cypress_cookie_login.cpp:83).
-        return void sendYtError(res, 401, ytError(1, 'Incorrect login or password'), cors);
+        return void sendYtError(res, 401, ytError(1, 'Incorrect login or password'), {
+          ...cors,
+          'WWW-Authenticate': 'Basic',
+        });
       }
       const cookie = makeCookie(user);
       const expires = new Date(Date.now() + 30 * 24 * 3600 * 1000).toUTCString();

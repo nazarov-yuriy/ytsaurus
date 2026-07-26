@@ -136,6 +136,39 @@ class TestAuth(Both):
             self.assertIn('HttpOnly', cookie)
             self.assertNotIn('SameSite', cookie)  # real proxy never sets it
 
+    def test_login_without_authorization_returns_empty_basic_challenge(self):
+        # cypress_cookie_login.cpp:50-58,224-228 — a regular request to /login is the
+        # signal to present the login form: empty 401 plus a Basic challenge.
+        for port in self.each():
+            status, body, hdrs = call(port, 'POST', '/login')
+            self.assertEqual(status, 401)
+            self.assertIsNone(body)
+            self.assertEqual(hdrs.get('WWW-Authenticate'), 'Basic')
+            self.assertIsNone(hdrs.get('X-YT-Error'))
+
+    def test_login_rejects_malformed_authorization_as_400(self):
+        # cypress_cookie_login.cpp:94-128 — malformed headers, unsupported auth
+        # methods and syntactically invalid Basic credentials are client errors.
+        no_colon = 'Basic ' + base64.b64encode(b'iceberg').decode()
+        cases = [
+            ('Basic',
+             'Malformed "Authorization" header: failed to parse authorization method'),
+            ('Bearer token', 'Unsupported authorization method "Bearer"'),
+            ('Basic !!!', 'Failed to decode user credentials'),
+            (no_colon, 'Failed to parse user credentials'),
+        ]
+        for port in self.each():
+            for authorization, message in cases:
+                with self.subTest(authorization=authorization):
+                    status, body, hdrs = call(
+                        port, 'POST', '/login', headers={'Authorization': authorization})
+                    self.assertEqual(status, 400)
+                    self.assertEqual(body['code'], 1)
+                    self.assertEqual(body['message'], message)
+                    self.assertEqual(hdrs.get('X-YT-Response-Code'), '1')
+                    self.assertEqual(json.loads(hdrs.get('X-YT-Error'))['message'], message)
+                    self.assertIsNone(hdrs.get('WWW-Authenticate'))
+
     def test_login_wrong_password_is_401_generic_code(self):
         # cypress_cookie_login.cpp:83 — the real proxy masks the failure cause as a
         # generic TError (code 1) "Incorrect login or password" with HTTP 401. The
@@ -148,6 +181,19 @@ class TestAuth(Both):
             self.assertEqual(body['message'], 'Incorrect login or password')
             self.assertEqual(hdrs.get('X-YT-Response-Code'), '1')
             self.assertEqual(json.loads(hdrs.get('X-YT-Error'))['code'], 1)
+            self.assertEqual(hdrs.get('WWW-Authenticate'), 'Basic')
+
+    def test_login_unknown_user_is_masked_401_basic_challenge(self):
+        # Resolve errors for absent Cypress users follow the same masked branch as
+        # invalid passwords; callers must not be able to enumerate user names.
+        unknown = 'Basic ' + base64.b64encode(b'no-such-user:anything').decode()
+        for port in self.each():
+            status, body, hdrs = call(
+                port, 'POST', '/login', headers={'Authorization': unknown})
+            self.assertEqual(status, 401)
+            self.assertEqual(body['code'], 1)
+            self.assertEqual(body['message'], 'Incorrect login or password')
+            self.assertEqual(hdrs.get('WWW-Authenticate'), 'Basic')
 
     def test_whoami_without_credentials_still_succeeds(self):
         # empirical-findings + auth.md §4: with authentication:"none" the UI server

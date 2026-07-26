@@ -6,6 +6,7 @@ Port of ../mock-backend/server.js; parity checked by recordings/replay-diff.py.
 Set MOCK_RECORD=<path> to append request/response pairs as JSONL.
 """
 import base64
+import binascii
 import json
 import os
 import re
@@ -317,12 +318,34 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, ['v3', 'v4'], cors)
 
         if p == '/login':  # HTTP Basic; real proxy sets YTCypressCookie, no SameSite
-            m = re.match(r'^Basic (.+)$', self.headers.get('Authorization') or '')
-            user, _, password = (base64.b64decode(m.group(1)).decode('utf-8', 'replace')
-                                 if m else '').partition(':')
+            authorization = self.headers.get('Authorization')
+            if authorization is None:
+                return self.send_body(
+                    401, b'', {**cors, 'WWW-Authenticate': 'Basic'})
+            if ' ' not in authorization:
+                return self.send_yt_error(400, yt_error(
+                    1, 'Malformed "Authorization" header: failed to parse authorization method'),
+                    cors)
+            method, encoded_credentials = authorization.split(' ', 1)
+            if method != 'Basic':
+                return self.send_yt_error(
+                    400, yt_error(1, f'Unsupported authorization method "{method}"'), cors)
+            try:
+                credentials = base64.b64decode(encoded_credentials, validate=True)
+            except (binascii.Error, ValueError):
+                return self.send_yt_error(
+                    400, yt_error(1, 'Failed to decode user credentials'), cors)
+            if b':' not in credentials:
+                return self.send_yt_error(
+                    400, yt_error(1, 'Failed to parse user credentials'), cors)
+            user_bytes, password_bytes = credentials.split(b':', 1)
+            user = user_bytes.decode('utf-8', 'replace')
+            password = password_bytes.decode('utf-8', 'replace')
             if not userdb.verify(user, password):
                 # Real proxy masks the cause: generic code 1 (cypress_cookie_login.cpp:83).
-                return self.send_yt_error(401, yt_error(1, 'Incorrect login or password'), cors)
+                return self.send_yt_error(
+                    401, yt_error(1, 'Incorrect login or password'),
+                    {**cors, 'WWW-Authenticate': 'Basic'})
             cookie = userdb.create_session(user)
             expires = format_datetime(datetime.now(timezone.utc) + timedelta(days=30), usegmt=True)
             return self.send_body(200, b'', {
