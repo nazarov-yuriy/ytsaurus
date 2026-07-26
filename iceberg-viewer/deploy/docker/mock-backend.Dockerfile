@@ -1,6 +1,7 @@
 # Baked image for the Python mock backend (alternative to the chart's
 # run-from-ConfigMap default). Build from the iceberg-viewer/ directory:
-#   docker build -f deploy/docker/mock-backend.Dockerfile -t iceberg-ui-mock-backend .
+#   docker build -f deploy/docker/mock-backend.Dockerfile \
+#     -t registry.example/iceberg-ui-mock-backend:dev .
 FROM python:3.12-slim
 WORKDIR /app
 RUN pip install --no-cache-dir "psycopg[binary]"

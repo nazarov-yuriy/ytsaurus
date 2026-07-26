@@ -2,8 +2,9 @@
 mockBackend:
   replicaCount: 1
   # By default the chart runs the backend sources shipped in files/ on a stock
-  # python image (no registry needed). Set image.repository to a build of
-  # deploy/docker/mock-backend.Dockerfile to use a baked image instead.
+  # python image (no registry needed). To use a build of
+  # deploy/docker/mock-backend.Dockerfile instead, set sourcesFromConfigMap=false
+  # and set both image.repository and image.tag to the image you pushed.
   image:
     repository: python
     tag: "3.12-slim"
@@ -12,8 +13,8 @@ mockBackend:
   # Set to false when image.repository already contains them (baked image).
   sourcesFromConfigMap: true
   service:
-    # Port 80 keeps the clusters-config `proxy` value a bare hostname,
-    # matching how the official chart points at http-proxies-lb.
+    # Port 80 keeps the clusters-config `proxy` value a bare hostname; other
+    # ports are appended to the generated Service DNS address.
     port: 80
   resources: {}
 
@@ -55,7 +56,9 @@ ui:
     proxy: ""
   env: []
   service:
-    type: NodePort
+    # ClusterIP keeps the unauthenticated mock private by default. Opt in to a
+    # NodePort or ingress only when that exposure is intentional.
+    type: ClusterIP
     port: 80
   resources: {}
 

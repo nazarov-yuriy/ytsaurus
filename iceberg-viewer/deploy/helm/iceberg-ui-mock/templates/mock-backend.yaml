@@ -2,7 +2,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "iceberg-ui-mock.mock.fullname" . }}-src
+  name: {{ include "iceberg-ui-mock.mock.sourcesName" . }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "iceberg-ui-mock.labels" . | nindent 4 }}
@@ -55,10 +55,10 @@ spec:
             - name: PGPASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.postgres.existingSecret | default (printf "%s-postgres" (include "iceberg-ui-mock.fullname" .)) }}
+                  name: {{ .Values.postgres.existingSecret | default (include "iceberg-ui-mock.postgres.fullname" .) }}
                   key: password
             - name: MOCK_PG_DSN
-              value: "postgresql://{{ .Values.postgres.user }}:$(PGPASSWORD)@{{ include "iceberg-ui-mock.fullname" . }}-postgres.{{ .Release.Namespace }}.svc.cluster.local:5432/{{ .Values.postgres.database }}"
+              value: "postgresql://{{ .Values.postgres.user }}:$(PGPASSWORD)@{{ include "iceberg-ui-mock.postgres.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:5432/{{ .Values.postgres.database }}"
             {{- end }}
           ports:
             - name: http
@@ -90,7 +90,7 @@ spec:
       volumes:
         - name: sources
           configMap:
-            name: {{ include "iceberg-ui-mock.mock.fullname" . }}-src
+            name: {{ include "iceberg-ui-mock.mock.sourcesName" . }}
       {{- end }}
 ---
 apiVersion: v1

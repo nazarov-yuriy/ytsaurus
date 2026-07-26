@@ -28,7 +28,7 @@ spec:
             pathType: {{ .pathType }}
             backend:
               service:
-                name: {{ include "iceberg-ui-mock.fullname" $ }}-ui
+                name: {{ include "iceberg-ui-mock.ui.fullname" $ }}
                 port:
                   name: http
           {{- end }}

@@ -17,9 +17,9 @@ helm test iceberg-ui        # runs the in-cluster smoke test (7 checks)
 ```
 
 No registry access is needed for the backend: by default the chart ships
-`server.py`/`data.py`/`webjson.py` in a ConfigMap and runs them on the stock
-`python:3.12-slim` image. The UI image is pulled from `ghcr.io/ytsaurus/ui`
-(same as the official chart).
+`server.py`/`data.py`/`webjson.py`/`userdb.py` in a ConfigMap and runs them on
+the stock `python:3.12-slim` image. The UI image is pulled from
+`ghcr.io/ytsaurus/ui` (same as the official chart).
 
 ## Layout
 
@@ -32,7 +32,7 @@ No registry access is needed for the backend: by default the chart ships
     empty `yt-interface-secret.json` (required to be loadable at boot even in
     auth-none mode), Deployment mirroring the official chart (supervisord
     command, initContainer copying the secret into `/opt/app/secrets`,
-    `APP_INSTALLATION=custom`, `YT_AUTH_ALLOW_INSECURE=1`), NodePort Service.
+    `APP_INSTALLATION=custom`, `YT_AUTH_ALLOW_INSECURE=1`), ClusterIP Service.
   - `templates/tests/test-smoke.yaml` — `helm test` pod: probes the mock
     directly, both UI boot gates (`cluster-info`, `cluster-params`), an `exists`
     command through the UI tunnel, and a `read_table` web_json response.
@@ -42,17 +42,32 @@ No registry access is needed for the backend: by default the chart ships
   mock so users and login sessions survive pod restarts (table data stays fake).
   In run-from-ConfigMap mode the container pip-installs `psycopg[binary]` at start,
   so it needs egress to PyPI — use the baked image for air-gapped clusters.
-- `docker/mock-backend.Dockerfile` — optional baked image (includes psycopg); set
-  `mockBackend.image.repository` and `mockBackend.sourcesFromConfigMap=false`
-  to use it.
+- `docker/mock-backend.Dockerfile` — optional baked image (includes psycopg).
+  Build and push an explicit tag to a registry reachable by the cluster, then
+  use that same repository and tag:
+
+  ```bash
+  docker build -f deploy/docker/mock-backend.Dockerfile \
+    -t registry.example/iceberg-ui-mock-backend:dev .
+  docker push registry.example/iceberg-ui-mock-backend:dev
+  helm upgrade --install iceberg-ui deploy/helm/iceberg-ui-mock \
+    --set mockBackend.sourcesFromConfigMap=false \
+    --set mockBackend.image.repository=registry.example/iceberg-ui-mock-backend \
+    --set mockBackend.image.tag=dev
+  ```
 - `sync-chart-files.sh` — copies `mock-backend-py/*.py` into the chart's
   `files/`; `--check` fails if they drifted (run it after backend changes).
 
 ## Differences from a real YTsaurus deployment
 
 A production YTsaurus is deployed by the ytsaurus-k8s-operator (StatefulSets for
-masters/nodes, an `http-proxies-lb` Service for proxies) and the UI by
-`ui-helm-chart` pointing `proxy` at that Service with `authentication: basic`.
-This chart collapses the whole cluster into the one-pod mock and uses
-`authentication: none`; swapping `.Values.ui.cluster` back to a real proxy +
-`basic` reproduces the official setup.
+masters/nodes, an `http-proxies-lb` Service for proxies) and the UI by the
+official `ui-helm-chart`. This chart is intentionally scoped to the mock backend
+and uses `authentication: none`; pointing it at a real proxy is not a supported
+production migration. A real deployment also needs correct TLS/`secure`
+configuration, `ALLOW_PASSWORD_AUTH` or OAuth, real robot and interface secrets,
+and deliberate exposure controls. Use the official UI chart for that setup.
+
+The UI Service is a ClusterIP and ingress is disabled by default. Because the
+mock is unauthenticated in the default configuration, enabling a NodePort or
+ingress should be an explicit decision.

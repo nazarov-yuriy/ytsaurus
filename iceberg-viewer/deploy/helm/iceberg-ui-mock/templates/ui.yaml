@@ -1,37 +1,22 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "iceberg-ui-mock.fullname" . }}-ui
+  name: {{ include "iceberg-ui-mock.ui.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "iceberg-ui-mock.labels" . | nindent 4 }}
 data:
   clusters-config.json: |
-    {{ list (dict
-        "id" .Values.ui.cluster.id
-        "name" .Values.ui.cluster.name
-        "description" .Values.ui.cluster.description
-        "environment" .Values.ui.cluster.environment
-        "group" .Values.ui.cluster.group
-        "theme" .Values.ui.cluster.theme
-        "authentication" .Values.ui.cluster.authentication
-        "secure" false
-        "disableHeavyProxies" true
-        "proxy" (include "iceberg-ui-mock.mock.proxyAddress" .)
-      ) | toJson }}
+    {{- include "iceberg-ui-mock.ui.clustersConfig" . | nindent 4 }}
   common.js: |
-    module.exports = {
-      uiSettings: {
-        directDownload: {{ .Values.settings.directDownload | toJson }},
-      },
-    };
+    {{- include "iceberg-ui-mock.ui.commonConfig" . | nindent 4 }}
 ---
 # Auth "none" needs no token data, but the stock config requires the secret
 # file to be loadable at boot (see docs/bootstrap-config.md §2.4).
 apiVersion: v1
 kind: Secret
 metadata:
-  name: {{ include "iceberg-ui-mock.fullname" . }}-ui-secret
+  name: {{ include "iceberg-ui-mock.ui.secretName" . }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "iceberg-ui-mock.labels" . | nindent 4 }}
@@ -42,7 +27,7 @@ stringData:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "iceberg-ui-mock.fullname" . }}-ui
+  name: {{ include "iceberg-ui-mock.ui.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "iceberg-ui-mock.labels" . | nindent 4 }}
@@ -56,6 +41,8 @@ spec:
       labels:
         {{- include "iceberg-ui-mock.labels" . | nindent 8 }}
         app.kubernetes.io/component: ui
+      annotations:
+        checksum/ui-config: {{ printf "%s\n%s" (include "iceberg-ui-mock.ui.clustersConfig" .) (include "iceberg-ui-mock.ui.commonConfig" .) | sha256sum }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -127,10 +114,10 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: {{ include "iceberg-ui-mock.fullname" . }}-ui
+            name: {{ include "iceberg-ui-mock.ui.fullname" . }}
         - name: vault
           secret:
-            secretName: {{ include "iceberg-ui-mock.fullname" . }}-ui-secret
+            secretName: {{ include "iceberg-ui-mock.ui.secretName" . }}
         - name: secrets
           emptyDir:
             sizeLimit: 1Mi
@@ -138,7 +125,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "iceberg-ui-mock.fullname" . }}-ui
+  name: {{ include "iceberg-ui-mock.ui.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "iceberg-ui-mock.labels" . | nindent 4 }}
