@@ -30,6 +30,12 @@ spec:
       annotations:
         # Roll pods when the embedded backend sources change.
         checksum/sources: {{ (.Files.Glob "files/*.py").AsConfig | sha256sum }}
+        {{- if ne (include "iceberg-ui-mock.auth.mode" .) "none" }}
+        checksum/robot-token: {{ include "iceberg-ui-mock.auth.robotToken" . | sha256sum }}
+        {{- end }}
+        {{- if .Values.postgres.enabled }}
+        checksum/postgres-credentials: {{ include "iceberg-ui-mock.postgres.credentialsChecksum" . }}
+        {{- end }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -51,14 +57,31 @@ spec:
           env:
             - name: MOCK_HOST
               value: {{ include "iceberg-ui-mock.mock.proxyAddress" . | quote }}
+            {{- if ne (include "iceberg-ui-mock.auth.mode" .) "none" }}
+            - name: MOCK_REQUIRE_AUTH
+              value: "1"
+            - name: MOCK_ROBOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "iceberg-ui-mock.ui.secretName" . }}
+                  key: robot-token
+            {{- end }}
             {{- if .Values.postgres.enabled }}
             - name: PGPASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.postgres.existingSecret | default (include "iceberg-ui-mock.postgres.fullname" .) }}
                   key: password
+            - name: PGHOST
+              value: {{ printf "%s.%s.svc.cluster.local" (include "iceberg-ui-mock.postgres.fullname" .) .Release.Namespace | quote }}
+            - name: PGPORT
+              value: "5432"
+            - name: PGUSER
+              value: {{ .Values.postgres.user | quote }}
+            - name: PGDATABASE
+              value: {{ .Values.postgres.database | quote }}
             - name: MOCK_PG_DSN
-              value: "postgresql://{{ .Values.postgres.user }}:$(PGPASSWORD)@{{ include "iceberg-ui-mock.postgres.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:5432/{{ .Values.postgres.database }}"
+              value: "connect_timeout=5 application_name=iceberg-ui-mock"
             {{- end }}
           ports:
             - name: http
@@ -68,9 +91,15 @@ spec:
             httpGet:
               path: /ping
               port: http
-          readinessProbe:
+          startupProbe:
             httpGet:
               path: /ping
+              port: http
+            failureThreshold: 60
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /ready
               port: http
           resources:
             {{- toYaml .Values.mockBackend.resources | nindent 12 }}

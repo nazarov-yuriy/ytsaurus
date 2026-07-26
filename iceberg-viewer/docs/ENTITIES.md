@@ -181,7 +181,7 @@ PostgreSQL table `users` (mock-backend-py/userdb.py, active when MOCK_PG_DSN is 
 | Status | Field | Type | Required | Description |
 |--------|-------|------|----------|-------------|
 | 🟢 implemented | `login` | text PK | yes | user login; seeded with iceberg/root, extendable via `userdb.py add-user` |
-| 🟢 implemented | `password_hash` | text | yes | sha256(salt:password) hex; plaintext is never stored |
+| 🟢 implemented | `password_hash` | text | yes | versioned PBKDF2-HMAC-SHA256 digest (600,000 iterations); legacy sha256(salt:password) rows are upgraded after successful login; plaintext is never stored |
 | 🟢 implemented | `salt` | text | yes | per-user random salt (hex) |
 | 🟡 constant | `created_at` | timestamptz | yes | defaulted by the database |
 

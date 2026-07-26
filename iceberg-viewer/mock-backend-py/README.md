@@ -9,8 +9,14 @@ python3 server.py 8000
 # then point ytsaurus-ui's clusters-config.json at localhost:8000, same as the Node mock
 ```
 
-Env vars: `MOCK_RECORD=<path>` appends request/response JSONL (same format as Node);
-`MOCK_PG_DSN=postgresql://...` switches user/session storage to PostgreSQL.
+Environment:
+
+- `MOCK_RECORD=<path>` appends request/response JSONL (same format as Node).
+- `MOCK_PG_DSN=<libpq conninfo>` switches user/session storage to PostgreSQL.
+- `MOCK_REQUIRE_AUTH=1` rejects missing/expired cookies and unknown OAuth
+  tokens instead of using the anonymous `iceberg` fallback.
+- `MOCK_ROBOT_TOKEN=<token>` supplies the one OAuth robot token accepted in
+  strict mode; it maps to the `iceberg` user.
 
 ## User management (PostgreSQL)
 
@@ -21,22 +27,29 @@ Node backend and all parity tests run in the fallback mode.
 
 - Schema (auto-created on start): `users(login PK, salt, password_hash, created_at)`
   and `sessions(cookie PK, login FK, created_at, expires_at)`. Passwords are
-  stored salted+SHA-256, never in plaintext; sessions expire after 30 days,
-  matching the `YTCypressCookie` lifetime.
+  stored using PBKDF2-HMAC-SHA256 with 600,000 iterations and 128-bit salts,
+  never in plaintext. Existing salted-SHA256 rows remain valid and are upgraded
+  after a successful login. Sessions expire after 30 days, matching the
+  `YTCypressCookie` lifetime.
 - With PostgreSQL, password logins and their cookies survive server restarts,
-  and users added out-of-band are visible without a restart:
+  connection loss is recovered lazily, and users added out-of-band are visible
+  without a restart:
   `MOCK_PG_DSN=... python3 userdb.py add-user <login> <password>` (also `list-users`).
+- `/ping` reports that the process is alive; `/ready` also checks PostgreSQL and
+  returns 503 while storage is unavailable.
 - Requires `psycopg` (`pip install "psycopg[binary]"`) only in PG mode.
 - Tests: `MOCK_PG_TEST_DSN=... python3 ../tests/test_user_persistence.py`
-  (restart-survival, CLI-added users, hashed-at-rest); the whole
+  (isolated-schema restart/reconnect, CLI users, hash migration); the whole
   `tests/test_protocol.py` suite also passes with `MOCK_PG_DSN` set — the wire
   behavior is identical in both storage modes.
+- `python3 ../tests/test_userdb.py` always runs without PostgreSQL and covers
+  hash parsing/migration plus reconnect behavior with a fake driver.
 
 ## Files (1:1 with the Node implementation)
 
 - `server.py` ← `server.js` — routing, auth (Basic `/login`, `YTCypressCookie`
-  sessions, CSRF, anonymous fallback), command dispatch, error envelopes,
-  v4 `{value}` wrapping, typed annotation.
+  sessions, CSRF, optional strict credentials and robot token), command
+  dispatch, error envelopes, v4 `{value}` wrapping, typed annotation.
 - `data.py` ← `data.js` — the in-RAM cluster. Node-id sequence, timestamps, and
   generated rows are identical to the Node version. **Swap this file for an
   Apache Iceberg catalog implementation; everything else stays.**
@@ -50,7 +63,7 @@ Verified equivalent to the Node backend by:
 1. `../recordings/replay-diff.py` — replays all 165 recorded UI requests plus 26
    edge cases against both servers side by side and diffs status, body, and YT
    headers: **191/191 identical**.
-2. `../tests/test_protocol.py` — 30 documented-behavior conformance tests run
+2. `../tests/test_protocol.py` — 39 documented-behavior conformance tests run
    against both backends.
 3. Headless-Chromium runs of the real UI against this server: repeated runs with
    zero request failures and zero page errors.
@@ -73,3 +86,6 @@ Found the hard way while making the UI run cleanly on this server:
   `Transfer-Encoding: chunked`, which `BaseHTTPRequestHandler` does not decode.
 - **JS semantics in encoders**: `String(3.0) === "3"`, and an empty `$attributes`
   object is truthy in JS (kept on the wire) but falsy in Python.
+
+This is still a development mock without login rate limiting, not a production
+identity service.

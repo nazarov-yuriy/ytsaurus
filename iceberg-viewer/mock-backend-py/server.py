@@ -10,6 +10,7 @@ import binascii
 import json
 import os
 import re
+import secrets
 import socket
 import sys
 from datetime import datetime, timedelta, timezone
@@ -24,6 +25,8 @@ from webjson import annotated, typed_annotate, web_json_body
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
 HOST = os.environ.get('MOCK_HOST', f'localhost:{PORT}')
 RECORD_PATH = os.environ.get('MOCK_RECORD')
+REQUIRE_AUTH = bool(os.environ.get('MOCK_REQUIRE_AUTH'))
+ROBOT_TOKEN = os.environ.get('MOCK_ROBOT_TOKEN', '')
 
 
 def log(*args):
@@ -51,11 +54,18 @@ def csrf_token_for(user):
 
 def authenticate(headers):
     cookies = dict(p.strip().split('=', 1) for p in (headers.get('Cookie') or '').split(';') if '=' in p)
-    if user := userdb.session_user(cookies.get('YTCypressCookie')):
+    cookie = cookies.get('YTCypressCookie')
+    if cookie and (user := userdb.session_user(cookie)):
         return {'user': user, 'via_cookie': True}
     token = (headers.get('Authorization') or '').removeprefix('OAuth ').strip()
     if headers.get('Authorization', '').startswith('OAuth ') and token:
+        if REQUIRE_AUTH:
+            if ROBOT_TOKEN and secrets.compare_digest(token, ROBOT_TOKEN):
+                return {'user': 'iceberg', 'via_cookie': False}
+            return None
         return {'user': token if userdb.user_exists(token) else 'iceberg', 'via_cookie': False}
+    if REQUIRE_AUTH:
+        return None
     return {'user': 'iceberg', 'via_cookie': False}  # auth "none" sends no credentials
 
 
@@ -319,6 +329,8 @@ class Handler(BaseHTTPRequestHandler):
     def route(self, p, query, cors):
         if p == '/ping':
             return self.send_json(200, {}, cors)
+        if p == '/ready':
+            return self.send_json(200 if userdb.healthy() else 503, {}, cors)
         if p in ('/version', '/service/version'):
             return self.send_body(200, b'mock-proxy-1.0.0', {'Content-Type': 'text/plain', **cors})
         if p == '/hosts/all':
@@ -364,6 +376,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if p == '/auth/whoami':  # must succeed with truthy csrf_token even without credentials
             auth = authenticate(self.headers)
+            if not auth:
+                return self.send_yt_error(401, yt_error(900, 'Authentication failed'), cors)
             return self.send_json(200, {
                 'login': auth['user'],
                 'realm': 'cypress_cookie' if auth['via_cookie'] else 'mock',
@@ -372,6 +386,8 @@ class Handler(BaseHTTPRequestHandler):
         if m := re.match(r'^/api/(v3|v4)/(\w+)$', p):
             version, command = m.groups()
             auth = authenticate(self.headers)
+            if not auth:
+                return self.send_yt_error(401, yt_error(900, 'Authentication failed'), cors)
             if not check_csrf(self.command, self.headers, auth):
                 return self.send_yt_error(401, yt_error(901, 'CSRF token mismatch'), cors)
             params = self.collect_params(query, self.body_buf)

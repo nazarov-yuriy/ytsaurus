@@ -25,26 +25,56 @@ spec:
           curl -sf "$MOCK/version" | grep -E '[0-9]+\.[0-9]+\.[0-9]+'
 
           echo "2. mock /auth/whoami returns a csrf token"
+          {{- if ne (include "iceberg-ui-mock.auth.mode" .) "none" }}
+          curl -sf -X POST -u iceberg:iceberg -c /tmp/mock-cookies "$MOCK/login"
+          curl -sf -b /tmp/mock-cookies "$MOCK/auth/whoami" | grep csrf_token
+          {{- else }}
           curl -sf "$MOCK/auth/whoami" | grep csrf_token
+          {{- end }}
 
           echo "3. UI serves the app shell"
+          {{- if ne (include "iceberg-ui-mock.auth.mode" .) "none" }}
+          curl -sf -X POST -H 'Content-Type: application/json' \
+            -d '{"username":"iceberg","password":"iceberg"}' \
+            -c /tmp/ui-cookies -b /tmp/ui-cookies \
+            "$UI/api/yt/$CLUSTER/login"
+          curl -sf -b /tmp/ui-cookies "$UI/$CLUSTER/navigation" -o /dev/null
+          {{- else }}
           curl -sf "$UI/$CLUSTER/navigation" -o /dev/null
+          {{- end }}
 
           echo "4. UI cluster-info gate (version + csrf_token)"
+          {{- if ne (include "iceberg-ui-mock.auth.mode" .) "none" }}
+          INFO=$(curl -sf -b /tmp/ui-cookies "$UI/api/cluster-info/$CLUSTER")
+          CSRF=$(printf '%s' "$INFO" | sed -n 's/.*"csrf_token":"\([^"]*\)".*/\1/p')
+          test -n "$CSRF"
+          {{- else }}
           INFO=$(curl -sf "$UI/api/cluster-info/$CLUSTER")
+          {{- end }}
           echo "$INFO" | grep csrf_token
           echo "$INFO" | grep version
 
           echo "5. UI cluster-params gate (mediumList without error)"
+          {{- if ne (include "iceberg-ui-mock.auth.mode" .) "none" }}
+          curl -sf -b /tmp/ui-cookies "$UI/api/cluster-params/$CLUSTER" \
+            | grep -v '"mediumList":{"error"' | grep mediumList
+          {{- else }}
           curl -sf "$UI/api/cluster-params/$CLUSTER" | grep -v '"mediumList":{"error"' | grep mediumList
+          {{- end }}
 
           echo "6. YT command through the UI tunnel"
           curl -sf -X POST -H 'Content-Type: application/json' \
+            {{- if ne (include "iceberg-ui-mock.auth.mode" .) "none" }}
+            -b /tmp/ui-cookies -H "X-Csrf-Token: $CSRF" \
+            {{- end }}
             -d '{"path":"//home/iceberg/warehouse"}' \
             "$UI/api/yt/$CLUSTER/api/v3/exists" | grep -x true
 
           echo "7. read_table web_json returns rows"
           curl -sf -X POST -H 'Content-Type: application/json' \
+            {{- if ne (include "iceberg-ui-mock.auth.mode" .) "none" }}
+            -b /tmp/ui-cookies -H "X-Csrf-Token: $CSRF" \
+            {{- end }}
             -d '{"path":"//home/iceberg/warehouse/trips[#0:#3]","output_format":{"$value":"web_json","$attributes":{"max_selected_column_count":50}}}' \
             "$UI/api/yt/$CLUSTER/api/v3/read_table" | grep all_column_names
 

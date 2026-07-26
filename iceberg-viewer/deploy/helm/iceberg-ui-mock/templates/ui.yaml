@@ -11,8 +11,8 @@ data:
   common.js: |
     {{- include "iceberg-ui-mock.ui.commonConfig" . | nindent 4 }}
 ---
-# Auth "none" needs no token data, but the stock config requires the secret
-# file to be loadable at boot (see docs/bootstrap-config.md §2.4).
+# The stock config requires this file to be loadable even in auth-none mode.
+# Authenticated mode also shares the robot token with the mock backend.
 apiVersion: v1
 kind: Secret
 metadata:
@@ -22,7 +22,10 @@ metadata:
     {{- include "iceberg-ui-mock.labels" . | nindent 4 }}
 type: Opaque
 stringData:
-  yt-interface-secret.json: "{}"
+  yt-interface-secret.json: {{ include "iceberg-ui-mock.ui.interfaceSecret" . | quote }}
+  {{- if ne (include "iceberg-ui-mock.auth.mode" .) "none" }}
+  robot-token: {{ include "iceberg-ui-mock.auth.robotToken" . | quote }}
+  {{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -43,6 +46,7 @@ spec:
         app.kubernetes.io/component: ui
       annotations:
         checksum/ui-config: {{ printf "%s\n%s" (include "iceberg-ui-mock.ui.clustersConfig" .) (include "iceberg-ui-mock.ui.commonConfig" .) | sha256sum }}
+        checksum/ui-secret: {{ include "iceberg-ui-mock.ui.interfaceSecret" . | sha256sum }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -74,6 +78,10 @@ spec:
               value: custom
             - name: YT_AUTH_ALLOW_INSECURE
               value: "1"
+            {{- if ne (include "iceberg-ui-mock.auth.mode" .) "none" }}
+            - name: ALLOW_PASSWORD_AUTH
+              value: "1"
+            {{- end }}
             {{- with .Values.ui.env }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

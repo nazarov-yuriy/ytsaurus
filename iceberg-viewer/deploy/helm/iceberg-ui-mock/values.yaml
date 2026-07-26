@@ -9,7 +9,7 @@ mockBackend:
     repository: python
     tag: "3.12-slim"
     pullPolicy: IfNotPresent
-  # When true, mount server.py/data.py/webjson.py from the chart's ConfigMap.
+  # When true, mount server.py/data.py/webjson.py/userdb.py from the chart's ConfigMap.
   # Set to false when image.repository already contains them (baked image).
   sourcesFromConfigMap: true
   service:
@@ -29,12 +29,23 @@ postgres:
     pullPolicy: IfNotPresent
   database: mockusers
   user: mock
-  # Change this or point existingSecret at a Secret with key "password".
+  # database and user initialize a new PVC; migrate explicitly instead of
+  # changing them after PostgreSQL has initialized persistent storage.
+  # The chart reconciles this role password on every PostgreSQL pod start.
+  # Alternatively point existingSecret at a Secret with key "password".
   password: mock-password
   existingSecret: ""
+  # Helm cannot observe out-of-band Secret updates. Bump this value in the same
+  # upgrade that rotates an existingSecret so PostgreSQL and the backend restart.
+  existingSecretRevision: ""
   storage: 1Gi
   storageClassName: ""
   resources: {}
+
+# Robot credentials used only for authenticated mock deployments. The same token
+# is mounted into the UI and backend; replace the default before exposing the UI.
+auth:
+  robotToken: mock-robot-token
 
 # ytsaurus-ui, deployed the same way as the official ui-helm-chart.
 ui:
@@ -52,7 +63,9 @@ ui:
     environment: development
     group: Mock
     theme: grapefruit
-    authentication: none
+    # Empty selects "basic" with PostgreSQL and "none" otherwise. Set an explicit
+    # value to override that behavior (including "none" to opt out with PG).
+    authentication: ""
     proxy: ""
   env: []
   service:

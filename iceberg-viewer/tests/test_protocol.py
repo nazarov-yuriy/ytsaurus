@@ -25,22 +25,45 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PORTS = {'node': 8011, 'python': 8012}
+STRICT_PORTS = {'node': 8013, 'python': 8014}
 _only = os.environ.get('BACKEND')
 BACKENDS = {k: v for k, v in PORTS.items() if not _only or k == _only}
+STRICT_BACKENDS = {k: v for k, v in STRICT_PORTS.items() if not _only or k == _only}
 
 _procs = []
 
 
 def setUpModule():
+    anonymous_env = {
+        key: value for key, value in os.environ.items()
+        if key not in ('MOCK_REQUIRE_AUTH', 'MOCK_ROBOT_TOKEN')
+    }
     if 'node' in BACKENDS:
         _procs.append(subprocess.Popen(
             ['node', str(ROOT / 'mock-backend' / 'server.js'), str(PORTS['node'])],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+            env=anonymous_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
     if 'python' in BACKENDS:
         _procs.append(subprocess.Popen(
             [sys.executable, str(ROOT / 'mock-backend-py' / 'server.py'), str(PORTS['python'])],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
-    for port in BACKENDS.values():
+            env=anonymous_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+    strict_env = {
+        key: value for key, value in anonymous_env.items()
+        if key != 'MOCK_PG_DSN'
+    }
+    strict_env.update({
+        'MOCK_REQUIRE_AUTH': '1',
+        'MOCK_ROBOT_TOKEN': 'protocol-test-robot',
+    })
+    if 'node' in STRICT_BACKENDS:
+        _procs.append(subprocess.Popen(
+            ['node', str(ROOT / 'mock-backend' / 'server.js'), str(STRICT_PORTS['node'])],
+            env=strict_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+    if 'python' in STRICT_BACKENDS:
+        _procs.append(subprocess.Popen(
+            [sys.executable, str(ROOT / 'mock-backend-py' / 'server.py'),
+             str(STRICT_PORTS['python'])],
+            env=strict_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+    for port in (*BACKENDS.values(), *STRICT_BACKENDS.values()):
         for _ in range(50):
             try:
                 urllib.request.urlopen(f'http://localhost:{port}/ping', timeout=1)
@@ -54,6 +77,8 @@ def setUpModule():
 def tearDownModule():
     for p in _procs:
         p.terminate()
+    for p in _procs:
+        p.wait(timeout=10)
 
 
 def call(port, method, path, body=None, headers=None):
@@ -87,6 +112,12 @@ class Both(unittest.TestCase):
 
 
 class TestInfrastructure(Both):
+    def test_readiness_endpoint_is_public(self):
+        for port in self.each():
+            status, body, _ = call(port, 'GET', '/ready')
+            self.assertEqual(status, 200)
+            self.assertEqual(body, {})
+
     def test_version_matches_ui_regex(self):
         # bootstrap-config.md §6: the UI extracts /(\d+)\.(\d+)\.(\d+)/ from the
         # plain-text /version body; no match => PRELOAD_ERROR.CONNECTION, page never mounts.
@@ -232,6 +263,75 @@ class TestAuth(Both):
             status, _, _ = call(port, 'GET',
                                 '/api/v3/get?path=//tmp/@type', headers={'Cookie': cookie})
             self.assertEqual(status, 200)
+
+
+class TestStrictAuth(Both):
+    """Authentication-required mode used by the PostgreSQL-enabled chart."""
+
+    def each(self):
+        for name, port in STRICT_BACKENDS.items():
+            with self.subTest(backend=name):
+                yield port
+
+    def test_readiness_stays_public(self):
+        for port in self.each():
+            status, body, _ = call(port, 'GET', '/ready')
+            self.assertEqual(status, 200)
+            self.assertEqual(body, {})
+
+    def test_missing_and_invalid_credentials_are_rejected(self):
+        cases = [
+            {},
+            {'Cookie': 'YTCypressCookie=expired'},
+            {'Authorization': 'OAuth wrong-robot-token'},
+        ]
+        for port in self.each():
+            for headers in cases:
+                with self.subTest(headers=headers):
+                    status, body, _ = call(port, 'GET', '/auth/whoami', headers=headers)
+                    self.assertEqual(status, 401)
+                    self.assertEqual(body['code'], 900)
+            status, body, _ = call(
+                port, 'POST', '/api/v3/exists', body={'path': '//tmp'})
+            self.assertEqual(status, 401)
+            self.assertEqual(body['code'], 900)
+
+    def test_robot_token_authenticates_without_csrf(self):
+        headers = {'Authorization': 'OAuth protocol-test-robot'}
+        for port in self.each():
+            status, who, _ = call(port, 'GET', '/auth/whoami', headers=headers)
+            self.assertEqual(status, 200)
+            self.assertEqual(who['login'], 'iceberg')
+            self.assertEqual(who['realm'], 'mock')
+            status, exists, _ = call(
+                port, 'POST', '/api/v3/exists',
+                body={'path': '//tmp'}, headers=headers)
+            self.assertEqual(status, 200)
+            self.assertIs(exists, True)
+
+    def test_login_cookie_still_requires_csrf(self):
+        basic = 'Basic ' + base64.b64encode(b'iceberg:iceberg').decode()
+        for port in self.each():
+            status, _, headers = call(
+                port, 'POST', '/login', headers={'Authorization': basic})
+            self.assertEqual(status, 200)
+            cookie = headers['Set-Cookie'].split(';', 1)[0]
+            status, who, _ = call(
+                port, 'GET', '/auth/whoami', headers={'Cookie': cookie})
+            self.assertEqual(status, 200)
+            self.assertEqual(who['login'], 'iceberg')
+
+            status, body, _ = call(
+                port, 'POST', '/api/v3/exists', body={'path': '//tmp'},
+                headers={'Cookie': cookie})
+            self.assertEqual(status, 401)
+            self.assertEqual(body['code'], 901)
+
+            status, exists, _ = call(
+                port, 'POST', '/api/v3/exists', body={'path': '//tmp'},
+                headers={'Cookie': cookie, 'X-Csrf-Token': who['csrf_token']})
+            self.assertEqual(status, 200)
+            self.assertIs(exists, True)
 
 
 class TestCypressCommands(Both):

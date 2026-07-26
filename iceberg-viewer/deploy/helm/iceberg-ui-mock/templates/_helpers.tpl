@@ -77,6 +77,48 @@ app.kubernetes.io/component: postgres
 {{ include "iceberg-ui-mock.suffixedFullname" (list . "-smoke-test") }}
 {{- end }}
 
+{{/*
+An explicit cluster authentication value wins. Otherwise PostgreSQL enables
+password auth automatically; the all-in-RAM default remains anonymous.
+*/}}
+{{- define "iceberg-ui-mock.auth.mode" -}}
+{{- if .Values.ui.cluster.authentication -}}
+{{- .Values.ui.cluster.authentication -}}
+{{- else if .Values.postgres.enabled -}}
+basic
+{{- else -}}
+none
+{{- end -}}
+{{- end }}
+
+{{- define "iceberg-ui-mock.auth.robotToken" -}}
+{{- required "auth.robotToken must be non-empty when authentication is enabled" .Values.auth.robotToken -}}
+{{- end }}
+
+{{- define "iceberg-ui-mock.ui.interfaceSecret" -}}
+{{- if ne (include "iceberg-ui-mock.auth.mode" .) "none" -}}
+{{ dict "oauthToken" (include "iceberg-ui-mock.auth.robotToken" .) | toJson }}
+{{- else -}}
+{}
+{{- end -}}
+{{- end }}
+
+{{- define "iceberg-ui-mock.postgres.password" -}}
+{{- required "postgres.password must be non-empty when postgres.enabled=true and existingSecret is unset" .Values.postgres.password -}}
+{{- end }}
+
+{{/*
+Roll both consumers when chart-managed credentials change. Helm cannot inspect
+an external Secret, so users bump existingSecretRevision after rotating it.
+*/}}
+{{- define "iceberg-ui-mock.postgres.credentialsChecksum" -}}
+{{- if .Values.postgres.existingSecret -}}
+{{- printf "%s:%s" .Values.postgres.existingSecret .Values.postgres.existingSecretRevision | sha256sum -}}
+{{- else -}}
+{{- printf "%s:%s" (include "iceberg-ui-mock.postgres.fullname" .) (include "iceberg-ui-mock.postgres.password" .) | sha256sum -}}
+{{- end -}}
+{{- end }}
+
 {{/* The UI proxy address. Port 80 is implicit; other Service ports are explicit. */}}
 {{- define "iceberg-ui-mock.mock.proxyAddress" -}}
 {{- if .Values.ui.cluster.proxy }}
@@ -99,7 +141,7 @@ app.kubernetes.io/component: postgres
     "environment" .Values.ui.cluster.environment
     "group" .Values.ui.cluster.group
     "theme" .Values.ui.cluster.theme
-    "authentication" .Values.ui.cluster.authentication
+    "authentication" (include "iceberg-ui-mock.auth.mode" .)
     "secure" false
     "disableHeavyProxies" true
     "proxy" (include "iceberg-ui-mock.mock.proxyAddress" .)

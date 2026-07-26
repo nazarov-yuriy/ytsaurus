@@ -14,6 +14,9 @@ from datetime import datetime, timedelta, timezone
 DSN = os.environ.get('MOCK_PG_DSN')
 SESSION_TTL = timedelta(days=30)
 SEED_USERS = {'iceberg': 'iceberg', 'root': ''}
+PASSWORD_SCHEME = 'pbkdf2_sha256'
+PBKDF2_ITERATIONS = 600_000
+PBKDF2_MAX_VERIFY_ITERATIONS = 5_000_000
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -29,8 +32,47 @@ CREATE TABLE IF NOT EXISTS sessions (
 """
 
 
-def _hash(password, salt):
+def _legacy_hash(password, salt):
     return hashlib.sha256(f'{salt}:{password}'.encode()).hexdigest()
+
+
+def _hash(password, salt, iterations=PBKDF2_ITERATIONS):
+    digest = hashlib.pbkdf2_hmac(
+        'sha256', password.encode(), salt.encode(), iterations)
+    return f'{PASSWORD_SCHEME}${iterations}${digest.hex()}'
+
+
+def _password_matches(password, salt, password_hash):
+    if isinstance(password_hash, str) and password_hash.startswith(f'{PASSWORD_SCHEME}$'):
+        try:
+            scheme, raw_iterations, digest = password_hash.split('$')
+            iterations = int(raw_iterations)
+            if (scheme != PASSWORD_SCHEME
+                    or not 0 < iterations <= PBKDF2_MAX_VERIFY_ITERATIONS
+                    or len(bytes.fromhex(digest)) != 32):
+                return False
+            expected = _hash(password, salt, iterations)
+        except (TypeError, ValueError):
+            return False
+        return secrets.compare_digest(password_hash, expected)
+
+    # Compatibility with hashes created before the PBKDF2 migration.
+    if not isinstance(password_hash, str) or len(password_hash) != 64:
+        return False
+    return secrets.compare_digest(password_hash, _legacy_hash(password, salt))
+
+
+def _password_needs_upgrade(password_hash):
+    try:
+        scheme, raw_iterations, _ = password_hash.split('$')
+        return scheme != PASSWORD_SCHEME or int(raw_iterations) < PBKDF2_ITERATIONS
+    except (AttributeError, TypeError, ValueError):
+        return True
+
+
+def _new_password(password):
+    salt = secrets.token_hex(16)
+    return salt, _hash(password, salt)
 
 
 def _new_cookie(login):
@@ -40,31 +82,82 @@ def _new_cookie(login):
 if DSN:
     import psycopg
 
-    _conn = psycopg.connect(DSN, autocommit=True)
-    _lock = threading.Lock()  # one shared connection; serialize queries
-    with _lock:
-        _conn.execute(SCHEMA)
-        for login, password in SEED_USERS.items():
-            salt = secrets.token_hex(8)
-            _conn.execute(
-                'INSERT INTO users (login, salt, password_hash) VALUES (%s, %s, %s)'
-                ' ON CONFLICT (login) DO NOTHING', (login, salt, _hash(password, salt)))
+    _conn = None
+    _lock = threading.RLock()  # serialize use and replacement of the connection
+    _RECONNECT_ERRORS = (psycopg.OperationalError, psycopg.InterfaceError)
 
-    def _query(sql, params=()):
+    def _connect():
+        conn = psycopg.connect(DSN, autocommit=True)
+        try:
+            conn.execute(SCHEMA)
+            for login, password in SEED_USERS.items():
+                salt, password_hash = _new_password(password)
+                conn.execute(
+                    'INSERT INTO users (login, salt, password_hash) VALUES (%s, %s, %s)'
+                    ' ON CONFLICT (login) DO NOTHING',
+                    (login, salt, password_hash))
+        except Exception:
+            conn.close()
+            raise
+        return conn
+
+    def _discard_connection():
+        global _conn
+        if _conn is not None:
+            try:
+                _conn.close()
+            except Exception:
+                pass
+        _conn = None
+
+    def _query(sql, params=(), retry=True):
+        global _conn
         with _lock:
-            return _conn.execute(sql, params).fetchall()
+            attempts = 2 if retry else 1
+            for attempt in range(attempts):
+                try:
+                    if _conn is None or _conn.closed:
+                        _conn = _connect()
+                    return _conn.execute(sql, params).fetchall()
+                except _RECONNECT_ERRORS:
+                    _discard_connection()
+                    if attempt + 1 == attempts:
+                        raise
+
+    def healthy():
+        try:
+            return bool(_query('SELECT 1'))
+        except psycopg.Error:
+            return False
 
     def user_exists(login):
         return bool(_query('SELECT 1 FROM users WHERE login = %s', (login,)))
 
     def verify(login, password):
         rows = _query('SELECT salt, password_hash FROM users WHERE login = %s', (login,))
-        return bool(rows) and secrets.compare_digest(rows[0][1], _hash(password, rows[0][0]))
+        if not rows:
+            return False
+
+        salt, password_hash = rows[0]
+        if not _password_matches(password, salt, password_hash):
+            return False
+        if _password_needs_upgrade(password_hash):
+            new_salt, new_hash = _new_password(password)
+            upgraded = _query(
+                'UPDATE users SET salt = %s, password_hash = %s'
+                ' WHERE login = %s AND salt = %s AND password_hash = %s'
+                ' RETURNING login',
+                (new_salt, new_hash, login, salt, password_hash),
+                retry=False)
+            if not upgraded:
+                return False
+        return True
 
     def create_session(login):
         cookie = _new_cookie(login)
         _query('INSERT INTO sessions (cookie, login, expires_at) VALUES (%s, %s, %s) RETURNING cookie',
-               (cookie, login, datetime.now(timezone.utc) + SESSION_TTL))
+               (cookie, login, datetime.now(timezone.utc) + SESSION_TTL),
+               retry=False)
         return cookie
 
     def session_user(cookie):
@@ -72,39 +165,59 @@ if DSN:
         return rows[0][0] if rows else None
 
     def set_password(login, password):
-        salt = secrets.token_hex(8)
+        salt, password_hash = _new_password(password)
         _query('INSERT INTO users (login, salt, password_hash) VALUES (%s, %s, %s)'
-               ' ON CONFLICT (login) DO UPDATE SET salt = %s, password_hash = %s RETURNING login',
-               (login, salt, _hash(password, salt), salt, _hash(password, salt)))
+               ' ON CONFLICT (login) DO UPDATE'
+               ' SET salt = EXCLUDED.salt, password_hash = EXCLUDED.password_hash'
+               ' RETURNING login',
+               (login, salt, password_hash),
+               retry=False)
 
     def list_users():
         return [r[0] for r in _query('SELECT login FROM users ORDER BY login')]
 
 else:  # in-RAM fallback: same behavior, nothing persisted
-    _users = {login: (secrets.token_hex(8), None) for login in SEED_USERS}
-    _users = {login: (salt, _hash(SEED_USERS[login], salt)) for login, (salt, _) in _users.items()}
+    _users = {}
+    for _login, _password in SEED_USERS.items():
+        _users[_login] = _new_password(_password)
     _sessions = {}
+    _lock = threading.RLock()
+
+    def healthy():
+        return True
 
     def user_exists(login):
-        return login in _users
+        with _lock:
+            return login in _users
 
     def verify(login, password):
-        return login in _users and _users[login][1] == _hash(password, _users[login][0])
+        with _lock:
+            if login not in _users:
+                return False
+            salt, password_hash = _users[login]
+            if not _password_matches(password, salt, password_hash):
+                return False
+            if _password_needs_upgrade(password_hash):
+                _users[login] = _new_password(password)
+            return True
 
     def create_session(login):
         cookie = _new_cookie(login)
-        _sessions[cookie] = login
+        with _lock:
+            _sessions[cookie] = login
         return cookie
 
     def session_user(cookie):
-        return _sessions.get(cookie)
+        with _lock:
+            return _sessions.get(cookie)
 
     def set_password(login, password):
-        salt = secrets.token_hex(8)
-        _users[login] = (salt, _hash(password, salt))
+        with _lock:
+            _users[login] = _new_password(password)
 
     def list_users():
-        return sorted(_users)
+        with _lock:
+            return sorted(_users)
 
 
 if __name__ == '__main__':

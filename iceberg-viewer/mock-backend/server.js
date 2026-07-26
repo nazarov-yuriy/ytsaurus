@@ -9,6 +9,7 @@
 
 const http = require('http');
 const fs = require('fs');
+const crypto = require('crypto');
 const {URL} = require('url');
 const {CLUSTER_ID, resolve, users} = require('./data');
 const {annotated, typedAnnotate, webJsonBody} = require('./webjson');
@@ -17,6 +18,8 @@ const PORT = Number(process.argv[2] || 8000);
 const HOST = process.env.MOCK_HOST || `localhost:${PORT}`;
 // When MOCK_RECORD is set, every request/response pair is appended as JSONL.
 const RECORD_PATH = process.env.MOCK_RECORD || null;
+const REQUIRE_AUTH = Boolean(process.env.MOCK_REQUIRE_AUTH);
+const ROBOT_TOKEN = process.env.MOCK_ROBOT_TOKEN || '';
 
 function record(entry) {
   if (!RECORD_PATH) return;
@@ -123,6 +126,12 @@ function csrfTokenFor(user) {
   return `csrf-${user}`;
 }
 
+function tokenMatches(actual, expected) {
+  const actualDigest = crypto.createHash('sha256').update(actual).digest();
+  const expectedDigest = crypto.createHash('sha256').update(expected).digest();
+  return crypto.timingSafeEqual(actualDigest, expectedDigest);
+}
+
 function authenticate(req) {
   // Cookie-based (password login flow)
   const cookies = Object.fromEntries(
@@ -134,8 +143,15 @@ function authenticate(req) {
   const auth = req.headers.authorization || '';
   if (auth.startsWith('OAuth ')) {
     const token = auth.slice(6).trim();
+    if (REQUIRE_AUTH) {
+      if (token && ROBOT_TOKEN && tokenMatches(token, ROBOT_TOKEN)) {
+        return {user: 'iceberg', viaCookie: false};
+      }
+      return null;
+    }
     if (token) return {user: token in users ? token : 'iceberg', viaCookie: false};
   }
+  if (REQUIRE_AUTH) return null;
   // Anonymous access: with `authentication: "none"` the UI node server sends no
   // credentials at all (mirrors require_authentication=false → root login).
   return {user: 'iceberg', viaCookie: false, anonymous: true};
@@ -347,7 +363,7 @@ const server = http.createServer(async (req, res) => {
 
   try {
     // ---- infrastructure endpoints ----
-    if (p === '/ping') return void sendJson(res, 200, {}, cors);
+    if (p === '/ping' || p === '/ready') return void sendJson(res, 200, {}, cors);
     if (p === '/version' || p === '/service/version') {
       res.writeHead(200, {'Content-Type': 'text/plain', ...cors});
       return void res.end('mock-proxy-1.0.0');
@@ -419,7 +435,10 @@ const server = http.createServer(async (req, res) => {
     // Must succeed with a truthy csrf_token even without credentials (auth "none" mode).
     if (p === '/auth/whoami') {
       const auth = authenticate(req);
-      const user = auth ? auth.user : 'iceberg';
+      if (!auth) {
+        return void sendYtError(res, 401, ytError(900, 'Authentication failed'), cors);
+      }
+      const user = auth.user;
       return void sendJson(res, 200, {
         login: user,
         realm: auth && auth.viaCookie ? 'cypress_cookie' : 'mock',

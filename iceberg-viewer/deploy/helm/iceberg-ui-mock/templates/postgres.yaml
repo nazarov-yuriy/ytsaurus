@@ -9,7 +9,7 @@ metadata:
     {{- include "iceberg-ui-mock.labels" . | nindent 4 }}
 type: Opaque
 stringData:
-  password: {{ .Values.postgres.password | quote }}
+  password: {{ include "iceberg-ui-mock.postgres.password" . | quote }}
 ---
 {{- end }}
 apiVersion: v1
@@ -47,6 +47,8 @@ spec:
       labels:
         {{- include "iceberg-ui-mock.labels" . | nindent 8 }}
         app.kubernetes.io/component: postgres
+      annotations:
+        checksum/postgres-credentials: {{ include "iceberg-ui-mock.postgres.credentialsChecksum" . }}
     spec:
       containers:
         - name: postgres
@@ -64,6 +66,30 @@ spec:
                   key: password
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
+          lifecycle:
+            postStart:
+              exec:
+                command:
+                  - /bin/sh
+                  - -ec
+                  - |
+                    # POSTGRES_PASSWORD initializes an empty data directory only.
+                    # Reconcile an existing role through the trusted local socket.
+                    for attempt in $(seq 1 60); do
+                      if psql --host=/var/run/postgresql \
+                          --username="$POSTGRES_USER" \
+                          --dbname="$POSTGRES_DB" \
+                          --set=ON_ERROR_STOP=1 <<'SQL'
+                    \getenv new_password POSTGRES_PASSWORD
+                    ALTER ROLE CURRENT_USER WITH PASSWORD :'new_password';
+                    SQL
+                      then
+                        exit 0
+                      fi
+                      sleep 2
+                    done
+                    echo "failed to reconcile the PostgreSQL role password" >&2
+                    exit 1
           ports:
             - name: postgres
               containerPort: 5432

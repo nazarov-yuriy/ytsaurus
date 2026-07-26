@@ -464,7 +464,7 @@
         "type": "text",
         "required": true,
         "support_status": "implemented",
-        "description": "sha256(salt:password) hex; plaintext is never stored"
+        "description": "versioned PBKDF2-HMAC-SHA256 digest (600,000 iterations); legacy sha256(salt:password) rows are upgraded after successful login; plaintext is never stored"
       },
       {
         "name": "created_at",

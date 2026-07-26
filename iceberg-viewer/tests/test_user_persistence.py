@@ -8,11 +8,14 @@ psycopg installed (the server subprocesses inherit it via sys.executable).
 
 Covers what in-RAM mode cannot: sessions surviving a full server restart,
 users added out-of-band (userdb.py CLI) being visible immediately, and
-passwords being stored salted+hashed rather than in plaintext.
+passwords being stored with salted PBKDF2 rather than in plaintext.
 """
 import base64
+import hashlib
 import json
 import os
+import secrets
+import socket
 import subprocess
 import sys
 import time
@@ -24,16 +27,26 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 BACKEND = ROOT / 'mock-backend-py'
 DSN = os.environ.get('MOCK_PG_TEST_DSN')
-PORT = 8021
+PORT = None
 
 try:
     import psycopg
+    from psycopg import sql
+    from psycopg.conninfo import make_conninfo
 except ImportError:
     psycopg = None
+    sql = None
+    make_conninfo = None
 
 
-def call(method, path, headers=None):
-    req = urllib.request.Request(f'http://localhost:{PORT}{path}', headers=headers or {}, method=method)
+def call(method, path, headers=None, body=None):
+    data = json.dumps(body).encode() if body is not None else None
+    request_headers = dict(headers or {})
+    if body is not None:
+        request_headers.setdefault('Content-Type', 'application/json')
+    req = urllib.request.Request(
+        f'http://localhost:{PORT}{path}', data=data,
+        headers=request_headers, method=method)
     try:
         resp = urllib.request.urlopen(req, timeout=10)
         return resp.status, json.loads(resp.read() or b'null'), resp.headers
@@ -41,9 +54,15 @@ def call(method, path, headers=None):
         return e.code, json.loads(e.read() or b'null'), e.headers
 
 
-def start_server():
+def start_server(dsn):
+    env = {
+        **os.environ,
+        'MOCK_PG_DSN': dsn,
+        'MOCK_REQUIRE_AUTH': '1',
+        'MOCK_ROBOT_TOKEN': 'persistence-test-robot',
+    }
     proc = subprocess.Popen([sys.executable, str(BACKEND / 'server.py'), str(PORT)],
-                            env={**os.environ, 'MOCK_PG_DSN': DSN},
+                            env=env,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(50):
         try:
@@ -63,18 +82,60 @@ def basic(user, password):
 class TestUserPersistence(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        global PORT
+        with socket.socket() as sock:
+            sock.bind(('localhost', 0))
+            PORT = sock.getsockname()[1]
+        cls.schema = f'iceberg_mock_test_{os.getpid()}_{secrets.token_hex(4)}'
+        cls.application_name = f'iceberg-mock-test-{secrets.token_hex(4)}'
         with psycopg.connect(DSN, autocommit=True) as conn:
-            conn.execute('DROP TABLE IF EXISTS sessions; DROP TABLE IF EXISTS users CASCADE')
-        cls.proc = start_server()
+            conn.execute(
+                sql.SQL('CREATE SCHEMA {}').format(sql.Identifier(cls.schema)))
+        try:
+            cls.dsn = make_conninfo(
+                DSN,
+                options=f'-c search_path={cls.schema}',
+                application_name=cls.application_name)
+            cls.proc = start_server(cls.dsn)
+        except Exception:
+            cls.drop_schema()
+            raise
 
     @classmethod
     def tearDownClass(cls):
         cls.proc.terminate()
+        cls.proc.wait(timeout=10)
+        cls.drop_schema()
+
+    @classmethod
+    def drop_schema(cls):
+        with psycopg.connect(DSN, autocommit=True) as conn:
+            conn.execute(
+                sql.SQL('DROP SCHEMA IF EXISTS {} CASCADE').format(
+                    sql.Identifier(cls.schema)))
 
     def login(self, user, password):
         status, _, hdrs = call('POST', '/login', basic(user, password))
         cookie = (hdrs.get('Set-Cookie') or '').split(';')[0]
         return status, cookie
+
+    def test_0_strict_auth_requires_cookie_or_robot_token(self):
+        status, body, _ = call('GET', '/auth/whoami')
+        self.assertEqual(status, 401)
+        self.assertEqual(body['code'], 900)
+        status, body, _ = call(
+            'POST', '/api/v3/exists', body={'path': '//tmp'})
+        self.assertEqual(status, 401)
+        self.assertEqual(body['code'], 900)
+
+        robot = {'Authorization': 'OAuth persistence-test-robot'}
+        status, who, _ = call('GET', '/auth/whoami', robot)
+        self.assertEqual(status, 200)
+        self.assertEqual(who['login'], 'iceberg')
+        status, _, _ = call(
+            'GET', '/auth/whoami',
+            {'Authorization': 'OAuth wrong-robot-token'})
+        self.assertEqual(status, 401)
 
     def test_1_seed_user_can_login(self):
         status, cookie = self.login('iceberg', 'iceberg')
@@ -91,13 +152,13 @@ class TestUserPersistence(unittest.TestCase):
         _, cookie = self.login('iceberg', 'iceberg')
         type(self).proc.terminate()
         type(self).proc.wait()
-        type(self).proc = start_server()  # fresh process, empty RAM
+        type(self).proc = start_server(type(self).dsn)  # fresh process, empty RAM
         _, who, _ = call('GET', '/auth/whoami', {'Cookie': cookie})
         self.assertEqual(who['realm'], 'cypress_cookie')  # session came from PG
 
     def test_4_cli_added_user_is_visible_without_restart(self):
         subprocess.run([sys.executable, str(BACKEND / 'userdb.py'), 'add-user', 'alice', 's3cret'],
-                       env={**os.environ, 'MOCK_PG_DSN': DSN}, check=True,
+                       env={**os.environ, 'MOCK_PG_DSN': type(self).dsn}, check=True,
                        stdout=subprocess.DEVNULL)
         status, cookie = self.login('alice', 's3cret')
         self.assertEqual(status, 200)
@@ -105,13 +166,51 @@ class TestUserPersistence(unittest.TestCase):
         self.assertEqual(who['login'], 'alice')
 
     def test_5_passwords_are_hashed_at_rest(self):
-        with psycopg.connect(DSN) as conn:
+        with psycopg.connect(type(self).dsn) as conn:
             rows = conn.execute('SELECT login, salt, password_hash FROM users').fetchall()
         self.assertGreaterEqual(len(rows), 2)
         for login, salt, password_hash in rows:
             self.assertTrue(salt)
-            self.assertEqual(len(password_hash), 64)  # sha256 hex
+            self.assertRegex(password_hash, r'^pbkdf2_sha256\$600000\$[0-9a-f]{64}$')
             self.assertNotIn(password_hash, ('iceberg', 's3cret', ''))
+
+    def test_6_legacy_hash_is_upgraded_after_login(self):
+        salt = secrets.token_hex(8)
+        legacy_hash = hashlib.sha256(f'{salt}:old-secret'.encode()).hexdigest()
+        with psycopg.connect(type(self).dsn, autocommit=True) as conn:
+            conn.execute(
+                'INSERT INTO users (login, salt, password_hash) VALUES (%s, %s, %s)',
+                ('legacy', salt, legacy_hash))
+
+        status, _ = self.login('legacy', 'old-secret')
+        self.assertEqual(status, 200)
+        with psycopg.connect(type(self).dsn) as conn:
+            new_salt, new_hash = conn.execute(
+                'SELECT salt, password_hash FROM users WHERE login = %s',
+                ('legacy',)).fetchone()
+        self.assertNotEqual(new_salt, salt)
+        self.assertRegex(new_hash, r'^pbkdf2_sha256\$600000\$[0-9a-f]{64}$')
+
+    def test_7_database_connection_recovers_after_termination(self):
+        _, cookie = self.login('iceberg', 'iceberg')
+        with psycopg.connect(DSN, autocommit=True) as conn:
+            terminated = conn.execute(
+                'SELECT pg_terminate_backend(pid) FROM pg_stat_activity'
+                ' WHERE application_name = %s AND pid <> pg_backend_pid()',
+                (type(self).application_name,)).fetchall()
+        self.assertTrue(terminated)
+        self.assertTrue(all(row[0] for row in terminated))
+
+        for _ in range(20):
+            status, _, _ = call('GET', '/ready')
+            if status == 200:
+                break
+            time.sleep(0.1)
+        self.assertEqual(status, 200)
+        status, who, _ = call(
+            'GET', '/auth/whoami', {'Cookie': cookie})
+        self.assertEqual(status, 200)
+        self.assertEqual(who['login'], 'iceberg')
 
 
 if __name__ == '__main__':

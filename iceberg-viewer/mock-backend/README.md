@@ -22,6 +22,9 @@ LOCAL_DEV_PORT=8080 npm run dev:app
 credential-less requests as user `iceberg`. Password login also works (`/login` with
 HTTP Basic; users in `data.js`: iceberg/iceberg).
 
+Set `MOCK_REQUIRE_AUTH=1` to reject missing/expired credentials and set
+`MOCK_ROBOT_TOKEN=<token>` for the OAuth robot token accepted in that mode.
+
 ## Files
 
 - `server.js` — routing, auth (cookie + CSRF + anonymous), command dispatch,
@@ -35,7 +38,8 @@ HTTP Basic; users in `data.js`: iceberg/iceberg).
 
 ## Implemented surface
 
-Infra: `/ping`, `/version`, `/hosts`, `/hosts/all`, `/api`, `/login`, `/auth/whoami`.
+Infra: `/ping`, `/ready`, `/version`, `/hosts`, `/hosts/all`, `/api`, `/login`,
+`/auth/whoami`.
 Commands (v3+v4): `get`, `list`, `exists`, `read_table` (web_json + ranges +
 column_names), `execute_batch`, `check_permission`, `check_permission_by_acl`,
 `get_supported_features`, `get_table_columnar_statistics`, `whoami`.

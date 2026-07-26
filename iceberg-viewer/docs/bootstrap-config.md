@@ -610,6 +610,7 @@ Real-proxy semantics for reference (`yt/yt/server/http_proxy/coordinator.cpp:543
 | `POST /api/v3/execute_batch` | node server for `/api/cluster-params` (`components/cluster-params.ts:61,118`) | `[{output?, error?}, …]`, one entry per sub-request, in order. |
 | `POST /api/v3/<command>` or `/api/v4/<command>` | everything else, tunnelled through `/api/yt/:c/api/:v/:cmd` | Standard YT command semantics. |
 | `GET /ping` | not used by the UI | Real proxy: `200`/`503`, empty body (`coordinator.cpp:656-670`). |
+| `GET /ready` | Kubernetes probe for this mock | `200` when user/session storage is usable; `503` while PostgreSQL is unavailable. `/ping` remains process-only. |
 | `GET /api`, `GET /api/v4` | not used by the UI | Discovery: `["v3","v4"]` (`context.cpp:140-152`) and the command-descriptor list `[{name,input_type,output_type,is_volatile,is_heavy}]` (`context.cpp:162-180`, `client/driver/driver.cpp:73-83`). |
 | `POST /api/v4/discover_proxies` | not used by the UI | `{"proxies": ["host:port", …]}` (`client/driver/etc_commands.cpp:491-518`). Params `kind`/`type`, `role`, `address_type`, `network_name`. |
 | `POST /login` | only with `ALLOW_PASSWORD_AUTH` (`controllers/login.ts:33`) | Basic-auth in, `Set-Cookie: YTCypressCookie=…` out. |
@@ -635,6 +636,9 @@ Checked against `/shared/ytsaurus4/iceberg-viewer/mock-backend/server.js`:
 - Password login accepts HTTP Basic credentials at `/login` and returns a
   `YTCypressCookie`. The mock also enforces `X-Csrf-Token` for non-GET requests
   authenticated by one of its issued cookies.
+- With `MOCK_REQUIRE_AUTH=1`, missing/expired cookies and unknown OAuth tokens
+  return code-900 HTTP 401. `MOCK_ROBOT_TOKEN` is the one OAuth credential
+  accepted for UI server-side bootstrap requests in this mode.
 - `/hosts` returns `[HOST]`, `/hosts/all` returns an empty object-list-compatible
   array, and `/version` returns `mock-proxy-1.0.0`.
 
@@ -646,5 +650,6 @@ surface:
 - `/api/v4` command discovery is not implemented (the UI does not call it).
 - Commands beyond the list above return a YT-shaped `404`; pages that need
   those commands are not covered.
-- An unknown or expired `YTCypressCookie` falls back to the anonymous `iceberg`
-  user, so the mock does not exercise session-expiry 401/login-dialog behavior.
+- In the default auth-none mode, an unknown or expired `YTCypressCookie` falls
+  back to the anonymous `iceberg` user. Strict mode exercises the corresponding
+  401/login-dialog behavior.

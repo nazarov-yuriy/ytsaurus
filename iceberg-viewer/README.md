@@ -36,8 +36,11 @@ mock backend, as a first step toward serving the UI from an Apache Iceberg catal
   - `webjson.js` — YT `web_json` / annotated-JSON encoders.
 - `mock-backend-py/` — Python (stdlib-only) port of the mock, wire-identical to the
   Node one (`python3 server.py 8000`); see its README for the porting gotchas.
-- `tests/test_protocol.py` — 30 documented-behavior conformance tests, each run
+- `tests/test_protocol.py` — 39 documented-behavior conformance tests, each run
   against BOTH backends (`python3 tests/test_protocol.py`).
+- `tests/test_userdb.py` — always-running PBKDF2, legacy-migration, and reconnect
+  unit tests; `test_user_persistence.py` adds isolated PostgreSQL integration
+  coverage when `MOCK_PG_TEST_DSN` is available.
 - `deploy/` — Kubernetes deployment: Helm chart (`helm/iceberg-ui-mock`) running
   UI + mock together (modeled on the official ui-helm-chart), a Dockerfile for a
   baked backend image, and a `helm test` smoke suite; see `deploy/README.md`.
