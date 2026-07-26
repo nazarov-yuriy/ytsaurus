@@ -329,6 +329,16 @@ COMMANDS = {
     'get_table_columnar_statistics': lambda p, a: [
         {'column_data_weights': {}, 'timestamp_total_weight': 0, 'legacy_chunks_data_weight': 0}
         for _ in p.get('paths') or []],
+    # Empty-but-valid answers so the Operations/Queries pages render empty states
+    # instead of error blocks (shapes per scheduler_commands.cpp:417-441 and
+    # query_commands.cpp:429-437).
+    'list_operations': lambda p, a: {
+        'operations': [], 'incomplete': False, 'pool_tree_counts': {}, 'pool_counts': {},
+        'user_counts': {}, 'state_counts': {}, 'type_counts': {}, 'failed_jobs_count': 0},
+    'get_query_tracker_info': lambda p, a: {
+        'query_tracker_stage': 'production', 'cluster_name': 'mock',
+        'supported_features': {}, 'access_control_objects': [], 'clusters': [],
+        'engines_info': {}},
 }
 
 RAW_OUTPUT = {'read_table', 'get_table_columnar_statistics'}

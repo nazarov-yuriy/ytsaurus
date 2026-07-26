@@ -113,9 +113,9 @@ def load() -> None:
                     inv_path.name,
                 ),
             )
-            eid = cur.lastrowid
-            if not eid:
+            if cur.rowcount == 0:  # duplicate row ignored; lastrowid would be stale
                 continue
+            eid = cur.lastrowid
 
             def add_params(direction: str, obj: dict) -> None:
                 if not isinstance(obj, dict):

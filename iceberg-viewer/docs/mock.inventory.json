@@ -68,5 +68,44 @@
     "source_refs": [
       "mock-backend-py/server.py:COMMANDS"
     ]
+  },
+  {
+    "layer": "proxy",
+    "method": "POST",
+    "path": "/api/v3/list_operations",
+    "command": "list_operations",
+    "api_version": "v3",
+    "description": "Operations page listing. The mock returns an empty-but-valid result (operations: [], incomplete: false, empty counter maps, failed_jobs_count: 0 — shape per scheduler_commands.cpp:417-441) so the page renders an empty state instead of an error block.",
+    "request": {
+      "params": {
+        "filter": "...",
+        "include_counters": "..."
+      }
+    },
+    "response": {
+      "body_schema": "{operations: [], incomplete: false, pool_tree_counts/pool_counts/user_counts/state_counts/type_counts: {}, failed_jobs_count: 0}"
+    },
+    "needed_for_mock": false,
+    "source_refs": [
+      "mock-backend-py/server.py:COMMANDS",
+      "recordings/discovery-traffic.jsonl"
+    ]
+  },
+  {
+    "layer": "proxy",
+    "method": "GET",
+    "path": "/api/v4/get_query_tracker_info",
+    "command": "get_query_tracker_info",
+    "api_version": "v4",
+    "description": "Queries page capability probe. The mock returns an empty capability set (supported_features: {}, no access_control_objects/clusters — shape per query_commands.cpp:429-437) so the page renders without errors and advanced QT features stay hidden.",
+    "request": {},
+    "response": {
+      "body_schema": "{query_tracker_stage, cluster_name, supported_features: {}, access_control_objects: [], clusters: [], engines_info: {}}"
+    },
+    "needed_for_mock": false,
+    "source_refs": [
+      "mock-backend-py/server.py:COMMANDS",
+      "recordings/discovery-traffic.jsonl"
+    ]
   }
 ]

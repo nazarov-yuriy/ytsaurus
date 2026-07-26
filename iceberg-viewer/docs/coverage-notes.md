@@ -52,8 +52,10 @@ the password self-service feature is outside the viewer (auth-none mode has no p
 
 Commands discovered by recording a wider UI session (`recordings/play-discovery.js`
 visiting the Queries and Operations pages; stubs auto-generated into
-`discovered.inventory.json` by `recordings/discover.py`) — both unimplemented,
-the UI degrades to empty states:
+`discovered.inventory.json` by `recordings/discover.py`) — both now answered
+with empty-but-valid results (`support_status = constant`, see
+`mock.inventory.json`) so those pages render empty states instead of
+"command not registered" error blocks:
 
 - `GET /api/v4/get_query_tracker_info` — Queries page capability probe.
 - `POST /api/v3/list_operations` — Operations page listing.

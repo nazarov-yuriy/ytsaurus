@@ -162,6 +162,9 @@ _insert('sys', make_map_node())
 _insert('sys/media', make_map_node())
 _insert('sys/media/default', make_map_node())
 _insert('sys/primary_masters', make_map_node())
+# Operations/Users pages list these; empty maps beat resolve-error toasts.
+_insert('sys/users', make_map_node())
+_insert('sys/groups', make_map_node())
 # Scheduling init reads //sys/pool_trees/@default_tree on every navigation load.
 _pool_trees = _insert('sys/pool_trees', make_map_node())
 _pool_trees.attrs['default_tree'] = 'physical'

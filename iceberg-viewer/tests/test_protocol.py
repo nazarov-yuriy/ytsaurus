@@ -710,6 +710,37 @@ class TestReadTableYqlFormat(BackendTestCase):
             self.assertEqual(body['rows'][0]['trip_id'], {'$type': 'int64', '$value': '1'})
 
 
+class TestEmptyStateCommands(BackendTestCase):
+    """Operations/Queries pages: empty-but-valid answers instead of 404 error
+    blocks (shapes per scheduler_commands.cpp:417-441, query_commands.cpp:429-437)."""
+
+    def test_list_operations_empty_result(self):
+        for port in self.each():
+            status, body, _ = call(port, 'POST', '/api/v3/list_operations',
+                                   body={'filter': '', 'include_counters': True})
+            self.assertEqual(status, 200)
+            self.assertEqual(body['operations'], [])
+            self.assertIs(body['incomplete'], False)
+            self.assertEqual(body['state_counts'], {})
+            self.assertEqual(body['failed_jobs_count'], 0)
+
+    def test_get_query_tracker_info_empty_capabilities(self):
+        for port in self.each():
+            status, body, _ = call(port, 'GET', '/api/v4/get_query_tracker_info')
+            self.assertEqual(status, 200)
+            self.assertEqual(body['cluster_name'], 'mock')
+            self.assertEqual(body['supported_features'], {})
+            self.assertEqual(body['access_control_objects'], [])
+
+    def test_sys_users_and_groups_list_empty(self):
+        # Operations page loads the user filter from //sys/users; empty beats a toast.
+        for port in self.each():
+            for path in ('//sys/users', '//sys/groups'):
+                status, body, _ = call(port, 'POST', '/api/v3/list', body={'path': path})
+                self.assertEqual(status, 200)
+                self.assertEqual(body, [])
+
+
 class TestErrorEnvelope(BackendTestCase):
     def test_error_body_is_yt_error_entity_with_headers(self):
         # coverage-notes.md conventions: every error response is the yt-error

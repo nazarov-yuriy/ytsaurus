@@ -38,6 +38,14 @@
       "status": "constant"
     },
     {
+      "command": "list_operations",
+      "status": "constant"
+    },
+    {
+      "command": "get_query_tracker_info",
+      "status": "constant"
+    },
+    {
       "command": "get_table_columnar_statistics",
       "status": "constant"
     },
