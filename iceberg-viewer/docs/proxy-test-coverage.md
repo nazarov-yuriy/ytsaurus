@@ -7,8 +7,8 @@ much of it does the mock implementation cover?
 cases (`yt/yt/tests/integration/proxies/`). They run against a real cluster
 (`YTEnvSetup` spins up masters/nodes/proxies), so they cannot be executed against
 the mock directly; measured by what each case asserts, the mock's behavior
-conceptually covers **~16 of 117 cases fully, plus 2 residual partials (~15%)**
-(after the fixes below — originally ~10 full / ~8 partial). That is
+conceptually covers **~22 of 117 cases (~19%)** (after two rounds of fixes —
+originally ~10 full / ~8 partial). That is
 expected, not alarming: the suites overwhelmingly test proxy *infrastructure*
 (framing, compression, memory limits, metrics, roles, token management) that is
 explicitly out of the viewer's scope, while the UI-facing protocol surface the
@@ -51,12 +51,21 @@ mock implements is tested far more deeply by our own suites than by YT's.
   `test_whoami_valid_token_no_yt_error_header`: ported into `TestStrictAuth`
   (strict mode; 401 carries `X-YT-Error`, 200 does not).
 
-**Residual partials (accepted):**
+- C++ `TTestCsrfTokenTest` + CSRF paths: **the real construction is now
+  implemented** — `hex(hmac_sha256(secret, "user:ts")) + ":" + ts`
+  (auth_server/helpers.cpp SignCsrfToken/CheckCsrfToken, incl. the real
+  `Invalid CSFR token signature` typo and NRpc code 110), with the secret
+  persisted in PostgreSQL (`settings` table) or `MOCK_CSRF_SECRET`.
+- Cookie storage-model cases: **implemented over the session store** —
+  64-hex cookie values (`test_cookie_format`), a virtual
+  `//sys/cypress_cookies/<value>[/<field>]` node backed by PostgreSQL/RAM
+  sessions (`test_cookie_in_cypress`; `password_revision` is a constant 0 —
+  we do not version passwords), and near-expiry rotation with the old cookie
+  valid until expiry (`test_cookie_rotation`). Ported into
+  `tests/test_cookie_model.py` (6 dual-backend cases).
 
-- C++ CSRF test: we enforce CSRF but with a mock token scheme, not the real
-  HMAC construction (needs the cluster keystore).
-- Cookie storage-model cases (`test_cookie_in_cypress`, `test_cookie_format`,
-  rotation): ours is a PostgreSQL table by design, not `//sys/cypress_cookies`.
+**Residual partials (accepted):** none — remaining uncovered cases are the
+out-of-scope infrastructure below.
 
 **Not covered — and deliberately so** (~90 cases): framing + keep-alive frames and
 compressed `read_table` over framing (UI never negotiates framing), YSON
@@ -80,10 +89,8 @@ endpoints + cookie auth) is covered on both sides.
 
 ## 4. If more overlap is ever wanted (ordered, optional)
 
-~~Role-aware `/hosts`~~ and ~~`X-YT-Error-Format` negotiation~~ are done (see §2).
-Remaining candidates:
-
-1. Cookie attribute-shape assertions (`test_cookie_format`) if the PG session
-   store ever mirrors the Cypress cookie model.
-2. Framing (`X-YT-Accept-Framing`) only if `yt` CLI / SDK clients must work
-   against the mock; the wire format is fully documented in table-viewer.md §3.7.
+~~Role-aware `/hosts`~~, ~~`X-YT-Error-Format` negotiation~~, ~~the real CSRF
+construction~~ and ~~the Cypress cookie model~~ are done (see §2). The one
+remaining candidate is framing (`X-YT-Accept-Framing`), only if `yt` CLI / SDK
+clients must work against the mock; the wire format is fully documented in
+table-viewer.md §3.7.

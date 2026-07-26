@@ -149,16 +149,51 @@ function log(...args) {
 
 // ---- auth -----------------------------------------------------------------
 
-const sessions = new Map(); // cookie value -> username
+const sessions = new Map(); // cookie value -> {user, created, expires}
+const SESSION_TTL_MS = Number(process.env.MOCK_COOKIE_TTL_SECONDS || 30 * 24 * 3600) * 1000;
+const COOKIE_RENEWAL_MS = Number(process.env.MOCK_COOKIE_RENEWAL_SECONDS || 7 * 24 * 3600) * 1000;
+const CSRF_TTL_MS = Number(process.env.MOCK_CSRF_TTL_SECONDS || 24 * 3600) * 1000;
+const CSRF_SECRET = process.env.MOCK_CSRF_SECRET || crypto.randomBytes(32).toString('hex');
 
 function makeCookie(user) {
-  const value = `mock-${user}-${Math.random().toString(36).slice(2)}`;
-  sessions.set(value, user);
+  // GenerateCookieValue parity (cypress_cookie.cpp:47-53): 32 random bytes, hex.
+  const value = crypto.randomBytes(32).toString('hex');
+  const now = Date.now();
+  sessions.set(value, {user, created: now, expires: now + SESSION_TTL_MS});
   return value;
 }
 
+function sessionInfo(value) {
+  const info = sessions.get(value);
+  return info && info.expires > Date.now() ? info : null;
+}
+
 function csrfTokenFor(user) {
-  return `csrf-${user}`;
+  // SignCsrfToken parity: hex(hmac_sha256(secret, "user:unix_ts")) + ":" + unix_ts
+  const ts = Math.floor(Date.now() / 1000);
+  const sig = crypto.createHmac('sha256', CSRF_SECRET).update(`${user}:${ts}`).digest('hex');
+  return `${sig}:${ts}`;
+}
+
+function checkCsrfToken(token, user) {
+  const [sig, ts] = String(token || '').split(':');
+  if (ts === undefined) return 'Malformed CSRF token';
+  if (!/^\d+$/.test(ts) || Number(ts) * 1000 < Date.now() - CSRF_TTL_MS) return 'CSRF token expired';
+  const expected = crypto.createHmac('sha256', CSRF_SECRET).update(`${user}:${ts}`).digest('hex');
+  return tokenMatches(sig || '', expected) ? null : 'Invalid CSFR token signature';  // typo as in helpers.cpp:187
+}
+
+function renewalCookieHeader(auth, req) {
+  // Cookie rotation (cypress_cookie_authenticator.cpp:164).
+  if (!auth || !auth.viaCookie) return {};
+  const cookies = Object.fromEntries(
+    (req.headers.cookie || '').split(';').map((p) => p.trim().split('=').map(decodeURIComponent))
+  );
+  const info = sessionInfo(cookies['YTCypressCookie'] || '');
+  if (!info || info.expires - Date.now() > COOKIE_RENEWAL_MS) return {};
+  const value = makeCookie(auth.user);
+  const expires = new Date(Date.now() + SESSION_TTL_MS).toUTCString();
+  return {'Set-Cookie': `YTCypressCookie=${value}; Expires=${expires}; HttpOnly; Path=/`};
 }
 
 function tokenMatches(actual, expected) {
@@ -173,7 +208,8 @@ function authenticate(req) {
     (req.headers.cookie || '').split(';').map((p) => p.trim().split('=').map(decodeURIComponent))
   );
   const yc = cookies['YTCypressCookie'];
-  if (yc && sessions.has(yc)) return {user: sessions.get(yc), viaCookie: true};
+  const info = yc && sessionInfo(yc);
+  if (info) return {user: info.user, viaCookie: true};
   // Token-based
   const auth = req.headers.authorization || '';
   if (auth.startsWith('OAuth ')) {
@@ -192,13 +228,38 @@ function authenticate(req) {
   return {user: 'iceberg', viaCookie: false, anonymous: true};
 }
 
+// Returns an error message, or null when the request passes.
 function checkCsrf(req, auth) {
-  if (!auth || !auth.viaCookie) return true; // token auth needs no CSRF
-  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return true;
-  return req.headers['x-csrf-token'] === csrfTokenFor(auth.user);
+  if (!auth || !auth.viaCookie) return null; // token auth needs no CSRF
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return null;
+  return checkCsrfToken(req.headers['x-csrf-token'], auth.user);
 }
 
 // ---- command implementations ---------------------------------------------
+
+const COOKIE_STORE_PATH = '//sys/cypress_cookies';
+
+// Virtual //sys/cypress_cookies/<value>[/<field>] view over the session store
+// (cypress_cookie_store.cpp:282 keeps cookies by value under that map node).
+function cookieStoreNode(path) {
+  const rest = path.slice(COOKIE_STORE_PATH.length).replace(/^\/|\/$/g, '');
+  if (!rest) {
+    const out = {};
+    for (const [c, i] of sessions.entries()) if (i.expires > Date.now()) out[c] = null;
+    return out;
+  }
+  const [value, field] = [rest.split('/')[0], rest.split('/').slice(1).join('/')];
+  const info = sessionInfo(value);
+  if (!info) throw {status: 400, err: ytError(500, `Error resolving path ${path}`, {code: 500})};
+  const record = {
+    value, user: info.user, auth_source: 'password', password_revision: 0,
+    expires_at: new Date(info.expires).toISOString().replace('Z', '000Z'),
+  };
+  if (!field) return record;
+  if (!(field in record)) throw {status: 400, err: ytError(500, `Error resolving path ${path}`, {code: 500})};
+  return record[field];
+}
+
 
 function attributesFor(node, requested) {
   const all = node.attrs;
@@ -231,6 +292,10 @@ function nodeValue(node, params) {
 
 const commands = {
   get(params, auth) {
+    const cookiePath = String(params.path || '');
+    if (cookiePath === COOKIE_STORE_PATH || cookiePath.startsWith(COOKIE_STORE_PATH + '/')) {
+      return cookieStoreNode(cookiePath);
+    }
     const r = resolve(params.path);
     if (!r) throw {status: 400, err: ytError(500, `Error resolving path ${params.path}`, {path: params.path, code: 500})};
     const {node, attrPath} = r;
@@ -257,6 +322,9 @@ const commands = {
   },
 
   list(params, auth) {
+    if (String(params.path || '') === COOKIE_STORE_PATH) {
+      return [...sessions.entries()].filter(([, i]) => i.expires > Date.now()).map(([c]) => c).sort();
+    }
     const r = resolve(params.path);
     if (!r || r.node.kind !== 'map_node') {
       throw {status: 400, err: ytError(500, `Error resolving path ${params.path}`, {path: params.path, code: 500})};
@@ -485,7 +553,7 @@ const server = http.createServer(async (req, res) => {
         realm: auth && auth.viaCookie ? 'cypress_cookie' : 'mock',
         real_login: user,
         csrf_token: csrfTokenFor(user),
-      }, cors);
+      }, {...cors, ...renewalCookieHeader(auth, req)});
     }
 
     // ---- API commands ----
@@ -496,8 +564,10 @@ const server = http.createServer(async (req, res) => {
       if (!auth) {
         return void sendYtError(req, res, 401, ytError(900, 'Authentication failed'), cors);
       }
-      if (!checkCsrf(req, auth)) {
-        return void sendYtError(req, res, 401, ytError(901, 'CSRF token mismatch'), cors);
+      const csrfError = checkCsrf(req, auth);
+      if (csrfError) {
+        // NRpc::EErrorCode::InvalidCsrfToken = 110 (core/rpc/public.h:207)
+        return void sendYtError(req, res, 401, ytError(110, csrfError), cors);
       }
       const params = collectParams(req, url, bodyBuf);
       const impl = commands[command];
@@ -522,7 +592,7 @@ const server = http.createServer(async (req, res) => {
       if (version === 'v4' && (command === 'get' || command === 'list' || command === 'exists')) {
         payload = {value: payload};
       }
-      return void sendJson(res, 200, payload, {...cors, 'X-YT-Proxy': HOST});
+      return void sendJson(res, 200, payload, {...cors, 'X-YT-Proxy': HOST, ...renewalCookieHeader(auth, req)});
     }
 
     log(`  !! unhandled route`);

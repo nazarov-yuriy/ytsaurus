@@ -165,7 +165,7 @@ Cypress node attributes: union of what the UI requests (navigation ~70-attribute
 
 ## pg-sessions-table
 
-PostgreSQL table `sessions` (userdb.py): login sessions backing YTCypressCookie, surviving server restarts.
+PostgreSQL table `sessions` (userdb.py): login sessions backing YTCypressCookie (64-hex values, GenerateCookieValue parity), surviving server restarts; also exposed read-only as the virtual //sys/cypress_cookies map node (cypress_cookie_store parity).
 
 | Status | Field | Type | Required | Description |
 |--------|-------|------|----------|-------------|
@@ -173,6 +173,15 @@ PostgreSQL table `sessions` (userdb.py): login sessions backing YTCypressCookie,
 | 🟢 implemented | `expires_at` | timestamptz | yes | now()+30d, matching the cookie Expires; expired sessions stop authenticating |
 | 🟢 implemented | `login` | text FK users(login) | yes | session owner; cascade-deleted with the user |
 | 🟡 constant | `created_at` | timestamptz | yes | defaulted by the database |
+
+## pg-settings-table
+
+PostgreSQL table `settings` (userdb.py): persisted server-wide values; currently only the CSRF HMAC secret, so signed tokens survive restarts and are shared across replicas.
+
+| Status | Field | Type | Required | Description |
+|--------|-------|------|----------|-------------|
+| 🟢 implemented | `key` | text PK | yes | currently only 'csrf_secret' |
+| 🟢 implemented | `value` | text | yes | random 64-hex secret, generated once (MOCK_CSRF_SECRET env overrides) |
 
 ## pg-users-table
 
@@ -230,7 +239,7 @@ Body of GET /auth/whoami — the identity/CSRF endpoint used by cluster bootstra
 
 | Status | Field | Type | Required | Description |
 |--------|-------|------|----------|-------------|
-| 🟢 implemented | `csrf_token` | string | yes | must be truthy or UI blocks with PRELOAD_ERROR.AUTHENTICATION; re-sent as X-Csrf-Token for credentialed requests, while the wrapper omits it when cluster authentication is 'none' |
+| 🟢 implemented | `csrf_token` | string | yes | real SignCsrfToken construction: hex(hmac_sha256(secret, "user:unix_ts")) + ":" + unix_ts; secret persisted in PostgreSQL (settings table) or MOCK_CSRF_SECRET. Must be truthy or UI blocks with PRELOAD_ERROR.AUTHENTICATION |
 | 🟢 implemented | `login` | string | yes | resolved from cookie/token; 'iceberg' for anonymous |
 | 🟢 implemented | `real_login` | string | yes | same as login in mock |
 | 🟢 implemented | `realm` | string | yes | 'cypress_cookie' for cookie auth, 'mock' otherwise |
@@ -242,6 +251,6 @@ YT TError JSON envelope; body of every error response, mirrored in X-YT-Error he
 | Status | Field | Type | Required | Description |
 |--------|-------|------|----------|-------------|
 | 🟢 implemented | `attributes` | map | yes | extra context (path, code, ...) |
-| 🟢 implemented | `code` | int | yes | numeric YT error code; the mock uses 1 (generic, incl. wrong-password /login, matching the real proxy), 500 (resolve/NODE_DOES_NOT_EXIST), and mock-only 900/901 for API-command auth/CSRF failures. The real proxy uses native auth codes such as 111/110 for cookie-auth failures |
+| 🟢 implemented | `code` | int | yes | numeric YT error code; the mock uses 1 (generic, incl. wrong-password /login), 500 (resolve/NODE_DOES_NOT_EXIST), 110 (NRpc InvalidCsrfToken, real code) and mock-only 900 for strict-mode auth failures. The real proxy also uses 111 for cookie-auth failures |
 | 🟢 implemented | `message` | string | yes | human-readable message |
 | 🟡 constant | `inner_errors` | list<yt-error> | yes | mock always returns [] |

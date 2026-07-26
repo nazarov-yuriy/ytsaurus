@@ -12,7 +12,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 
 DSN = os.environ.get('MOCK_PG_DSN')
-SESSION_TTL = timedelta(days=30)
+SESSION_TTL = timedelta(seconds=int(os.environ.get('MOCK_COOKIE_TTL_SECONDS') or 30 * 24 * 3600))
 SEED_USERS = {'iceberg': 'iceberg', 'root': ''}
 PASSWORD_SCHEME = 'pbkdf2_sha256'
 PBKDF2_ITERATIONS = 600_000
@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS users (
     salt          text NOT NULL,
     password_hash text NOT NULL,
     created_at    timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS settings (
+    key   text PRIMARY KEY,
+    value text NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (
     cookie     text PRIMARY KEY,
     login      text NOT NULL REFERENCES users(login) ON DELETE CASCADE,
@@ -76,7 +79,8 @@ def _new_password(password):
 
 
 def _new_cookie(login):
-    return f'mock-{login}-{secrets.token_hex(16)}'
+    # GenerateCookieValue parity (cypress_cookie.cpp:47-53): 32 random bytes, hex.
+    return secrets.token_hex(32)
 
 
 if DSN:
@@ -164,6 +168,23 @@ if DSN:
         rows = _query('SELECT login FROM sessions WHERE cookie = %s AND expires_at > now()', (cookie,))
         return rows[0][0] if rows else None
 
+    def session_info(cookie):
+        rows = _query('SELECT login, created_at, expires_at FROM sessions'
+                      ' WHERE cookie = %s AND expires_at > now()', (cookie,))
+        return rows[0] if rows else None
+
+    def list_sessions():
+        return _query('SELECT cookie, login, created_at, expires_at FROM sessions'
+                      ' WHERE expires_at > now() ORDER BY cookie')
+
+    def csrf_secret():
+        if secret := os.environ.get('MOCK_CSRF_SECRET'):
+            return secret
+        _query("INSERT INTO settings (key, value) VALUES ('csrf_secret', %s)"
+               ' ON CONFLICT (key) DO NOTHING RETURNING key',
+               (secrets.token_hex(32),), retry=False)
+        return _query("SELECT value FROM settings WHERE key = 'csrf_secret'")[0][0]
+
     def set_password(login, password):
         salt, password_hash = _new_password(password)
         _query('INSERT INTO users (login, salt, password_hash) VALUES (%s, %s, %s)'
@@ -201,15 +222,33 @@ else:  # in-RAM fallback: same behavior, nothing persisted
                 _users[login] = _new_password(password)
             return True
 
+    _csrf_secret = os.environ.get('MOCK_CSRF_SECRET') or secrets.token_hex(32)
+
     def create_session(login):
         cookie = _new_cookie(login)
+        now = datetime.now(timezone.utc)
         with _lock:
-            _sessions[cookie] = login
+            _sessions[cookie] = (login, now, now + SESSION_TTL)
         return cookie
 
     def session_user(cookie):
+        info = session_info(cookie)
+        return info[0] if info else None
+
+    def session_info(cookie):
         with _lock:
-            return _sessions.get(cookie)
+            info = _sessions.get(cookie)
+        if info and info[2] > datetime.now(timezone.utc):
+            return info
+        return None
+
+    def list_sessions():
+        now = datetime.now(timezone.utc)
+        with _lock:
+            return sorted((c, *info) for c, info in _sessions.items() if info[2] > now)
+
+    def csrf_secret():
+        return _csrf_secret
 
     def set_password(login, password):
         with _lock:

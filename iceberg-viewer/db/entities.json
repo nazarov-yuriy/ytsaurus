@@ -9,7 +9,7 @@
         "type": "int",
         "required": true,
         "support_status": "implemented",
-        "description": "numeric YT error code; the mock uses 1 (generic, incl. wrong-password /login, matching the real proxy), 500 (resolve/NODE_DOES_NOT_EXIST), and mock-only 900/901 for API-command auth/CSRF failures. The real proxy uses native auth codes such as 111/110 for cookie-auth failures"
+        "description": "numeric YT error code; the mock uses 1 (generic, incl. wrong-password /login), 500 (resolve/NODE_DOES_NOT_EXIST), 110 (NRpc InvalidCsrfToken, real code) and mock-only 900 for strict-mode auth failures. The real proxy also uses 111 for cookie-auth failures"
       },
       {
         "name": "message",
@@ -65,7 +65,7 @@
         "type": "string",
         "required": true,
         "support_status": "implemented",
-        "description": "must be truthy or UI blocks with PRELOAD_ERROR.AUTHENTICATION; re-sent as X-Csrf-Token for credentialed requests, while the wrapper omits it when cluster authentication is 'none'"
+        "description": "real SignCsrfToken construction: hex(hmac_sha256(secret, \"user:unix_ts\")) + \":\" + unix_ts; secret persisted in PostgreSQL (settings table) or MOCK_CSRF_SECRET. Must be truthy or UI blocks with PRELOAD_ERROR.AUTHENTICATION"
       }
     ]
   },
@@ -478,7 +478,7 @@
   {
     "entry_type": "schema",
     "name": "pg-sessions-table",
-    "description": "PostgreSQL table `sessions` (userdb.py): login sessions backing YTCypressCookie, surviving server restarts.",
+    "description": "PostgreSQL table `sessions` (userdb.py): login sessions backing YTCypressCookie (64-hex values, GenerateCookieValue parity), surviving server restarts; also exposed read-only as the virtual //sys/cypress_cookies map node (cypress_cookie_store parity).",
     "fields": [
       {
         "name": "cookie",
@@ -507,6 +507,27 @@
         "required": true,
         "support_status": "implemented",
         "description": "now()+30d, matching the cookie Expires; expired sessions stop authenticating"
+      }
+    ]
+  },
+  {
+    "entry_type": "schema",
+    "name": "pg-settings-table",
+    "description": "PostgreSQL table `settings` (userdb.py): persisted server-wide values; currently only the CSRF HMAC secret, so signed tokens survive restarts and are shared across replicas.",
+    "fields": [
+      {
+        "name": "key",
+        "type": "text PK",
+        "required": true,
+        "support_status": "implemented",
+        "description": "currently only 'csrf_secret'"
+      },
+      {
+        "name": "value",
+        "type": "text",
+        "required": true,
+        "support_status": "implemented",
+        "description": "random 64-hex secret, generated once (MOCK_CSRF_SECRET env overrides)"
       }
     ]
   }

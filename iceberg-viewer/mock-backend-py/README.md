@@ -19,6 +19,11 @@ Environment:
   strict mode; it maps to the `iceberg` user.
 - `MOCK_DELAY=<ms|cmd:ms,...>` simulates a slow catalog on data commands
   (`//sys` paths and infrastructure endpoints exempt) — see `../docs/timeouts.md`.
+- `MOCK_CSRF_SECRET`, `MOCK_CSRF_TTL_SECONDS` (default 86400) — CSRF HMAC secret
+  and token validity; without the env the secret is persisted in PostgreSQL
+  (`settings` table) or random per process in RAM mode.
+- `MOCK_COOKIE_TTL_SECONDS` (default 30d), `MOCK_COOKIE_RENEWAL_SECONDS`
+  (default 7d) — cookie lifetime and the near-expiry rotation window.
 
 ## User management (PostgreSQL)
 
@@ -33,6 +38,10 @@ Node backend and all parity tests run in the fallback mode.
   never in plaintext. Existing salted-SHA256 rows remain valid and are upgraded
   after a successful login. Sessions expire after 30 days, matching the
   `YTCypressCookie` lifetime.
+- Cookies are 64-hex values (GenerateCookieValue parity), visible read-only at
+  the virtual `//sys/cypress_cookies/<value>` node, and rotate near expiry like
+  the real authenticator; CSRF tokens use the real SignCsrfToken HMAC
+  construction (`tests/test_cookie_model.py`).
 - With PostgreSQL, password logins and their cookies survive server restarts,
   connection loss is recovered lazily, and users added out-of-band are visible
   without a restart:

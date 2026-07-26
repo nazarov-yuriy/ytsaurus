@@ -7,6 +7,7 @@ Set MOCK_RECORD=<path> to append request/response pairs as JSONL.
 """
 import base64
 import binascii
+import hmac
 import json
 import os
 import re
@@ -66,8 +67,43 @@ def resolve_error(path):
 
 # ---- auth (user/session storage lives in userdb: PostgreSQL or in-RAM) -----
 
+CSRF_TTL = int(os.environ.get('MOCK_CSRF_TTL_SECONDS') or 24 * 3600)
+COOKIE_RENEWAL = int(os.environ.get('MOCK_COOKIE_RENEWAL_SECONDS') or 7 * 24 * 3600)
+
+
 def csrf_token_for(user):
-    return f'csrf-{user}'
+    # Real construction (auth_server/helpers.cpp SignCsrfToken):
+    # hex(hmac_sha256(secret, "user:unix_ts")) + ":" + unix_ts
+    ts = int(time.time())
+    sig = hmac.new(userdb.csrf_secret().encode(), f'{user}:{ts}'.encode(), 'sha256').hexdigest()
+    return f'{sig}:{ts}'
+
+
+def check_csrf_token(token, user):
+    """CheckCsrfToken parity: returns an error message or None."""
+    sig, _, ts = (token or '').partition(':')
+    if not ts:
+        return 'Malformed CSRF token'
+    if not ts.isdigit() or int(ts) < time.time() - CSRF_TTL:
+        return 'CSRF token expired'
+    expected = hmac.new(userdb.csrf_secret().encode(), f'{user}:{ts}'.encode(), 'sha256').hexdigest()
+    if not hmac.compare_digest(expected, sig):
+        return 'Invalid CSFR token signature'  # typo as in helpers.cpp:187
+    return None
+
+
+def renewal_cookie_header(auth, headers):
+    """Cookie rotation (cypress_cookie_authenticator.cpp:164): when the presented
+    cookie is within the renewal window of its expiry, issue a fresh one."""
+    if not auth or not auth.get('via_cookie'):
+        return {}
+    cookies = dict(p.strip().split('=', 1) for p in (headers.get('Cookie') or '').split(';') if '=' in p)
+    info = userdb.session_info(cookies.get('YTCypressCookie', ''))
+    if not info or (info[2] - datetime.now(timezone.utc)).total_seconds() > COOKIE_RENEWAL:
+        return {}
+    cookie = userdb.create_session(auth['user'])
+    expires = format_datetime(datetime.now(timezone.utc) + userdb.SESSION_TTL, usegmt=True)
+    return {'Set-Cookie': f'YTCypressCookie={cookie}; Expires={expires}; HttpOnly; Path=/'}
 
 
 def authenticate(headers):
@@ -88,9 +124,10 @@ def authenticate(headers):
 
 
 def check_csrf(method, headers, auth):
+    """Returns an error message, or None when the request passes."""
     if not auth['via_cookie'] or method in ('GET', 'HEAD', 'OPTIONS'):
-        return True
-    return headers.get('X-Csrf-Token') == csrf_token_for(auth['user'])
+        return None
+    return check_csrf_token(headers.get('X-Csrf-Token'), auth['user'])
 
 
 # ---- commands --------------------------------------------------------------
@@ -104,7 +141,34 @@ def attributes_for(node, requested):
     return {k: node.attrs[k] for k in keys if node.attrs.get(k) is not None}
 
 
+COOKIE_STORE_PATH = '//sys/cypress_cookies'
+
+
+def cookie_store_node(path):
+    """Virtual //sys/cypress_cookies/<value>[/<field>] view over the session store
+    (cypress_cookie_store.cpp:282 keeps cookies by value under that map node)."""
+    rest = path[len(COOKIE_STORE_PATH):].strip('/')
+    if not rest:
+        return {c: None for c, *_ in userdb.list_sessions()}
+    value, _, field = rest.partition('/')
+    info = userdb.session_info(value)
+    if not info:
+        raise resolve_error(path)
+    login, created_at, expires_at = info
+    record = {'value': value, 'user': login, 'auth_source': 'password',
+              'password_revision': 0,
+              'expires_at': expires_at.strftime('%Y-%m-%dT%H:%M:%S.%fZ')}
+    if not field:
+        return record
+    if field not in record:
+        raise resolve_error(path)
+    return record[field]
+
+
 def cmd_get(params, auth):
+    path = str(params.get('path') or '')
+    if path == COOKIE_STORE_PATH or path.startswith(COOKIE_STORE_PATH + '/'):
+        return cookie_store_node(path)
     r = resolve(params.get('path'))
     if not r:
         raise resolve_error(params.get('path'))
@@ -138,6 +202,8 @@ def cmd_get(params, auth):
 
 
 def cmd_list(params, auth):
+    if str(params.get('path') or '') == COOKIE_STORE_PATH:
+        return [c for c, *_ in userdb.list_sessions()]
     r = resolve(params.get('path'))
     if not r or r[0].kind != 'map_node':
         raise resolve_error(params.get('path'))
@@ -417,15 +483,17 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {
                 'login': auth['user'],
                 'realm': 'cypress_cookie' if auth['via_cookie'] else 'mock',
-                'real_login': auth['user'], 'csrf_token': csrf_token_for(auth['user'])}, cors)
+                'real_login': auth['user'], 'csrf_token': csrf_token_for(auth['user'])},
+                {**cors, **renewal_cookie_header(auth, self.headers)})
 
         if m := re.match(r'^/api/(v3|v4)/(\w+)$', p):
             version, command = m.groups()
             auth = authenticate(self.headers)
             if not auth:
                 return self.send_yt_error(401, yt_error(900, 'Authentication failed'), cors)
-            if not check_csrf(self.command, self.headers, auth):
-                return self.send_yt_error(401, yt_error(901, 'CSRF token mismatch'), cors)
+            if csrf_error := check_csrf(self.command, self.headers, auth):
+                # NRpc::EErrorCode::InvalidCsrfToken = 110 (core/rpc/public.h:207)
+                return self.send_yt_error(401, yt_error(110, csrf_error), cors)
             params = self.collect_params(query, self.body_buf)
             impl = COMMANDS.get(command)
             if not impl:
@@ -444,7 +512,8 @@ class Handler(BaseHTTPRequestHandler):
                 payload = typed_annotate(result) if typed else annotated(result)
             if version == 'v4' and command in ('get', 'list', 'exists'):
                 payload = {'value': payload}
-            return self.send_json(200, payload, {**cors, 'X-YT-Proxy': HOST})
+            return self.send_json(200, payload, {
+                **cors, 'X-YT-Proxy': HOST, **renewal_cookie_header(auth, self.headers)})
 
         log('  !! unhandled route')
         self.send_yt_error(404, yt_error(1, f'No such route: {p}'), cors)

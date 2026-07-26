@@ -5,6 +5,7 @@ backends and diff status / body / key headers.
 Usage: python3 replay-diff.py  (starts Node on 8001 and Python on 8002 itself)
 """
 import json
+import re
 import subprocess
 import sys
 import time
@@ -114,6 +115,9 @@ def main():
             if isinstance(x, dict):
                 return {k: normalize(v, port) for k, v in x.items()}
             if isinstance(x, str):
+                # CSRF tokens are HMACs over per-process random secrets + a
+                # timestamp — mask them so the two backends stay comparable.
+                x = re.sub(r'^[0-9a-f]{64}:\d+$', '<csrf>', x)
                 return x.replace(f'localhost:{port}', 'localhost:PORT')
             return x
 
