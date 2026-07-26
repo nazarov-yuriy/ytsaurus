@@ -16,6 +16,8 @@ mock backend, as a first step toward serving the UI from an Apache Iceberg catal
   - `coverage-notes.md` — protocol-wide conventions + out-of-scope endpoint rationale.
   - `timeouts.md` — the timeout on every layer of the request path, the slow-catalog
     budget (data ≤100s, `//sys` boot path ≤5s), and the `MOCK_DELAY` simulation switch.
+  - `iceberg-considerations.md` — brainstorm for the real Iceberg backend: data-model
+    and type mapping, auth, feature trimming, contracts to preserve, open questions.
   - `*.inventory.json` — machine-readable API inventories (source of truth for the DB).
   - `API-INDEX.md`, `ENTITIES.md` — generated from the SQLite DB, do not edit.
 - `db/` — structured API catalog:
