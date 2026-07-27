@@ -8,7 +8,7 @@ cd /workspace
 echo '== installing pinned PG-mode dependencies'
 python3 -m pip install --quiet --requirement mock-backend-py/requirements.txt
 
-for suite in test_protocol test_userdb test_cookie_model test_slow_backend test_recording_security test_golden_replay test_external_auth; do
+for suite in test_protocol test_userdb test_cookie_model test_slow_backend test_recording_security test_golden_replay test_external_auth test_auth_configuration; do
     echo "== tests/$suite.py"
     python3 "tests/$suite.py"
 done

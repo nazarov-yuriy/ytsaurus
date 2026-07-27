@@ -46,6 +46,14 @@ if RECORD_PATH and (REQUIRE_AUTH or UPSTREAM):
     raise RuntimeError(
         'MOCK_RECORD is a development-only fixture and cannot be used with '
         'authenticated or delegated authentication')
+if UPSTREAM and not REQUIRE_AUTH:
+    raise RuntimeError(
+        'MOCK_YT_UPSTREAM requires MOCK_REQUIRE_AUTH=1; refusing to start '
+        'with delegated verification behind anonymous fallback')
+if REQUIRE_AUTH and ROBOT_TOKEN == 'mock-robot-token':
+    raise RuntimeError(
+        'MOCK_ROBOT_TOKEN must be changed from the published '
+        'mock-robot-token placeholder in authenticated mode')
 
 
 def _cors_origins(raw_value):

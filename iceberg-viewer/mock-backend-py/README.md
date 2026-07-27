@@ -30,7 +30,8 @@ Environment:
   `root`/empty users only for anonymous protocol-fidelity tests. It is ignored
   when `MOCK_REQUIRE_AUTH` is set and must not be used in a deployment.
 - `MOCK_ROBOT_TOKEN=<token>` supplies the one OAuth robot token accepted in
-  strict mode; it maps to the `iceberg` user.
+  strict mode; it maps to the `iceberg` user. Authenticated startup rejects
+  the published `mock-robot-token` placeholder even outside Helm.
 - `MOCK_DELAY=<ms|cmd:ms,...>` simulates a slow catalog on data commands
   (`//sys` paths and infrastructure endpoints exempt) — see `../docs/timeouts.md`.
 - `MOCK_HEALTH_TIMEOUT_SECONDS` (default 0.5) bounds both admission to and
@@ -50,6 +51,8 @@ Environment:
 - `MOCK_YT_UPSTREAM=<real proxy URL>` delegates identity of users not added
   locally to a real YTsaurus `/login`; verified users are provisioned into the
   local store (`origin='external'`, no password material) on first success.
+  Startup requires `MOCK_REQUIRE_AUTH=1` so delegation can never sit behind
+  the anonymous fallback; the Helm chart sets both consistently.
   Locally-added users always authenticate locally and never contact the
   upstream. `MOCK_YT_UPSTREAM_TIMEOUT` (default 5 s) bounds each verification;
   upstream failures surface as 503, not 401. See docs/auth.md §6.
