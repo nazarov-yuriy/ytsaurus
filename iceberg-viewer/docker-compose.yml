@@ -55,7 +55,9 @@ services:
 
   ui:
     image: ghcr.io/ytsaurus/ui:1.60.1
-    command: ["/bin/bash", "-c", "/usr/bin/supervisord -c /etc/supervisor/supervisord.conf"]
+    # No `command:`: the image ENTRYPOINT already runs supervisord, and compose
+    # (unlike the Helm chart's `command:`) would pass an override as positional
+    # arguments to that entrypoint, which supervisord rejects.
     environment:
       APP_INSTALLATION: custom
       YT_AUTH_ALLOW_INSECURE: "1"
