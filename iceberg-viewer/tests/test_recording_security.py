@@ -35,6 +35,7 @@ def free_port():
 
 def clean_environment():
     excluded = {
+        'MOCK_CORS_ORIGINS',
         'MOCK_DELAY',
         'MOCK_ENABLE_DEV_SEED_USERS',
         'MOCK_PG_DSN',

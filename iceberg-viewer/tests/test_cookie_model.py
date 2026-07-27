@@ -102,7 +102,7 @@ class TestCookieFormat(BackendTestCase):
             before = datetime.now(timezone.utc)
             status, header = login_header(port)
             self.assertEqual(status, 200)
-            cookie, expires, secure, http_only, path = header.split(';')
+            cookie, expires, secure, http_only, same_site, path = header.split(';')
             value = cookie.split('=', 1)[1]
             self.assertRegex(value, r'^[0-9a-f]{64}$')
             expiry = parsedate_to_datetime(expires.strip().removeprefix('Expires='))
@@ -111,6 +111,7 @@ class TestCookieFormat(BackendTestCase):
                 expiry, datetime.now(timezone.utc) + timedelta(seconds=TTL + 1))
             self.assertEqual(secure, ' Secure')
             self.assertEqual(http_only, ' HttpOnly')
+            self.assertEqual(same_site, ' SameSite=Lax')
             self.assertEqual(path, ' Path=/')
 
     def test_login_route_variants_match_real_proxy(self):

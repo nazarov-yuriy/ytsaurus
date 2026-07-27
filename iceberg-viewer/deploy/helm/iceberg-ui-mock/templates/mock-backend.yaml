@@ -59,6 +59,10 @@ spec:
             - name: MOCK_DELAY
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.mockBackend.corsOrigins }}
+            - name: MOCK_CORS_ORIGINS
+              value: {{ join "," . | quote }}
+            {{- end }}
             {{- with .Values.auth.ytUpstream }}
             - name: MOCK_YT_UPSTREAM
               value: {{ . | quote }}

@@ -30,6 +30,11 @@ Environment:
   strict mode; it maps to the `iceberg` user.
 - `MOCK_DELAY=<ms|cmd:ms,...>` simulates a slow catalog on data commands
   (`//sys` paths and infrastructure endpoints exempt) — see `../docs/timeouts.md`.
+- `MOCK_CORS_ORIGINS=<origin,...>` enables credentialed browser access for an
+  exact comma-separated list of `http(s)://host[:port]` origins. CORS is
+  disabled by default (the normal UI server-to-backend topology does not need
+  it); `null`, suffix matches, paths, userinfo, queries, and fragments are
+  rejected.
 - `MOCK_CSRF_SECRET`, `MOCK_CSRF_TTL_SECONDS` (default 86400) — CSRF HMAC secret
   and token validity; without the env the secret is persisted in PostgreSQL
   (`settings` table) or random per process in RAM mode.
@@ -58,8 +63,9 @@ seeds described above require an explicit anonymous-test opt-in.
   plaintext. Sessions expire after the configured cookie TTL (30 days by
   default), matching the browser's `YTCypressCookie` lifetime.
 - Cookies have the 64-hex shape produced by `GenerateCookieValue`, with matching
-  server/browser expiry. The privileged `//sys/cypress_cookies` store is not
-  exposed through this authorization-light mock API. CSRF tokens use the real
+  server/browser expiry and explicit `Secure; HttpOnly; SameSite=Lax; Path=/`
+  attributes. The privileged `//sys/cypress_cookies` store is not exposed
+  through this authorization-light mock API. CSRF tokens use the real
   SignCsrfToken HMAC construction (`tests/test_cookie_model.py`).
 - Password changes revoke the user's existing sessions and increment a revision
   checked during authentication, so a racing login with the old password cannot

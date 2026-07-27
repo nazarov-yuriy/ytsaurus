@@ -21,6 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PORT = 8012
 STRICT_PORT = 8014
+CORS_PORT = 8015
 
 _procs = []
 
@@ -29,6 +30,7 @@ def setUpModule():
     anonymous_env = {
         key: value for key, value in os.environ.items()
         if key not in (
+            'MOCK_CORS_ORIGINS',
             'MOCK_ENABLE_DEV_SEED_USERS',
             'MOCK_REQUIRE_AUTH',
             'MOCK_ROBOT_TOKEN',
@@ -49,7 +51,14 @@ def setUpModule():
     _procs.append(subprocess.Popen(
         [sys.executable, str(ROOT / 'mock-backend-py' / 'server.py'), str(STRICT_PORT)],
         env=strict_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
-    for port in (PORT, STRICT_PORT):
+    cors_env = {
+        **anonymous_env,
+        'MOCK_CORS_ORIGINS': 'https://viewer.internal',
+    }
+    _procs.append(subprocess.Popen(
+        [sys.executable, str(ROOT / 'mock-backend-py' / 'server.py'), str(CORS_PORT)],
+        env=cors_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+    for port in (PORT, STRICT_PORT, CORS_PORT):
         for _ in range(50):
             try:
                 urllib.request.urlopen(f'http://localhost:{port}/ping', timeout=1)
@@ -140,7 +149,7 @@ class TestAuth(BackendTestCase):
 
     def test_login_success_sets_cypress_cookie(self):
         # auth.md §1: login is HTTP Basic to POST /login (NOT a JSON command);
-        # success = empty 200 + Set-Cookie: YTCypressCookie=...; HttpOnly; no SameSite.
+        # The mock adds an explicit SameSite browser boundary to the real shape.
         for port in self.each():
             status, body, hdrs = call(port, 'POST', '/login',
                                       headers={'Authorization': self.ICEBERG_BASIC})
@@ -149,7 +158,7 @@ class TestAuth(BackendTestCase):
             cookie = hdrs.get('Set-Cookie', '')
             self.assertIn('YTCypressCookie=', cookie)
             self.assertIn('HttpOnly', cookie)
-            self.assertNotIn('SameSite', cookie)  # real proxy never sets it
+            self.assertIn('SameSite=Lax', cookie)
 
     def test_login_without_authorization_returns_empty_basic_challenge(self):
         # cypress_cookie_login.cpp:50-58,224-228 — a regular request to /login is the
@@ -639,15 +648,51 @@ class TestErrorFormatNegotiation(BackendTestCase):
             self.assertLessEqual(err['code'], 2 ** 53 - 1)
 
     def test_error_format_is_allowed_by_cors_preflight(self):
-        for port in self.each():
-            status, _, hdrs = call(port, 'OPTIONS', '/api/v3/get', headers={
-                'Origin': 'https://viewer.internal',
-                'Access-Control-Request-Headers': 'X-YT-Error-Format',
+        status, _, hdrs = call(CORS_PORT, 'OPTIONS', '/api/v3/get', headers={
+            'Origin': 'https://viewer.internal',
+            'Access-Control-Request-Headers': 'X-YT-Error-Format',
+        })
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            hdrs['Access-Control-Allow-Origin'], 'https://viewer.internal')
+        self.assertEqual(hdrs['Access-Control-Allow-Credentials'], 'true')
+        self.assertEqual(hdrs['Vary'], 'Origin')
+        allowed = {part.strip().lower() for part in
+                   hdrs['Access-Control-Allow-Headers'].split(',')}
+        self.assertIn('x-yt-error-format', allowed)
+
+    def test_cors_is_default_deny_and_uses_an_exact_allowlist(self):
+        origins = (
+            'https://attacker.internal',
+            'https://viewer.internal.attacker.example',
+            'null',
+        )
+        for port in (PORT, STRICT_PORT, CORS_PORT):
+            for origin in origins:
+                status, _, headers = call(
+                    port, 'OPTIONS', '/api/v3/get',
+                    headers={'Origin': origin})
+                self.assertEqual(status, 403, (port, origin))
+                self.assertIsNone(headers.get('Access-Control-Allow-Origin'))
+
+        status, _, headers = call(
+            PORT, 'GET', '/auth/whoami',
+            headers={'Origin': 'https://viewer.internal'})
+        self.assertEqual(status, 200)
+        self.assertIsNone(headers.get('Access-Control-Allow-Origin'))
+
+        _, _, login_headers = call(
+            PORT, 'POST', '/login',
+            headers={'Authorization': TestAuth.ICEBERG_BASIC})
+        cookie = login_headers['Set-Cookie'].split(';', 1)[0]
+        status, _, headers = call(
+            PORT, 'GET', '/auth/whoami',
+            headers={
+                'Cookie': cookie,
+                'Origin': 'https://attacker.internal',
             })
-            self.assertEqual(status, 200)
-            allowed = {part.strip().lower() for part in
-                       hdrs['Access-Control-Allow-Headers'].split(',')}
-            self.assertIn('x-yt-error-format', allowed)
+        self.assertEqual(status, 200)
+        self.assertIsNone(headers.get('Access-Control-Allow-Origin'))
 
 
 class TestReadTableYqlFormat(BackendTestCase):

@@ -16,6 +16,9 @@ mockBackend:
   # Simulate a slow catalog, e.g. "1500" or "read_table:5000,list:2000".
   # //sys paths and infrastructure endpoints are never delayed (docs/timeouts.md).
   delay: ""
+  # Exact browser origins allowed to call the backend directly with
+  # credentials. Keep empty for the normal UI reverse-proxy topology.
+  corsOrigins: []
   service:
     # Port 80 keeps the clusters-config `proxy` value a bare hostname; other
     # ports are appended to the generated Service DNS address.

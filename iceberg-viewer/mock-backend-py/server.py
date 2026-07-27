@@ -46,6 +46,29 @@ if RECORD_PATH and (REQUIRE_AUTH or UPSTREAM):
         'MOCK_RECORD is a development-only fixture and cannot be used with '
         'authenticated or delegated authentication')
 
+
+def _cors_origins(raw_value):
+    origins = set()
+    for origin in filter(None, (part.strip() for part in raw_value.split(','))):
+        parsed = urllib.parse.urlsplit(origin)
+        if (
+                origin == 'null'
+                or parsed.scheme not in ('http', 'https')
+                or not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.path
+                or parsed.query
+                or parsed.fragment):
+            raise RuntimeError(
+                'MOCK_CORS_ORIGINS entries must be exact http(s) origins '
+                'without credentials, paths, queries, or fragments')
+        origins.add(origin)
+    return frozenset(origins)
+
+
+CORS_ORIGINS = _cors_origins(os.environ.get('MOCK_CORS_ORIGINS', ''))
+
 # MOCK_DELAY simulates a slow catalog: "1500" delays every data command by 1.5s,
 # "read_table:5000,list:2000" per command. //sys paths are never delayed — the
 # UI server's boot-path robot requests have a 5s timeout (see docs/timeouts.md).
@@ -492,14 +515,15 @@ async def run_audit(*args):
 
 def cors_headers(request):
     origin = request.headers.get('Origin')
-    if not origin:
+    if not origin or origin not in CORS_ORIGINS:
         return {}
     return {'Access-Control-Allow-Origin': origin,
             'Access-Control-Allow-Credentials': 'true',
             'Access-Control-Allow-Methods': 'POST, PUT, GET, OPTIONS',
             'Access-Control-Allow-Headers': CORS_ALLOW,
             'Access-Control-Expose-Headers': CORS_EXPOSE,
-            'Access-Control-Max-Age': '3600'}
+            'Access-Control-Max-Age': '3600',
+            'Vary': 'Origin'}
 
 
 def _record_key_is_sensitive(key):
@@ -659,6 +683,8 @@ async def request_pipeline(request, call_next):
     request.state.audit_extra = {}
     if request.method == 'OPTIONS':
         request.state.body_buf = b''
+        if request.headers.get('Origin') not in CORS_ORIGINS:
+            return Response(b'', status_code=403)
         return await run_dedicated(
             _INFRA_EXECUTOR, _INFRA_CAPACITY, respond, request, 200, b'')
     request.state.body_buf = await request.body()  # uvicorn decodes chunked itself
@@ -735,7 +761,7 @@ async def api_versions(request: Request):
 @app.api_route('/login', methods=METHODS)
 @app.api_route('/login/{_rest:path}', methods=METHODS)
 def login(request: Request, _rest=''):
-    # HTTP Basic; real proxy sets YTCypressCookie, no SameSite.
+    # HTTP Basic; this deployment adds SameSite=Lax to the real proxy shape.
     authorization = request.headers.get('Authorization')
     if authorization is None:
         return respond(request, 401, b'', {'WWW-Authenticate': 'Basic'})
@@ -783,7 +809,9 @@ def login(request: Request, _rest=''):
     request.state.audit_extra.update(outcome='success', origin=userdb.user_origin(user))
     expires = format_datetime(datetime.now(timezone.utc) + userdb.SESSION_TTL, usegmt=True)
     return respond(request, 200, b'', {
-        'Set-Cookie': f'YTCypressCookie={cookie}; Expires={expires}; Secure; HttpOnly; Path=/'})
+        'Set-Cookie': (
+            f'YTCypressCookie={cookie}; Expires={expires}; Secure; HttpOnly; '
+            'SameSite=Lax; Path=/')})
 
 
 @app.api_route('/auth/whoami', methods=METHODS)

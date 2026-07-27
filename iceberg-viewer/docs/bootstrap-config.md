@@ -510,7 +510,9 @@ mock only has to make those four commands work.
   exceptions.
 - Exception 1 — **download-ish reads**, gated by `uiSettings.directDownload` (`src/ui/utils/navigation/index.ts:148-166`): `read_table` (table download), `read_file`, `read_query_result`, `get_job_stderr`, `get_job_fail_context`, `get_job_input` go to `//<externalProxy ?? proxy>/api/v3/<cmd>` with `withCredentials: true` (`.../DownloadManager/DownloadManager.tsx:314`, `src/ui/store/selectors/navigation/content/file.js:11`, `.../Jobs/job-selector.ts:154-168`). Set `directDownload: false` to route these through the node server instead.
 - Exception 2 — **uploads always bypass the node server**: `write_file` (`src/ui/containers/UploadFileManager/uploadFile.ts:18,36`) and `write_table` (`.../UploadManager/UploadManager.tsx:408,426-429`) override the wrapper `proxy` with `externalProxy ?? proxy` regardless of `directDownload`, and set `X-Csrf-Token` manually (`UploadManager.tsx:486-490`). Only relevant if your mock is writable.
-- The existing mock already answers CORS preflights
+- The mock answers CORS preflights only for exact origins explicitly listed in
+  `MOCK_CORS_ORIGINS`; its secure default is no browser CORS. The chart's normal
+  reverse-proxy topology leaves that allowlist empty.
   (`Handler.cors_headers` in `mock-backend-py/server.py:355-364`).
 - No application websockets. The only websocket is the dev-server HMR socket at `/build/sockjs-node`. The only SSE is `text/event-stream` on the AI-chat endpoint (`src/server/controllers/ai-chat.ts:125`), which is off by default.
 
