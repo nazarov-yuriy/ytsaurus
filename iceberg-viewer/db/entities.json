@@ -422,7 +422,7 @@
   {
     "entry_type": "schema",
     "name": "login-request",
-    "description": "Password login: browser POSTs JSON to UI server /api/yt/:cluster/login; UI server converts to HTTP Basic and calls proxy POST /login; empty 200 + Set-Cookie YTCypressCookie (no SameSite), duplicated as <cluster>_YTCypressCookie by the UI server.",
+    "description": "Password login: browser POSTs JSON to UI server /api/yt/:cluster/login; UI server converts to HTTP Basic and calls proxy POST /login; empty 200 + Set-Cookie YTCypressCookie (SameSite=Lax in this backend; the upstream proxy omits it), duplicated as <cluster>_YTCypressCookie by the UI server.",
     "fields": [
       {
         "name": "username",

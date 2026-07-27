@@ -63,7 +63,7 @@ One element of the execute_batch response list, in request order.
 
 ## login-request
 
-Password login: browser POSTs JSON to UI server /api/yt/:cluster/login; UI server converts to HTTP Basic and calls proxy POST /login; empty 200 + Set-Cookie YTCypressCookie (no SameSite), duplicated as <cluster>_YTCypressCookie by the UI server.
+Password login: browser POSTs JSON to UI server /api/yt/:cluster/login; UI server converts to HTTP Basic and calls proxy POST /login; empty 200 + Set-Cookie YTCypressCookie (SameSite=Lax in this backend; the upstream proxy omits it), duplicated as <cluster>_YTCypressCookie by the UI server.
 
 | Status | Field | Type | Required | Description |
 |--------|-------|------|----------|-------------|
