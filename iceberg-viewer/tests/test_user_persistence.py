@@ -333,6 +333,22 @@ class TestUserPersistence(unittest.TestCase):
         self.assertEqual(details['requests'],
                          [{'command': 'mystery_cmd', 'path': '//x'}])
 
+    def test_9c_audit_table_serves_pg_rows_without_details(self):
+        # //sys/logs/audit_log surfaces the PG audit trail; the sensitive
+        # `details` jsonb is not part of the projection at any layer.
+        robot = {'Authorization': 'OAuth persistence-test-robot'}
+        call('POST', '/api/v3/get', robot, body={'path': '//home'})
+        status, body, _ = call('POST', '/api/v3/read_table', robot, body={
+            'path': '//sys/logs/audit_log',
+            'output_format': {'$value': 'web_json',
+                              '$attributes': {'max_selected_column_count': 50}}})
+        self.assertEqual(status, 200)
+        self.assertEqual(body['all_column_names'], ['endpoint', 'login', 'ts'])
+        self.assertGreater(len(body['rows']), 0)
+        self.assertNotIn('details', json.dumps(body))
+        row = body['rows'][0]
+        self.assertEqual(set(row), {'ts', 'login', 'endpoint'})
+
     def test_7_database_connection_recovers_after_termination(self):
         _, cookie = self.login(LOCAL_USER, LOCAL_PASSWORD)
         with psycopg.connect(DSN, autocommit=True) as conn:

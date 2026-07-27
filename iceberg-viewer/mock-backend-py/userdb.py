@@ -521,6 +521,10 @@ if DSN:
                       ' ORDER BY id DESC LIMIT %s', (count,))
         return rows[::-1]
 
+    def audit_rows():
+        """Non-sensitive columns only — feeds the //sys/logs/audit_log table."""
+        return _query('SELECT ts, login, endpoint FROM audit_log ORDER BY id')
+
 else:  # in-RAM fallback: same behavior, nothing persisted
     _users = {}
     _origins = {}
@@ -640,6 +644,11 @@ else:  # in-RAM fallback: same behavior, nothing persisted
     def audit_tail(count):
         with _lock:
             return list(_audit)[-count:]
+
+    def audit_rows():
+        """Non-sensitive columns only — feeds the //sys/logs/audit_log table."""
+        with _lock:
+            return [(ts, login, endpoint) for ts, login, endpoint, _ in _audit]
 
 
 if __name__ == '__main__':

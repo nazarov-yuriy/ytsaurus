@@ -132,6 +132,14 @@ authorization, cookies, sessions, secrets, credentials, or tokens are replaced
 with `<redacted>` before either RAM or PostgreSQL persistence. Full
 request/response bodies and headers are never retained by the audit log.
 
+The trail is browsable in the UI's own table viewer at `//sys/logs/audit_log`
+(a live table: rows and `@row_count` are computed per read). It projects the
+strict columns only — `ts`, `login`, `endpoint` — and the schemaless `details`
+payload is never selected at any layer, so its evolving contents cannot leak
+through the catalog API. Note the usual caveat: authorization is out of scope,
+so any authenticated caller (or anyone, in anonymous development mode) can
+read this audit *metadata*.
+
 Storage follows `userdb.py`: the `audit_log` table in PostgreSQL (indexed by
 `ts`), or a bounded in-RAM deque (last 10,000 entries) without `MOCK_PG_DSN`.
 Writes are fail-open — a storage outage logs `audit write failed` and the

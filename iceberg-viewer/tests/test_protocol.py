@@ -873,6 +873,36 @@ class TestParameterSources(BackendTestCase):
                            body={'path': '//home/iceberg/warehouse/trips/@dynamic'})
             self.assertIs(b, False)
 
+    def test_audit_log_table_exposes_strict_columns_only(self):
+        # mock-backend-py/README.md "Audit log": the trail is browsable at
+        # //sys/logs/audit_log with ts/login/endpoint only — the schemaless
+        # `details` payload is never selected, so it cannot leak here.
+        for port in self.each():
+            call(port, 'POST', '/api/v3/get',
+                 body={'path': '//home/iceberg/warehouse/trips/@type'})
+            _, count, _ = call(port, 'POST', '/api/v3/get',
+                               body={'path': '//sys/logs/audit_log/@row_count'})
+            _, body, _ = call(port, 'POST', '/api/v3/read_table', body={
+                'path': f'//sys/logs/audit_log[#{max(0, count - 50)}:#{count}]',
+                'output_format': {'$value': 'web_json',
+                                  '$attributes': {'max_selected_column_count': 50}}})
+            self.assertEqual(body['all_column_names'], ['endpoint', 'login', 'ts'])
+            self.assertGreater(len(body['rows']), 0)
+            # Other suites share this backend, so search instead of relying
+            # on row order.
+            row = next(r for r in reversed(body['rows'])
+                       if r['endpoint']['$value'] == '/api/v3/get')
+            self.assertEqual(set(row), {'ts', 'login', 'endpoint'})
+            self.assertEqual(row['login']['$value'], 'iceberg')
+            self.assertRegex(row['ts']['$value'], r'^\d{4}-\d{2}-\d{2}T.*Z$')
+
+            _, count_before, _ = call(port, 'POST', '/api/v3/get',
+                                      body={'path': '//sys/logs/audit_log/@row_count'})
+            call(port, 'POST', '/api/v3/exists', body={'path': '//tmp'})
+            _, count_after, _ = call(port, 'POST', '/api/v3/get',
+                                     body={'path': '//sys/logs/audit_log/@row_count'})
+            self.assertGreater(count_after, count_before)  # the table is live
+
     def test_cluster_params_version_paths_resolve(self):
         # cluster-params.ts:88,149,173: the UI server's boot batches read the
         # scheduler and first-primary-master orchid versions. ui >= 1.60

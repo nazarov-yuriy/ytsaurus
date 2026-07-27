@@ -294,9 +294,13 @@ VIRTUAL_ATTRS = {'opaque_attribute_keys': [], 'user_attributes': {}, 'user_attri
 _MISSING = object()
 
 
+def attr_value(v):
+    return v() if callable(v) else v  # live tables compute row-derived attributes
+
+
 def attributes_for(node, requested):
     keys = requested if isinstance(requested, list) else (requested or {}).get('keys', [])
-    return {k: node.attrs[k] for k in keys if node.attrs.get(k) is not None}
+    return {k: attr_value(node.attrs[k]) for k in keys if node.attrs.get(k) is not None}
 
 
 def cmd_get(params, auth):
@@ -314,12 +318,12 @@ def cmd_get(params, auth):
         attrs = attributes_for(node, params.get('attributes'))
         return {'$attributes': attrs, '$value': value} if attrs else value
     if attr_path == '':
-        return dict(node.attrs)
+        return {k: attr_value(v) for k, v in node.attrs.items()}
     head, *rest = attr_path.split('/')
     if head in VIRTUAL_ATTRS and head not in node.attrs:
         v = VIRTUAL_ATTRS[head]
     else:
-        v = node.attrs.get(head, _MISSING)
+        v = attr_value(node.attrs.get(head, _MISSING))
     for k in rest:
         if isinstance(v, dict):
             v = v['$value'] if '$value' in v else v
@@ -365,6 +369,7 @@ def cmd_read_table(params, auth):
     if not r or r[0].kind != 'table':
         raise CommandError(400, yt_error(500, f'Error resolving path {path}', {'code': 500}))
     node = r[0]
+    rows = node.rows() if callable(node.rows) else node.rows
     start, limit = range_of(path)
     of = params.get('output_format')
     of_attrs = of.get('$attributes', {}) if isinstance(of, dict) else {}
@@ -376,12 +381,12 @@ def cmd_read_table(params, auth):
             except (TypeError, ValueError):
                 return default
         return web_json_body(
-            schema, node.rows, start_row=start, row_limit=50 if limit is None else limit,
+            schema, rows, start_row=start, row_limit=50 if limit is None else limit,
             column_names=of_attrs.get('column_names'),
             max_selected_column_count=_int(of_attrs.get('max_selected_column_count'), 50),
             max_all_column_names_count=_int(of_attrs.get('max_all_column_names_count'), 2000),
             value_format=of_attrs.get('value_format'))
-    return node.rows[start:start + (50 if limit is None else limit)]
+    return rows[start:start + (50 if limit is None else limit)]
 
 
 def cmd_execute_batch(params, auth):

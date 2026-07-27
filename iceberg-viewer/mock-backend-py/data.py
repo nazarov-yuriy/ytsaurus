@@ -112,6 +112,15 @@ def make_document(value) -> Node:
     return Node('document', _base_attrs('document'), value=value)
 
 
+def make_live_table(schema, rows_fn) -> Node:
+    """Table whose rows and row-derived attributes are computed per read."""
+    node = make_table(schema, [])
+    node.rows = rows_fn
+    node.attrs.update(row_count=lambda: len(rows_fn()),
+                      chunk_row_count=lambda: len(rows_fn()))
+    return node
+
+
 def make_table(schema, rows) -> Node:
     attrs = _base_attrs('table')
     key_columns = [c['name'] for c in schema if c.get('sort_order')]
@@ -182,6 +191,25 @@ _insert('sys/pool_trees/physical', make_map_node())
 _insert('sys/scheduler/orchid/service/version', make_document('24.1.0-mock'))
 _insert('sys/primary_masters/primary-master/orchid/service/version',
         make_document('24.1.0-mock'))
+
+# The audit trail, browsable in the table viewer. Strict columns only —
+# the schemaless `details` payload is never selected here (userdb.audit_rows),
+# so its evolving contents cannot leak through the catalog API.
+AUDIT_LOG_SCHEMA = [
+    {'name': 'ts', 'type': 'string', 'type_v3': {'type_name': 'optional', 'item': 'string'}},
+    {'name': 'login', 'type': 'string', 'type_v3': {'type_name': 'optional', 'item': 'string'}},
+    {'name': 'endpoint', 'type': 'string', 'type_v3': {'type_name': 'optional', 'item': 'string'}},
+]
+
+
+def _audit_log_rows():
+    import userdb  # deferred: keeps data.py importable without the store loaded
+    return [{'ts': _js_iso(ts.astimezone(timezone.utc)), 'login': login, 'endpoint': endpoint}
+            for ts, login, endpoint in userdb.audit_rows()]
+
+
+_insert('sys/logs', make_map_node())
+_insert('sys/logs/audit_log', make_live_table(AUDIT_LOG_SCHEMA, _audit_log_rows))
 
 
 def _fill_paths(node: Node, path: str) -> None:
