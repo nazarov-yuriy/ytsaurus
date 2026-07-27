@@ -50,6 +50,24 @@ spec:
       annotations:
         checksum/postgres-credentials: {{ include "iceberg-ui-mock.postgres.credentialsChecksum" . }}
     spec:
+      initContainers:
+        - name: validate-postgres-password
+          image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
+          imagePullPolicy: {{ .Values.postgres.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              if [ "$POSTGRES_PASSWORD" = "mock-password" ]; then
+                echo "the PostgreSQL Secret contains the published mock-password placeholder" >&2
+                exit 1
+              fi
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.existingSecret | default (include "iceberg-ui-mock.postgres.fullname" .) }}
+                  key: password
       containers:
         - name: postgres
           image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"

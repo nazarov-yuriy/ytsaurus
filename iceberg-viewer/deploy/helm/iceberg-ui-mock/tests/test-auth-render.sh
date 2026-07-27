@@ -105,8 +105,11 @@ assert_present "$test_tmp/default-database-password.stderr" \
     >"$test_tmp/postgres.yaml"
 assert_present "$test_tmp/postgres.yaml" '            - name: MOCK_PG_DSN'
 assert_present "$test_tmp/postgres.yaml" '            - name: MOCK_REQUIRE_AUTH'
+assert_present "$test_tmp/postgres.yaml" '        - name: validate-postgres-password'
+assert_present "$test_tmp/postgres.yaml" \
+    'the PostgreSQL Secret contains the published mock-password placeholder'
 assert_absent "$test_tmp/postgres.yaml" '            - name: MOCK_ENABLE_DEV_SEED_USERS'
-assert_absent "$test_tmp/postgres.yaml" 'mock-password'
+assert_absent "$test_tmp/postgres.yaml" '  password: "mock-password"'
 
 "$helm_bin" template auth-regression "$chart_dir" \
     --namespace auth-regression \

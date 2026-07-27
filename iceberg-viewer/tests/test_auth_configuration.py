@@ -17,6 +17,7 @@ def run_startup(**overrides):
         'MOCK_REQUIRE_AUTH',
         'MOCK_ROBOT_TOKEN',
         'MOCK_YT_UPSTREAM',
+        'PGPASSWORD',
     }
     environment = {
         key: value for key, value in os.environ.items()
@@ -47,6 +48,17 @@ class TestAuthenticationConfiguration(unittest.TestCase):
         self.assertNotEqual(process.returncode, 0)
         self.assertIn(
             'must be changed from the published mock-robot-token',
+            process.stderr)
+
+    def test_published_database_password_is_rejected_before_connecting(self):
+        process = run_startup(
+            MOCK_REQUIRE_AUTH='1',
+            MOCK_PG_DSN='host=unreachable.invalid connect_timeout=1',
+            PGPASSWORD='mock-password')
+
+        self.assertNotEqual(process.returncode, 0)
+        self.assertIn(
+            'must be changed from the published mock-password',
             process.stderr)
 
 

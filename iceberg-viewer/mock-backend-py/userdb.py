@@ -19,6 +19,10 @@ from datetime import datetime, timedelta, timezone
 DSN = os.environ.get('MOCK_PG_DSN')
 SESSION_TTL = timedelta(seconds=int(os.environ.get('MOCK_COOKIE_TTL_SECONDS') or 30 * 24 * 3600))
 REQUIRE_AUTH = bool(os.environ.get('MOCK_REQUIRE_AUTH'))
+if DSN and REQUIRE_AUTH and os.environ.get('PGPASSWORD') == 'mock-password':
+    raise RuntimeError(
+        'PGPASSWORD must be changed from the published mock-password '
+        'placeholder before authenticated database startup')
 PUBLISHED_DEV_USERS = {'iceberg': 'iceberg', 'root': ''}
 # These well-known accounts exist only for anonymous protocol-fidelity tests.
 # Never put their hashes into an authenticated store, even if the opt-in leaks

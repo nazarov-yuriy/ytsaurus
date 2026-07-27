@@ -24,6 +24,8 @@ Environment:
   and nested JSON fields are redacted; non-JSON bodies are omitted, individual
   bodies over 64 KiB are omitted, and the file stops growing at 50 MiB.
 - `MOCK_PG_DSN=<libpq conninfo>` switches user/session storage to PostgreSQL.
+  Authenticated startup rejects the published `mock-password` when supplied
+  through `PGPASSWORD`, including when a Helm `existingSecret` contains it.
 - `MOCK_REQUIRE_AUTH=1` rejects missing/expired cookies and unknown OAuth
   tokens instead of using the anonymous `iceberg` fallback.
 - `MOCK_ENABLE_DEV_SEED_USERS=1` creates the published `iceberg`/`iceberg` and
