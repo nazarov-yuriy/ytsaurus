@@ -28,6 +28,8 @@ ROOT = Path(__file__).resolve().parent.parent
 BACKEND = ROOT / 'mock-backend-py'
 DSN = os.environ.get('MOCK_PG_TEST_DSN')
 PORT = None
+LOCAL_USER = 'local-test'
+LOCAL_PASSWORD = 'local-secret'
 
 try:
     import psycopg
@@ -54,11 +56,26 @@ def call(method, path, headers=None, body=None):
         return e.code, json.loads(e.read() or b'null'), e.headers
 
 
-def start_server(dsn):
+def storage_env(dsn):
     env = {
-        **os.environ,
+        **{
+            key: value for key, value in os.environ.items()
+            if key not in (
+                'MOCK_ENABLE_DEV_SEED_USERS',
+                'MOCK_PG_DSN',
+                'MOCK_REQUIRE_AUTH',
+                'MOCK_ROBOT_TOKEN',
+            )
+        },
         'MOCK_PG_DSN': dsn,
         'MOCK_REQUIRE_AUTH': '1',
+    }
+    return env
+
+
+def start_server(dsn):
+    env = {
+        **storage_env(dsn),
         'MOCK_ROBOT_TOKEN': 'persistence-test-robot',
     }
     proc = subprocess.Popen([sys.executable, str(BACKEND / 'server.py'), str(PORT)],
@@ -97,6 +114,13 @@ class TestUserPersistence(unittest.TestCase):
                 options=f'-c search_path={cls.schema}',
                 application_name=cls.application_name)
             cls.proc = start_server(cls.dsn)
+            subprocess.run(
+                [
+                    sys.executable, str(BACKEND / 'userdb.py'), 'add-user',
+                    LOCAL_USER, LOCAL_PASSWORD,
+                ],
+                env=storage_env(cls.dsn), check=True,
+                stdout=subprocess.DEVNULL)
         except Exception:
             cls.drop_schema()
             raise
@@ -137,19 +161,29 @@ class TestUserPersistence(unittest.TestCase):
             {'Authorization': 'OAuth wrong-robot-token'})
         self.assertEqual(status, 401)
 
-    def test_1_seed_user_can_login(self):
-        status, cookie = self.login('iceberg', 'iceberg')
+    def test_1_published_development_credentials_are_absent(self):
+        self.assertEqual(self.login('iceberg', 'iceberg')[0], 401)
+        self.assertEqual(self.login('root', '')[0], 401)
+
+        with psycopg.connect(type(self).dsn) as conn:
+            rows = conn.execute(
+                "SELECT login FROM users WHERE login IN ('iceberg', 'root')"
+            ).fetchall()
+        self.assertEqual(rows, [])
+
+    def test_2_explicitly_provisioned_local_user_can_login(self):
+        status, cookie = self.login(LOCAL_USER, LOCAL_PASSWORD)
         self.assertEqual(status, 200)
         _, who, _ = call('GET', '/auth/whoami', {'Cookie': cookie})
         self.assertEqual(who['realm'], 'cypress_cookie')
-        self.assertEqual(who['login'], 'iceberg')
+        self.assertEqual(who['login'], LOCAL_USER)
 
-    def test_2_wrong_password_is_masked_401(self):
-        status, _ = self.login('iceberg', 'nope')
+    def test_2b_wrong_password_is_masked_401(self):
+        status, _ = self.login(LOCAL_USER, 'nope')
         self.assertEqual(status, 401)
 
     def test_3_session_survives_server_restart(self):
-        _, cookie = self.login('iceberg', 'iceberg')
+        _, cookie = self.login(LOCAL_USER, LOCAL_PASSWORD)
         type(self).proc.terminate()
         type(self).proc.wait()
         type(self).proc = start_server(type(self).dsn)  # fresh process, empty RAM
@@ -158,7 +192,7 @@ class TestUserPersistence(unittest.TestCase):
 
     def test_4_cli_added_user_is_visible_without_restart(self):
         subprocess.run([sys.executable, str(BACKEND / 'userdb.py'), 'add-user', 'alice', 's3cret'],
-                       env={**os.environ, 'MOCK_PG_DSN': type(self).dsn}, check=True,
+                       env=storage_env(type(self).dsn), check=True,
                        stdout=subprocess.DEVNULL)
         status, cookie = self.login('alice', 's3cret')
         self.assertEqual(status, 200)
@@ -168,14 +202,14 @@ class TestUserPersistence(unittest.TestCase):
     def test_5_password_change_revokes_existing_sessions(self):
         subprocess.run(
             [sys.executable, str(BACKEND / 'userdb.py'), 'add-user', 'session-owner', 'old-secret'],
-            env={**os.environ, 'MOCK_PG_DSN': type(self).dsn}, check=True,
+            env=storage_env(type(self).dsn), check=True,
             stdout=subprocess.DEVNULL)
         status, cookie = self.login('session-owner', 'old-secret')
         self.assertEqual(status, 200)
 
         subprocess.run(
             [sys.executable, str(BACKEND / 'userdb.py'), 'add-user', 'session-owner', 'new-secret'],
-            env={**os.environ, 'MOCK_PG_DSN': type(self).dsn}, check=True,
+            env=storage_env(type(self).dsn), check=True,
             stdout=subprocess.DEVNULL)
         status, _, _ = call('GET', '/auth/whoami', {'Cookie': cookie})
         self.assertEqual(status, 401)
@@ -190,7 +224,7 @@ class TestUserPersistence(unittest.TestCase):
         for salt, password_hash in rows:
             self.assertTrue(salt)
             self.assertRegex(password_hash, r'^pbkdf2_sha256\$600000\$[0-9a-f]{64}$')
-            self.assertNotIn(password_hash, ('iceberg', 's3cret', ''))
+            self.assertNotIn(password_hash, (LOCAL_PASSWORD, 's3cret', ''))
 
     def test_8_external_user_row_and_session_persist_without_password_material(self):
         # docs/auth.md "External authentication": a user verified by the real
@@ -200,7 +234,11 @@ class TestUserPersistence(unittest.TestCase):
         spec = importlib.util.spec_from_file_location(
             f'userdb_pg_{secrets.token_hex(4)}', BACKEND / 'userdb.py')
         userdb = importlib.util.module_from_spec(spec)
-        with unittest.mock.patch.dict(os.environ, {'MOCK_PG_DSN': type(self).dsn}):
+        with unittest.mock.patch.dict(os.environ, {
+                'MOCK_ENABLE_DEV_SEED_USERS': '',
+                'MOCK_PG_DSN': type(self).dsn,
+                'MOCK_REQUIRE_AUTH': '1',
+        }):
             spec.loader.exec_module(userdb)
         cookie = userdb.external_login('remote-user')
         self.assertTrue(cookie)
@@ -225,8 +263,8 @@ class TestUserPersistence(unittest.TestCase):
     def test_9_actions_are_audited_with_strict_fields_and_jsonb_details(self):
         # mock-backend-py/README.md "Audit log": strict columns for
         # ts/login/endpoint, everything else in a schemaless jsonb payload.
-        _, cookie = self.login('iceberg', 'iceberg')
-        self.login('iceberg', 'wrong-password-audit')
+        _, cookie = self.login(LOCAL_USER, LOCAL_PASSWORD)
+        self.login(LOCAL_USER, 'wrong-password-audit')
         call('GET', '/auth/whoami', {'Cookie': cookie})
         robot = {'Authorization': 'OAuth persistence-test-robot'}
         call('POST', '/api/v4/get', robot, body={'path': '//home/iceberg/warehouse'})
@@ -257,13 +295,13 @@ class TestUserPersistence(unittest.TestCase):
             {'command': 'exists', 'path': '//tmp'}])
 
         _, login, _, details = last('/login')  # the failed attempt was last
-        self.assertEqual(login, 'iceberg')
+        self.assertEqual(login, LOCAL_USER)
         self.assertEqual((details['outcome'], details['status']), ('rejected', 401))
         success = next(r[3] for r in reversed(rows)
                        if r[2] == '/login' and r[3].get('outcome') == 'success')
         self.assertEqual(success['origin'], 'local')
 
-        self.assertEqual(last('/auth/whoami')[1], 'iceberg')
+        self.assertEqual(last('/auth/whoami')[1], LOCAL_USER)
         # Credentials must never reach the audit trail.
         self.assertNotIn('wrong-password-audit', json.dumps([r[3] for r in rows]))
 
@@ -297,7 +335,7 @@ class TestUserPersistence(unittest.TestCase):
                          [{'command': 'mystery_cmd', 'path': '//x'}])
 
     def test_7_database_connection_recovers_after_termination(self):
-        _, cookie = self.login('iceberg', 'iceberg')
+        _, cookie = self.login(LOCAL_USER, LOCAL_PASSWORD)
         with psycopg.connect(DSN, autocommit=True) as conn:
             terminated = conn.execute(
                 'SELECT pg_terminate_backend(pid) FROM pg_stat_activity'
@@ -315,7 +353,7 @@ class TestUserPersistence(unittest.TestCase):
         status, who, _ = call(
             'GET', '/auth/whoami', {'Cookie': cookie})
         self.assertEqual(status, 200)
-        self.assertEqual(who['login'], 'iceberg')
+        self.assertEqual(who['login'], LOCAL_USER)
 
 
 if __name__ == '__main__':

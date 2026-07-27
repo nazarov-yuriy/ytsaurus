@@ -632,6 +632,11 @@ def login(request: Request, _rest=''):
     user = user_bytes.decode('utf-8', 'replace')
     password = password_bytes.decode('utf-8', 'replace')
     request.state.audit_user = user
+    if REQUIRE_AUTH and userdb.is_published_development_credential(user, password):
+        request.state.audit_extra['outcome'] = 'rejected'
+        return yt_error_response(
+            request, 401, yt_error(1, 'Incorrect login or password'),
+            {'WWW-Authenticate': 'Basic'})
     cookie = userdb.authenticate_and_create_session(user, password)
     # Locally-added users (test users) never reach the external YTsaurus;
     # everyone else is verified there and provisioned on first success.

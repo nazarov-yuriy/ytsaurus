@@ -28,14 +28,19 @@ _procs = []
 def setUpModule():
     anonymous_env = {
         key: value for key, value in os.environ.items()
-        if key not in ('MOCK_REQUIRE_AUTH', 'MOCK_ROBOT_TOKEN')
+        if key not in (
+            'MOCK_ENABLE_DEV_SEED_USERS',
+            'MOCK_REQUIRE_AUTH',
+            'MOCK_ROBOT_TOKEN',
+        )
     }
+    anonymous_env['MOCK_ENABLE_DEV_SEED_USERS'] = '1'
     _procs.append(subprocess.Popen(
         [sys.executable, str(ROOT / 'mock-backend-py' / 'server.py'), str(PORT)],
         env=anonymous_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
     strict_env = {
         key: value for key, value in anonymous_env.items()
-        if key != 'MOCK_PG_DSN'
+        if key not in ('MOCK_ENABLE_DEV_SEED_USERS', 'MOCK_PG_DSN')
     }
     strict_env.update({
         'MOCK_REQUIRE_AUTH': '1',
@@ -300,29 +305,20 @@ class TestStrictAuth(BackendTestCase):
             self.assertEqual(status, 200)
             self.assertIs(exists, True)
 
-    def test_login_cookie_still_requires_csrf(self):
-        basic = 'Basic ' + base64.b64encode(b'iceberg:iceberg').decode()
+    def test_published_development_credentials_are_rejected(self):
+        credentials = (b'iceberg:iceberg', b'root:')
         for port in self.each():
-            status, _, headers = call(
-                port, 'POST', '/login', headers={'Authorization': basic})
-            self.assertEqual(status, 200)
-            cookie = headers['Set-Cookie'].split(';', 1)[0]
-            status, who, _ = call(
-                port, 'GET', '/auth/whoami', headers={'Cookie': cookie})
-            self.assertEqual(status, 200)
-            self.assertEqual(who['login'], 'iceberg')
-
-            status, body, _ = call(
-                port, 'POST', '/api/v3/exists', body={'path': '//tmp'},
-                headers={'Cookie': cookie})
-            self.assertEqual(status, 401)
-            self.assertEqual(body['code'], 111)
-
-            status, exists, _ = call(
-                port, 'POST', '/api/v3/exists', body={'path': '//tmp'},
-                headers={'Cookie': cookie, 'X-Csrf-Token': who['csrf_token']})
-            self.assertEqual(status, 200)
-            self.assertIs(exists, True)
+            for raw_credentials in credentials:
+                with self.subTest(credentials=raw_credentials):
+                    basic = 'Basic ' + base64.b64encode(raw_credentials).decode()
+                    status, body, headers = call(
+                        port, 'POST', '/login',
+                        headers={'Authorization': basic})
+                    self.assertEqual(status, 401)
+                    self.assertEqual(body['code'], 1)
+                    self.assertEqual(
+                        body['message'], 'Incorrect login or password')
+                    self.assertEqual(headers.get('WWW-Authenticate'), 'Basic')
 
 
 class TestCypressCommands(BackendTestCase):

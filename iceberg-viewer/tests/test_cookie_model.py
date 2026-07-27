@@ -32,9 +32,15 @@ _procs = []
 
 
 def setUpModule():
-    env = {**{k: v for k, v in os.environ.items() if k != 'MOCK_PG_DSN'},
+    env = {**{k: v for k, v in os.environ.items()
+              if k not in (
+                  'MOCK_ENABLE_DEV_SEED_USERS',
+                  'MOCK_PG_DSN',
+                  'MOCK_REQUIRE_AUTH',
+              )},
            'MOCK_COOKIE_TTL_SECONDS': str(TTL),
-           'MOCK_CSRF_SECRET': 'cookie-model-test-secret'}
+           'MOCK_CSRF_SECRET': 'cookie-model-test-secret',
+           'MOCK_ENABLE_DEV_SEED_USERS': '1'}
     _procs.append(subprocess.Popen(
         [sys.executable, str(ROOT / 'mock-backend-py' / 'server.py'), str(PORT)],
         env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))

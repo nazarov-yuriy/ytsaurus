@@ -50,7 +50,7 @@ mock backend, as a first step toward serving the UI from an Apache Iceberg catal
   coverage when `MOCK_PG_TEST_DSN` is available.
 - `tests/test_external_auth.py` — delegated authentication against a real
   YTsaurus (`MOCK_YT_UPSTREAM`): external users provisioned on first verified
-  login, local test users never leaving the local store
+  login, explicitly provisioned local users never leaving the local store
   (docs/auth.md "External authentication").
 - `tests/test_golden_replay.py` — replays the recorded UI corpus
   (`recordings/proxy-traffic.jsonl`) against the backend and diffs every response

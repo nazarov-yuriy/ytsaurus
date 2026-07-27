@@ -57,8 +57,10 @@ the stock `python:3.12-slim` image. The UI image is pulled from
     `/opt/app/secrets`, `APP_INSTALLATION=custom`,
     `YT_AUTH_ALLOW_INSECURE=1`), ClusterIP Service.
   - `templates/tests/test-smoke.yaml` — `helm test` pod: probes the mock
-    directly, both UI boot gates (`cluster-info`, `cluster-params`), an `exists`
-    command through the UI tunnel, and a `read_table` web_json response.
+    directly and serves the UI app shell. Anonymous releases also exercise both
+    UI boot gates (`cluster-info`, `cluster-params`) and the UI command tunnel;
+    authenticated releases exercise backend commands with the secret-backed
+    robot and verify that unauthenticated backend access is rejected.
   - `tests/test-auth-render.sh` — source-level `helm template` regression checks
     for anonymous defaults, automatic strict authentication with
     `auth.ytUpstream`, rejection of the published robot-token placeholder in
@@ -70,7 +72,9 @@ the stock `python:3.12-slim` image. The UI image is pulled from
   It also selects `authentication: basic`, enables the UI login flow, and makes
   the backend reject missing/unknown credentials. Set
   `ui.cluster.authentication=none` explicitly only when an unauthenticated
-  PostgreSQL-backed mock is intentional. The seed login is `iceberg`/`iceberg`.
+  PostgreSQL-backed mock is intentional. No password users are created
+  automatically; provision local accounts explicitly with `userdb.py add-user`
+  after PostgreSQL is ready.
 - In run-from-ConfigMap mode the container always installs the exact versions
   in `mock-backend-py/requirements.txt` at start (the FastAPI/uvicorn HTTP
   layer plus the optional PG driver), so it needs egress to PyPI; a startup
@@ -84,10 +88,9 @@ the stock `python:3.12-slim` image. The UI image is pulled from
   `authentication: basic`, enables strict backend authentication, and cannot be
   combined with an explicit `ui.cluster.authentication=none`. Supply a unique
   `auth.robotToken` at the same time; authenticated chart rendering rejects the
-  published `mock-robot-token` placeholder. Locally-added users —
-  `userdb.py add-user`, the seed `iceberg`/`iceberg` — always authenticate
-  locally and never contact the upstream. See docs/auth.md "External
-  authentication".
+  published `mock-robot-token` placeholder. Users created explicitly with
+  `userdb.py add-user` always authenticate locally and never contact the
+  upstream. See docs/auth.md "External authentication".
 - `docker/mock-backend.Dockerfile` — optional baked image (includes the pinned
   PostgreSQL dependencies).
   Build and push an explicit tag to a registry reachable by the cluster, then
@@ -123,6 +126,12 @@ helm upgrade --install iceberg-ui deploy/helm/iceberg-ui-mock \
   --set postgres.password='a-database-role-password' \
   --set auth.robotToken='a-separate-random-robot-token'
 ```
+
+An authenticated deployment starts with no local password users. Once the
+backend is ready, run `/app/userdb.py add-user <login> <password>` in a backend
+pod using your normal secret-injection process; the pod already has
+`MOCK_PG_DSN` configured. The chart never enables the anonymous-test
+`MOCK_ENABLE_DEV_SEED_USERS` fixture.
 
 The same database also receives the backend's audit trail (`audit_log` table:
 strict `ts`/`login`/`endpoint` columns plus a schemaless `details` jsonb — see

@@ -1065,6 +1065,7 @@ groups/ACLs are not consulted.
 ```
 MOCK_YT_UPSTREAM=http://<real-proxy>          # enables delegation; empty = off
 MOCK_YT_UPSTREAM_TIMEOUT=5                    # seconds, per verification call
+MOCK_REQUIRE_AUTH=1                           # required for an authenticated deployment
 ```
 
 ### 6.1 Login decision table
@@ -1073,7 +1074,7 @@ MOCK_YT_UPSTREAM_TIMEOUT=5                    # seconds, per verification call
 
 | user's `origin` in local DB | what happens |
 |---|---|
-| `local` (seed users, `userdb.py add-user`) | verified against the local PBKDF2 hash only; the upstream is **never contacted**, even on a wrong password. This is the "special test user" path — it keeps working when the upstream is down and cannot be shadowed by an upstream account with the same login. |
+| `local` (created explicitly with `userdb.py add-user`) | verified against the local PBKDF2 hash only; the upstream is **never contacted**, even on a wrong password. This path keeps working when the upstream is down and cannot be shadowed by an upstream account with the same login. |
 | `external`, or no row yet | the received Basic credentials are forwarded verbatim to `POST <MOCK_YT_UPSTREAM>/login`. A direct `2xx` containing a non-empty `YTCypressCookie` → identity confirmed; on the first success the user row is created (`origin='external'`) and a **local** session cookie is issued (the upstream's cookie is discarded). `4xx` → `401 {"code":1,"message":"Incorrect login or password"}` (same masked shape as §5.2a). `3xx`, a `2xx` without the expected cookie, `5xx`, unreachability, or timeout → `503 {"code":1,"message":"External authentication is unavailable"}` — distinct from a bad password, and deliberately not `401` so the UI does not claim the password was wrong. |
 
 Redirects are never followed. This prevents the Basic credentials from being
@@ -1106,6 +1107,14 @@ at an `https://` proxy or keep the hop inside a trusted network. In the Helm
 chart set `auth.ytUpstream` and a unique, non-default `auth.robotToken`;
 authenticated rendering rejects the published placeholder token. In docker
 compose, `MOCK_YT_UPSTREAM` only configures the backend verifier; the provided
-test stack remains anonymous and is not an authenticated deployment. Tests:
+test stack remains anonymous and is not an authenticated deployment.
+Authenticated stores start with no built-in password users; provision any
+local accounts explicitly with `userdb.py add-user`. In particular, the
+published development pairs `iceberg`/`iceberg` and `root`/empty are not seeded,
+so an external user named `iceberg` is not shadowed by a local row. Strict mode
+also rejects those exact two password pairs before consulting the local store
+or upstream; stronger passwords for those login names remain usable. The
+optional `MOCK_ENABLE_DEV_SEED_USERS=1` fixture is ignored in strict mode and is
+only for anonymous protocol tests. Tests:
 `tests/test_external_auth.py` (fake upstream, wire behavior) and
 `tests/test_user_persistence.py` test 8 (PostgreSQL row/session persistence).

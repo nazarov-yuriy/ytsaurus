@@ -19,6 +19,9 @@ Environment:
 - `MOCK_PG_DSN=<libpq conninfo>` switches user/session storage to PostgreSQL.
 - `MOCK_REQUIRE_AUTH=1` rejects missing/expired cookies and unknown OAuth
   tokens instead of using the anonymous `iceberg` fallback.
+- `MOCK_ENABLE_DEV_SEED_USERS=1` creates the published `iceberg`/`iceberg` and
+  `root`/empty users only for anonymous protocol-fidelity tests. It is ignored
+  when `MOCK_REQUIRE_AUTH` is set and must not be used in a deployment.
 - `MOCK_ROBOT_TOKEN=<token>` supplies the one OAuth robot token accepted in
   strict mode; it maps to the `iceberg` user.
 - `MOCK_DELAY=<ms|cmd:ms,...>` simulates a slow catalog on data commands
@@ -40,10 +43,12 @@ Environment:
 
 Users and login sessions are the one piece of real state; table data stays fake.
 `userdb.py` speaks PostgreSQL when `MOCK_PG_DSN` is set and falls back to
-in-RAM storage (seed users `iceberg`/`iceberg`, `root`/empty) otherwise.
+in-RAM storage otherwise. Neither store creates password users by default;
+provision local users explicitly with `userdb.py add-user`. The development
+seeds described above require an explicit anonymous-test opt-in.
 
 - Schema (auto-created on start): `users(login PK, salt, password_hash,
-  password_revision, created_at)` and `sessions(cookie PK, login FK,
+  origin, password_revision, created_at)` and `sessions(cookie PK, login FK,
   password_revision, created_at, expires_at)`. Passwords are stored using
   PBKDF2-HMAC-SHA256 with 600,000 iterations and 128-bit salts, never in
   plaintext. Sessions expire after the configured cookie TTL (30 days by
@@ -61,6 +66,9 @@ in-RAM storage (seed users `iceberg`/`iceberg`, `root`/empty) otherwise.
   connection loss is recovered lazily, and users added out-of-band are visible
   without a restart:
   `MOCK_PG_DSN=... python3 userdb.py add-user <login> <password>` (also `list-users`).
+  Authenticated mode rejects the two published development password pairs even
+  if they are accidentally provisioned; stronger passwords for those login
+  names and all other explicitly provisioned users continue to work.
 - `/ping` reports that the process is alive; `/ready` also checks PostgreSQL and
   returns 503 while storage is unavailable.
 - The PG driver ships in the always-installed `requirements.txt` (exact

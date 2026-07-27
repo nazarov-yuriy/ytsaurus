@@ -27,10 +27,26 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent
+BACKEND = ROOT / 'mock-backend-py'
 PORT = 8071          # backend with a live upstream
 DEAD_PORT = 8072     # backend whose upstream is unreachable
 UPSTREAM_PORT = 8073
 UNUSED_PORT = 8074   # nothing listens here
+LOCAL_USER = 'local-test'
+LOCAL_PASSWORD = 'local-secret'
+UPSTREAM_LOCAL_PASSWORD = 'real-upstream-local-password'
+
+LOCAL_USER_SERVER = """
+import sys
+backend, port, login, password = sys.argv[1:]
+sys.path.insert(0, backend)
+sys.argv = ['server.py', port]
+import server
+server.userdb.set_password(login, password)
+server.uvicorn.run(
+    server.app, host='', port=int(port), log_level='warning',
+    timeout_keep_alive=5)
+"""
 
 _procs = []
 _upstream = None
@@ -56,8 +72,12 @@ class RedirectTarget(BaseHTTPRequestHandler):
 
 
 class FakeUpstream(BaseHTTPRequestHandler):
-    """Real-YTsaurus stand-in: /login accepts `accounts`, 500s for 'outage'."""
-    accounts = {'alice': 'wonderland', 'iceberg': 'real-yt-password'}
+    """Real-YTsaurus stand-in: accepts accounts and both published test pairs."""
+    accounts = {
+        'alice': 'wonderland',
+        'iceberg': 'real-yt-password',
+        LOCAL_USER: UPSTREAM_LOCAL_PASSWORD,
+    }
     hits = collections.Counter()
     redirect_url = None
 
@@ -81,7 +101,9 @@ class FakeUpstream(BaseHTTPRequestHandler):
         elif user == 'redirect':
             self.send_response(302)
             self.send_header('Location', self.redirect_url)
-        elif self.accounts.get(user) == password:
+        elif (
+                (user, password) in {('iceberg', 'iceberg'), ('root', '')}
+                or self.accounts.get(user) == password):
             self.send_response(200)
             self.send_header('Set-Cookie', 'YTCypressCookie=upstream-cookie; Path=/')
         else:
@@ -100,13 +122,24 @@ def setUpModule():
     _upstream = ThreadingHTTPServer(('localhost', UPSTREAM_PORT), FakeUpstream)
     threading.Thread(target=_upstream.serve_forever, daemon=True).start()
 
-    env = {k: v for k, v in os.environ.items()
-           if k not in ('MOCK_PG_DSN', 'MOCK_REQUIRE_AUTH', 'MOCK_ROBOT_TOKEN')}
+    env = {
+        k: v for k, v in os.environ.items()
+        if k not in (
+            'MOCK_ENABLE_DEV_SEED_USERS',
+            'MOCK_PG_DSN',
+            'MOCK_REQUIRE_AUTH',
+            'MOCK_ROBOT_TOKEN',
+        )
+    }
     for port, upstream_port in ((PORT, UPSTREAM_PORT), (DEAD_PORT, UNUSED_PORT)):
         _procs.append(subprocess.Popen(
-            [sys.executable, str(ROOT / 'mock-backend-py' / 'server.py'), str(port)],
+            [
+                sys.executable, '-c', LOCAL_USER_SERVER, str(BACKEND),
+                str(port), LOCAL_USER, LOCAL_PASSWORD,
+            ],
             env={**env, 'MOCK_YT_UPSTREAM': f'http://localhost:{upstream_port}',
-                 'MOCK_YT_UPSTREAM_TIMEOUT': '2'},
+                 'MOCK_YT_UPSTREAM_TIMEOUT': '2',
+                 'MOCK_REQUIRE_AUTH': '1'},
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
     for port in (PORT, DEAD_PORT):
         for _ in range(50):
@@ -203,13 +236,26 @@ class TestExternalAuth(unittest.TestCase):
         self.assertEqual(status, 401)
         self.assertEqual(body['message'], 'Incorrect login or password')
 
+    def test_4b_published_development_credentials_are_rejected_before_upstream(self):
+        # Strict mode rejects these before delegation, even though this hostile
+        # test upstream would accept both published pairs.
+        before = dict(FakeUpstream.hits)
+        self.assertEqual(login(PORT, 'iceberg', 'iceberg')[0], 401)
+        self.assertEqual(login(PORT, 'root', '')[0], 401)
+        self.assertEqual(FakeUpstream.hits, collections.Counter(before))
+
+        # The upstream account with the same login is still reachable: a
+        # hidden local seed must not shadow delegated authentication.
+        self.assertEqual(login(PORT, 'iceberg', 'real-yt-password')[0], 200)
+
     def test_5_local_test_user_never_reaches_upstream(self):
-        # 'iceberg' exists both locally (seed) and upstream with a DIFFERENT
-        # password. Local wins and upstream is not consulted — so the local
-        # password works, the upstream one does not, and the hit count stays 0.
-        self.assertEqual(login(PORT, 'iceberg', 'iceberg')[0], 200)
-        self.assertEqual(login(PORT, 'iceberg', 'real-yt-password')[0], 401)
-        self.assertEqual(FakeUpstream.hits['iceberg'], 0)
+        # An explicitly provisioned local user wins over an upstream account
+        # with the same login and never sends either password upstream.
+        before = FakeUpstream.hits[LOCAL_USER]
+        self.assertEqual(login(PORT, LOCAL_USER, LOCAL_PASSWORD)[0], 200)
+        self.assertEqual(
+            login(PORT, LOCAL_USER, UPSTREAM_LOCAL_PASSWORD)[0], 401)
+        self.assertEqual(FakeUpstream.hits[LOCAL_USER], before)
 
     def test_6_upstream_5xx_maps_to_503(self):
         status, body, _ = login(PORT, 'outage', 'any')
@@ -221,10 +267,11 @@ class TestExternalAuth(unittest.TestCase):
         self.assertEqual(status, 503)
         self.assertEqual(body['message'], 'External authentication is unavailable')
 
-        self.assertEqual(login(DEAD_PORT, 'iceberg', 'iceberg')[0], 200)
+        self.assertEqual(
+            login(DEAD_PORT, LOCAL_USER, LOCAL_PASSWORD)[0], 200)
         # Wrong local password fails fast with 401, not 503: local users are
         # decided locally even while the external YTsaurus is down.
-        self.assertEqual(login(DEAD_PORT, 'iceberg', 'nope')[0], 401)
+        self.assertEqual(login(DEAD_PORT, LOCAL_USER, 'nope')[0], 401)
 
     def test_8_upstream_success_without_cookie_maps_to_503(self):
         status, body, _ = login(PORT, 'no-cookie', 'any')

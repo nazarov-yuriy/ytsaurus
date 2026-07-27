@@ -49,7 +49,7 @@ class FakeConnection:
             if self.fail_first_list:
                 self.fail_first_list = False
                 raise FakeOperationalError('connection was lost')
-            return FakeResult([('iceberg', 'local'), ('root', 'local')])
+            return FakeResult([('alice', 'local')])
         return FakeResult()
 
     def close(self):
@@ -65,12 +65,19 @@ def fake_psycopg(connect):
     return module
 
 
-def load_userdb(dsn='', psycopg_module=None):
+def load_userdb(
+        dsn='', psycopg_module=None, require_auth=False,
+        dev_seed_users=False):
     name = f'test_userdb_{uuid.uuid4().hex}'
     spec = importlib.util.spec_from_file_location(name, USERDB)
     module = importlib.util.module_from_spec(spec)
     modules = {'psycopg': psycopg_module} if psycopg_module else {}
-    with mock.patch.dict(os.environ, {'MOCK_PG_DSN': dsn}):
+    environment = {
+        'MOCK_ENABLE_DEV_SEED_USERS': '1' if dev_seed_users else '',
+        'MOCK_PG_DSN': dsn,
+        'MOCK_REQUIRE_AUTH': '1' if require_auth else '',
+    }
+    with mock.patch.dict(os.environ, environment):
         with mock.patch.dict(sys.modules, modules):
             spec.loader.exec_module(module)
     return module
@@ -92,6 +99,37 @@ class TestPasswordStorage(unittest.TestCase):
         self.assertEqual(len(digest), 64)
         self.assertTrue(self.userdb.verify('alice', 's3cret'))
         self.assertFalse(self.userdb.verify('alice', 'wrong'))
+
+    def test_default_store_has_no_published_development_users(self):
+        self.assertNotIn('iceberg', self.userdb.list_users())
+        self.assertNotIn('root', self.userdb.list_users())
+        self.assertFalse(self.userdb.verify('iceberg', 'iceberg'))
+        self.assertFalse(self.userdb.verify('root', ''))
+
+    def test_development_seeds_require_explicit_anonymous_opt_in(self):
+        development = load_userdb(dev_seed_users=True)
+        self.assertTrue(development.verify('iceberg', 'iceberg'))
+        self.assertTrue(development.verify('root', ''))
+
+        authenticated = load_userdb(
+            require_auth=True, dev_seed_users=True)
+        self.assertEqual(authenticated.list_users(), [])
+        self.assertFalse(authenticated.verify('iceberg', 'iceberg'))
+        self.assertFalse(authenticated.verify('root', ''))
+
+    def test_authenticated_store_rejects_only_published_password_pairs(self):
+        authenticated = load_userdb(require_auth=True)
+        authenticated.set_password('local-test', 'local-secret')
+        authenticated.set_password('iceberg', 'strong-iceberg-secret')
+        authenticated.set_password('root', 'strong-root-secret')
+
+        self.assertIsNotNone(authenticated.authenticate_and_create_session(
+            'local-test', 'local-secret'))
+        self.assertFalse(authenticated.verify('iceberg', 'iceberg'))
+        self.assertFalse(authenticated.verify('root', ''))
+        self.assertTrue(
+            authenticated.verify('iceberg', 'strong-iceberg-secret'))
+        self.assertTrue(authenticated.verify('root', 'strong-root-secret'))
 
     def test_ram_store_is_always_healthy(self):
         self.assertTrue(self.userdb.healthy())
@@ -164,7 +202,6 @@ class TestPasswordStorage(unittest.TestCase):
     def test_external_login_never_shadows_a_local_user(self):
         self.userdb.set_password('local-only', 'pw')
         self.assertIsNone(self.userdb.external_login('local-only'))
-        self.assertIsNone(self.userdb.external_login('iceberg'))  # seed user
 
     def test_set_password_converts_external_user_to_local(self):
         self.userdb.external_login('promoted')
@@ -276,6 +313,31 @@ class TestPasswordStorage(unittest.TestCase):
 
 
 class TestPostgresRecovery(unittest.TestCase):
+    def test_authenticated_initialization_never_inserts_development_seeds(self):
+        connections = []
+
+        class RecordingConnection(FakeConnection):
+            def __init__(self):
+                super().__init__()
+                self.executions = []
+
+            def execute(self, statement, params=()):
+                self.executions.append((statement, params))
+                return super().execute(statement, params)
+
+        def connect(_dsn, autocommit):
+            connection = RecordingConnection()
+            connections.append(connection)
+            return connection
+
+        userdb = load_userdb(
+            'dbname=mock', fake_psycopg(connect),
+            require_auth=True, dev_seed_users=True)
+        self.assertEqual(userdb.list_users(), ['alice'])
+        self.assertFalse(any(
+            statement.startswith('INSERT INTO users')
+            for statement, _ in connections[0].executions))
+
     def test_postgres_audit_uses_the_same_bounded_payload(self):
         connections = []
 
@@ -327,7 +389,7 @@ class TestPostgresRecovery(unittest.TestCase):
         self.assertTrue(connections[0].closed)
 
         # The following read opens a fresh connection and succeeds.
-        self.assertEqual(userdb.list_users(), ['iceberg', 'root'])
+        self.assertEqual(userdb.list_users(), ['alice'])
         self.assertEqual(len(connections), 2)
 
     def test_query_reconnects_once_after_connection_loss(self):
@@ -341,7 +403,7 @@ class TestPostgresRecovery(unittest.TestCase):
 
         userdb = load_userdb('dbname=mock', fake_psycopg(connect))
         self.assertEqual(connections, [])  # connecting is lazy
-        self.assertEqual(userdb.list_users(), ['iceberg', 'root'])
+        self.assertEqual(userdb.list_users(), ['alice'])
         self.assertEqual(len(connections), 2)
         self.assertTrue(connections[0].closed)
         self.assertFalse(connections[1].closed)

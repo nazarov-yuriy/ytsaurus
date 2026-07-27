@@ -16,7 +16,14 @@ from datetime import datetime, timedelta, timezone
 
 DSN = os.environ.get('MOCK_PG_DSN')
 SESSION_TTL = timedelta(seconds=int(os.environ.get('MOCK_COOKIE_TTL_SECONDS') or 30 * 24 * 3600))
-SEED_USERS = {'iceberg': 'iceberg', 'root': ''}
+REQUIRE_AUTH = bool(os.environ.get('MOCK_REQUIRE_AUTH'))
+PUBLISHED_DEV_USERS = {'iceberg': 'iceberg', 'root': ''}
+# These well-known accounts exist only for anonymous protocol-fidelity tests.
+# Never put their hashes into an authenticated store, even if the opt-in leaks
+# into that environment.
+ENABLE_DEV_USERS = (
+    os.environ.get('MOCK_ENABLE_DEV_SEED_USERS') == '1' and not REQUIRE_AUTH)
+SEED_USERS = PUBLISHED_DEV_USERS if ENABLE_DEV_USERS else {}
 PASSWORD_SCHEME = 'pbkdf2_sha256'
 PBKDF2_ITERATIONS = 600_000
 PBKDF2_MAX_VERIFY_ITERATIONS = 5_000_000
@@ -88,6 +95,20 @@ def _password_matches(password, salt, password_hash):
 def _new_password(password):
     salt = secrets.token_hex(16)
     return salt, _hash(password, salt)
+
+
+def is_published_development_credential(login, password):
+    """Return whether this is one of the public anonymous-test credentials."""
+    return (
+        isinstance(login, str)
+        and isinstance(password, str)
+        and login in PUBLISHED_DEV_USERS
+        and secrets.compare_digest(password, PUBLISHED_DEV_USERS[login]))
+
+
+def _is_forbidden_published_credential(login, password):
+    """Authenticated mode never accepts the documented development passwords."""
+    return REQUIRE_AUTH and is_published_development_credential(login, password)
 
 
 def _new_cookie(login):
@@ -334,6 +355,8 @@ if DSN:
         return create_session(login) if user_origin(login) == 'external' else None
 
     def verify(login, password):
+        if _is_forbidden_published_credential(login, password):
+            return False
         rows = _query('SELECT salt, password_hash FROM users WHERE login = %s', (login,))
         if not rows:
             return False
@@ -353,6 +376,8 @@ if DSN:
         return rows[0][0] if rows else None
 
     def authenticate_and_create_session(login, password):
+        if _is_forbidden_published_credential(login, password):
+            return None
         rows = _query(
             'SELECT salt, password_hash, password_revision'
             ' FROM users WHERE login = %s',
@@ -465,6 +490,8 @@ else:  # in-RAM fallback: same behavior, nothing persisted
             return _create_session_locked(login)
 
     def verify(login, password):
+        if _is_forbidden_published_credential(login, password):
+            return False
         with _lock:
             if login not in _users:
                 return False
@@ -490,6 +517,8 @@ else:  # in-RAM fallback: same behavior, nothing persisted
             return _create_session_locked(login)
 
     def authenticate_and_create_session(login, password):
+        if _is_forbidden_published_credential(login, password):
+            return None
         with _lock:
             credentials = _users.get(login)
             if not credentials:

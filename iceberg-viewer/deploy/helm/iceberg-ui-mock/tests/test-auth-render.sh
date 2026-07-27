@@ -35,6 +35,7 @@ command -v "$helm_bin" >/dev/null ||
 assert_present "$test_tmp/default.yaml" '"authentication":"none"'
 assert_absent "$test_tmp/default.yaml" '            - name: ALLOW_PASSWORD_AUTH'
 assert_absent "$test_tmp/default.yaml" '            - name: MOCK_REQUIRE_AUTH'
+assert_absent "$test_tmp/default.yaml" '            - name: MOCK_ENABLE_DEV_SEED_USERS'
 
 if "$helm_bin" template auth-regression "$chart_dir" \
     --namespace auth-regression \
@@ -54,6 +55,9 @@ assert_present "$test_tmp/upstream.yaml" '"authentication":"basic"'
 assert_present "$test_tmp/upstream.yaml" '            - name: ALLOW_PASSWORD_AUTH'
 assert_present "$test_tmp/upstream.yaml" '            - name: MOCK_YT_UPSTREAM'
 assert_present "$test_tmp/upstream.yaml" '            - name: MOCK_REQUIRE_AUTH'
+assert_present "$test_tmp/upstream.yaml" '        - name: ROBOT_TOKEN'
+assert_absent "$test_tmp/upstream.yaml" '            - name: MOCK_ENABLE_DEV_SEED_USERS'
+assert_absent "$test_tmp/upstream.yaml" '-u iceberg:iceberg'
 
 if "$helm_bin" template auth-regression "$chart_dir" \
     --namespace auth-regression \

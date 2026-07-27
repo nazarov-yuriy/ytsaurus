@@ -1,5 +1,6 @@
-# `helm test <release>` — verifies the deployed stack end to end:
-# mock directly, then the UI boot gates, then a YT command through the UI tunnel.
+# `helm test <release>` — verifies the deployed stack. Anonymous mode exercises
+# the full UI tunnel; authenticated mode uses the secret-backed robot for
+# backend commands and verifies that the UI app shell remains reachable.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -14,6 +15,14 @@ spec:
   containers:
     - name: smoke
       image: curlimages/curl:8.11.1
+      {{- if ne (include "iceberg-ui-mock.auth.mode" .) "none" }}
+      env:
+        - name: ROBOT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "iceberg-ui-mock.ui.secretName" . }}
+              key: robot-token
+      {{- end }}
       command: ["sh", "-ec"]
       args:
         - |
@@ -26,56 +35,55 @@ spec:
 
           echo "2. mock /auth/whoami returns a csrf token"
           {{- if ne (include "iceberg-ui-mock.auth.mode" .) "none" }}
-          curl -sf -X POST -u iceberg:iceberg -c /tmp/mock-cookies "$MOCK/login"
-          curl -sf -b /tmp/mock-cookies "$MOCK/auth/whoami" | grep csrf_token
+          curl -sf -H "Authorization: OAuth $ROBOT_TOKEN" \
+            "$MOCK/auth/whoami" | grep csrf_token
           {{- else }}
           curl -sf "$MOCK/auth/whoami" | grep csrf_token
           {{- end }}
 
           echo "3. UI serves the app shell"
-          {{- if ne (include "iceberg-ui-mock.auth.mode" .) "none" }}
-          curl -sf -X POST -H 'Content-Type: application/json' \
-            -d '{"username":"iceberg","password":"iceberg"}' \
-            -c /tmp/ui-cookies -b /tmp/ui-cookies \
-            "$UI/api/yt/$CLUSTER/login"
-          curl -sf -b /tmp/ui-cookies "$UI/$CLUSTER/navigation" -o /dev/null
-          {{- else }}
           curl -sf "$UI/$CLUSTER/navigation" -o /dev/null
-          {{- end }}
 
-          echo "4. UI cluster-info gate (version + csrf_token)"
           {{- if ne (include "iceberg-ui-mock.auth.mode" .) "none" }}
-          INFO=$(curl -sf -b /tmp/ui-cookies "$UI/api/cluster-info/$CLUSTER")
-          CSRF=$(printf '%s' "$INFO" | sed -n 's/.*"csrf_token":"\([^"]*\)".*/\1/p')
-          test -n "$CSRF"
+          echo "4. unauthenticated backend access is rejected"
+          test "$(curl -sS -o /tmp/unauthenticated-whoami -w '%{http_code}' \
+            "$MOCK/auth/whoami")" = 401
+
+          echo "5. robot can list cluster media"
+          curl -sf -X POST -H "Authorization: OAuth $ROBOT_TOKEN" \
+            -H 'Content-Type: application/json' \
+            -d '{"path":"//sys/media"}' \
+            "$MOCK/api/v3/list" | grep default
+
+          echo "6. robot can run a catalog command"
+          curl -sf -X POST -H "Authorization: OAuth $ROBOT_TOKEN" \
+            -H 'Content-Type: application/json' \
+            -d '{"path":"//home/iceberg/warehouse"}' \
+            "$MOCK/api/v3/exists" | grep -x true
+
+          echo "7. robot read_table returns rows"
+          curl -sf -X POST -H "Authorization: OAuth $ROBOT_TOKEN" \
+            -H 'Content-Type: application/json' \
+            -d '{"path":"//home/iceberg/warehouse/trips[#0:#3]","output_format":{"$value":"web_json","$attributes":{"max_selected_column_count":50}}}' \
+            "$MOCK/api/v3/read_table" | grep all_column_names
           {{- else }}
+          echo "4. UI cluster-info gate (version + csrf_token)"
           INFO=$(curl -sf "$UI/api/cluster-info/$CLUSTER")
-          {{- end }}
           echo "$INFO" | grep csrf_token
           echo "$INFO" | grep version
 
           echo "5. UI cluster-params gate (mediumList without error)"
-          {{- if ne (include "iceberg-ui-mock.auth.mode" .) "none" }}
-          curl -sf -b /tmp/ui-cookies "$UI/api/cluster-params/$CLUSTER" \
-            | grep -v '"mediumList":{"error"' | grep mediumList
-          {{- else }}
           curl -sf "$UI/api/cluster-params/$CLUSTER" | grep -v '"mediumList":{"error"' | grep mediumList
-          {{- end }}
 
           echo "6. YT command through the UI tunnel"
           curl -sf -X POST -H 'Content-Type: application/json' \
-            {{- if ne (include "iceberg-ui-mock.auth.mode" .) "none" }}
-            -b /tmp/ui-cookies -H "X-Csrf-Token: $CSRF" \
-            {{- end }}
             -d '{"path":"//home/iceberg/warehouse"}' \
             "$UI/api/yt/$CLUSTER/api/v3/exists" | grep -x true
 
           echo "7. read_table web_json returns rows"
           curl -sf -X POST -H 'Content-Type: application/json' \
-            {{- if ne (include "iceberg-ui-mock.auth.mode" .) "none" }}
-            -b /tmp/ui-cookies -H "X-Csrf-Token: $CSRF" \
-            {{- end }}
             -d '{"path":"//home/iceberg/warehouse/trips[#0:#3]","output_format":{"$value":"web_json","$attributes":{"max_selected_column_count":50}}}' \
             "$UI/api/yt/$CLUSTER/api/v3/read_table" | grep all_column_names
+          {{- end }}
 
           echo "ALL SMOKE CHECKS PASSED"

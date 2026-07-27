@@ -40,7 +40,14 @@ _proc = None
 def setUpModule():
     global _proc
     env = {k: v for k, v in os.environ.items()
-           if k not in ('MOCK_PG_DSN', 'MOCK_REQUIRE_AUTH', 'MOCK_ROBOT_TOKEN', 'MOCK_DELAY')}
+           if k not in (
+               'MOCK_DELAY',
+               'MOCK_ENABLE_DEV_SEED_USERS',
+               'MOCK_PG_DSN',
+               'MOCK_REQUIRE_AUTH',
+               'MOCK_ROBOT_TOKEN',
+           )}
+    env['MOCK_ENABLE_DEV_SEED_USERS'] = '1'
     _proc = subprocess.Popen([sys.executable, str(ROOT / 'mock-backend-py' / 'server.py'), str(PORT)],
                              env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(50):
