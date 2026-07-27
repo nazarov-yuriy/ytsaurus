@@ -6,6 +6,7 @@ This is the sole mock-backend implementation: protocol logic on a
 FastAPI/uvicorn HTTP layer (see requirements.txt for the pinned versions).
 Set MOCK_RECORD=<path> to append request/response pairs as JSONL.
 """
+import asyncio
 import base64
 import binascii
 import hmac
@@ -17,6 +18,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from email.utils import format_datetime
 from http.cookies import CookieError, SimpleCookie
@@ -412,6 +414,51 @@ AUDIT_EXEMPT = ('/ping', '/ready', '/version', '/service/version', '/api', '/api
 
 app = FastAPI(openapi_url=None)  # the YT proxy protocol is not REST; no docs
 METHODS = ['GET', 'POST', 'PUT', 'DELETE']
+# Neither audit persistence nor PostgreSQL health checks may occupy FastAPI's
+# request-handler pool. The semaphores ensure the executors never accumulate
+# their own unbounded work queues.
+_AUDIT_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix='mock-audit')
+_AUDIT_CAPACITY = asyncio.Semaphore(1)
+_AUDIT_TIMEOUT_SECONDS = 5
+_HEALTH_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix='mock-health')
+_HEALTH_CAPACITY = asyncio.Semaphore(1)
+_INFRA_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix='mock-infra')
+_INFRA_CAPACITY = asyncio.Semaphore(2)
+
+
+async def run_dedicated(executor, capacity, function, *args):
+    await capacity.acquire()
+    loop = asyncio.get_running_loop()
+    try:
+        future = loop.run_in_executor(executor, function, *args)
+    except BaseException:
+        capacity.release()
+        raise
+    future.add_done_callback(lambda _future: capacity.release())
+    return await asyncio.shield(future)
+
+
+async def run_audit(*args):
+    """Run one audit with bounded admission while preserving fail-open serving."""
+    try:
+        await asyncio.wait_for(
+            _AUDIT_CAPACITY.acquire(), timeout=_AUDIT_TIMEOUT_SECONDS)
+    except TimeoutError as error:
+        raise TimeoutError('audit executor remained busy') from error
+    loop = asyncio.get_running_loop()
+    try:
+        future = loop.run_in_executor(_AUDIT_EXECUTOR, userdb.audit, *args)
+    except BaseException:
+        _AUDIT_CAPACITY.release()
+        raise
+    # A request cancellation or timeout must not admit more work while this
+    # dedicated worker is still occupied.
+    future.add_done_callback(lambda _future: _AUDIT_CAPACITY.release())
+    try:
+        return await asyncio.wait_for(
+            asyncio.shield(future), timeout=_AUDIT_TIMEOUT_SECONDS)
+    except TimeoutError as error:
+        raise TimeoutError('audit write timed out') from error
 
 
 def cors_headers(request):
@@ -486,7 +533,8 @@ async def request_pipeline(request, call_next):
     request.state.audit_extra = {}
     if request.method == 'OPTIONS':
         request.state.body_buf = b''
-        return respond(request, 200, b'')
+        return await run_dedicated(
+            _INFRA_EXECUTOR, _INFRA_CAPACITY, respond, request, 200, b'')
     request.state.body_buf = await request.body()  # uvicorn decodes chunked itself
     log(request.method,
         request.url.path + (f'?{request.url.query}' if request.url.query else ''),
@@ -495,52 +543,67 @@ async def request_pipeline(request, call_next):
         response = await call_next(request)
     except Exception as e:
         log('  !! internal error', repr(e))
-        response = yt_error_response(request, 500, yt_error(1, str(e)))
+        response = await run_dedicated(
+            _INFRA_EXECUTOR, _INFRA_CAPACITY,
+            yt_error_response, request, 500, yt_error(1, str(e)))
     path = request.url.path
     if path not in AUDIT_EXEMPT and not path.startswith('/hosts/'):
         try:  # audit is fail-open: a storage outage must not break serving
-            userdb.audit(request.state.audit_user, path,
-                         {'method': request.method, 'status': response.status_code,
-                          **request.state.audit_extra})
+            await run_audit(
+                request.state.audit_user, path,
+                {'method': request.method, 'status': response.status_code,
+                 **request.state.audit_extra})
         except Exception as e:
             log('  !! audit write failed', repr(e))
     return response
 
 
 @app.api_route('/ping', methods=METHODS)
-def ping(request: Request):
-    return json_response(request, 200, {})
+async def ping(request: Request):
+    return await run_dedicated(
+        _INFRA_EXECUTOR, _INFRA_CAPACITY, json_response, request, 200, {})
 
 
 @app.api_route('/ready', methods=METHODS)
-def ready(request: Request):
-    return json_response(request, 200 if userdb.healthy() else 503, {})
+async def ready(request: Request):
+    healthy = await run_dedicated(
+        _HEALTH_EXECUTOR, _HEALTH_CAPACITY, userdb.healthy)
+    return await run_dedicated(
+        _INFRA_EXECUTOR, _INFRA_CAPACITY,
+        json_response, request, 200 if healthy else 503, {})
 
 
 @app.api_route('/version', methods=METHODS)
 @app.api_route('/service/version', methods=METHODS)
-def version(request: Request):
-    return respond(request, 200, b'mock-proxy-1.0.0', media_type='text/plain')
+async def version(request: Request):
+    return await run_dedicated(
+        _INFRA_EXECUTOR, _INFRA_CAPACITY,
+        respond, request, 200, b'mock-proxy-1.0.0', None, 'text/plain')
 
 
 @app.api_route('/hosts/all', methods=METHODS)
-def hosts_all(request: Request):
-    return json_response(request, 200, [])
+async def hosts_all(request: Request):
+    return await run_dedicated(
+        _INFRA_EXECUTOR, _INFRA_CAPACITY, json_response, request, 200, [])
 
 
 @app.api_route('/hosts', methods=METHODS)
 @app.api_route('/hosts/{_rest:path}', methods=METHODS)
-def hosts(request: Request, _rest=''):
+async def hosts(request: Request, _rest=''):
     # Role filtering like coordinator.cpp: this mock is one "data"-role proxy
     # (the default role filter); other roles have no members.
     role = request.query_params.get('role', 'data')
-    return json_response(request, 200, [HOST] if role == 'data' else [])
+    return await run_dedicated(
+        _INFRA_EXECUTOR, _INFRA_CAPACITY,
+        json_response, request, 200, [HOST] if role == 'data' else [])
 
 
 @app.api_route('/api', methods=METHODS)
 @app.api_route('/api/', methods=METHODS)
-def api_versions(request: Request):
-    return json_response(request, 200, ['v3', 'v4'])
+async def api_versions(request: Request):
+    return await run_dedicated(
+        _INFRA_EXECUTOR, _INFRA_CAPACITY,
+        json_response, request, 200, ['v3', 'v4'])
 
 
 @app.api_route('/login', methods=METHODS)
@@ -680,5 +743,3 @@ def unhandled(request: Request, _rest=''):
 if __name__ == '__main__':
     log(f'mock YT proxy (python/fastapi) listening on http://{HOST}')
     uvicorn.run(app, host='', port=PORT, log_level='warning', timeout_keep_alive=5)
-
-

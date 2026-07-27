@@ -12,14 +12,18 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 import unittest
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PORT = 8032
+AUDIT_PORT = 8033
 DELAY_SPEC = 'list:1200,read_table:2000,get:800'
 
 _procs = []
@@ -115,8 +119,7 @@ class TestSlowBackend(unittest.TestCase):
             self.assertLess(took, 1.6)  # one delayed sub-command, not two
 
     def test_slow_request_does_not_block_fast_ones(self):
-        # Python is thread-per-connection, so /ping stays fast during a slow read.
-        import threading
+        # The async transport keeps /ping independent from a blocking command.
         for port in self.each():
             slow = threading.Thread(target=timed_call, args=(port, 'POST', '/api/v3/read_table'),
                                     kwargs={'body': {'path': '//home/iceberg/warehouse/trips[#0:#1]',
@@ -127,6 +130,92 @@ class TestSlowBackend(unittest.TestCase):
             urllib.request.urlopen(f'http://localhost:{port}/ping', timeout=5)
             self.assertLess(time.monotonic() - t0, 0.7)
             slow.join()
+
+    def test_ping_bypasses_saturated_handler_pool(self):
+        # AnyIO normally grants sync FastAPI handlers 40 worker tokens. More
+        # simultaneous delayed commands than that must not queue the probe.
+        count = 48
+        barrier = threading.Barrier(count + 1)
+
+        def delayed_list():
+            barrier.wait(timeout=5)
+            return timed_call(
+                PORT, 'POST', '/api/v3/list',
+                body={'path': '//home/iceberg/warehouse'})
+
+        with ThreadPoolExecutor(max_workers=count) as clients:
+            calls = [clients.submit(delayed_list) for _ in range(count)]
+            barrier.wait(timeout=5)
+            time.sleep(0.3)  # the first 40 handlers are sleeping in MOCK_DELAY
+            t0 = time.monotonic()
+            urllib.request.urlopen(f'http://localhost:{PORT}/ping', timeout=5)
+            self.assertLess(time.monotonic() - t0, 0.7)
+            self.assertTrue(all(call.result()[0] == 200 for call in calls))
+
+    def test_stalled_audit_does_not_block_ping(self):
+        # Run a second server whose audit store signals entry, then blocks. The
+        # API response must still wait for its audit, while /ping stays live.
+        wrapper = """
+import os
+import time
+from pathlib import Path
+import server
+
+def stalled_audit(*_args):
+    Path(os.environ['MOCK_AUDIT_TEST_MARKER']).touch()
+    time.sleep(1.5)
+
+server.userdb.audit = stalled_audit
+server._AUDIT_TIMEOUT_SECONDS = 0.5
+server.uvicorn.run(
+    server.app, host='', port=server.PORT, log_level='warning',
+    timeout_keep_alive=5)
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / 'audit-entered'
+            env = {key: value for key, value in os.environ.items()
+                   if key not in ('MOCK_DELAY', 'MOCK_PG_DSN', 'MOCK_RECORD')}
+            env['MOCK_AUDIT_TEST_MARKER'] = str(marker)
+            env['PYTHONPATH'] = os.pathsep.join(filter(None, (
+                str(ROOT / 'mock-backend-py'), env.get('PYTHONPATH', ''))))
+            process = subprocess.Popen(
+                [sys.executable, '-c', wrapper, str(AUDIT_PORT)],
+                env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                for _ in range(50):
+                    try:
+                        urllib.request.urlopen(
+                            f'http://localhost:{AUDIT_PORT}/ping', timeout=1)
+                        break
+                    except OSError:
+                        time.sleep(0.1)
+                else:
+                    self.fail('audit-stall backend did not start')
+
+                result = []
+                audited = threading.Thread(
+                    target=lambda: result.append(timed_call(
+                        AUDIT_PORT, 'POST', '/api/v3/get',
+                        body={'path': '//home'})))
+                audited.start()
+                deadline = time.monotonic() + 3
+                while not marker.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue(marker.exists(), 'audit function was not entered')
+                self.assertTrue(audited.is_alive(), 'response escaped before its audit')
+
+                t0 = time.monotonic()
+                urllib.request.urlopen(
+                    f'http://localhost:{AUDIT_PORT}/ping', timeout=5)
+                self.assertLess(time.monotonic() - t0, 0.7)
+                audited.join(timeout=5)
+                self.assertFalse(audited.is_alive())
+                self.assertEqual(result[0][0], 200)
+                self.assertGreaterEqual(result[0][2], 0.45)
+                self.assertLess(result[0][2], 1.2)
+            finally:
+                process.terminate()
+                process.wait(timeout=10)
 
 
 if __name__ == '__main__':
