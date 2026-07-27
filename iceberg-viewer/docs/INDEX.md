@@ -86,3 +86,9 @@ Which doc covers what, and which doc mentions which. Regenerate with `python3 db
 *Deployment: docker compose (local testing) and Kubernetes (Helm)*
 - mentions: [README.md](../README.md), [docs/auth.md](../docs/auth.md), [mock-backend-py/README.md](../mock-backend-py/README.md)
 - mentioned by: [README.md](../README.md), [docs/security-review.md](../docs/security-review.md)
+
+## Ungrouped
+
+### [CLAUDE.md](../CLAUDE.md)
+*iceberg-viewer*
+- no cross-references

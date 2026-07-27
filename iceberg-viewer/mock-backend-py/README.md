@@ -2,6 +2,8 @@
 
 The sole mock-backend implementation: protocol logic on a FastAPI/uvicorn
 HTTP layer (see "HTTP layer" below), PostgreSQL optional.
+Reviewing this code? Start with [REVIEW.md](REVIEW.md) — a line-anchored
+walkthrough of every trust decision and wire-protocol oddity.
 
 ## Run
 
