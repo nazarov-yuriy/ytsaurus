@@ -97,3 +97,32 @@ right after cluster selection. The mock therefore serves both paths as
 document leaves with `"24.1.0-mock"`; `//sys/primary_masters` lists one
 `primary-master`. Pinned by
 `test_protocol.py TestParameterSources.test_cluster_params_version_paths_resolve`.
+
+## System page hard requirements
+
+The System page (`store/actions/system/*`) is the strictest boot surface —
+several sections crash or show error blocks unless every path they read
+resolves (empty is fine, missing is not):
+
+- `nodes.ts` **throws on any failed batch item**: `//sys/racks` plus every
+  node-type map (`cluster_nodes`, `data_nodes`, `exec_nodes`, `tablet_nodes`,
+  `chaos_nodes`).
+- `masters.ts` throws "Masters' details cannot be loaded" unless BOTH
+  `//sys/primary_masters` and `//sys/secondary_masters` resolve, and
+  hard-requires `//sys/primary_masters/<m>/orchid/config/primary_master/cell_id`
+  (cell tag = third id segment minus its last 4 hex digits).
+  `timestamp_providers`/`queue_agents` errors are tolerated only with YT code
+  500.
+- `schedulers.js` always batch-reads `//sys/scheduler/@alerts` — an error item
+  raises a "failed to get scheduler states" alert even with zero instances.
+- `Resources.js prepareDiskResources` indexes
+  `available_space_per_medium[medium]` / `used_space_per_medium[medium]` from
+  `//sys/cluster_nodes/@` **without guards** once that get succeeds.
+- `chunks.js prepareChunkCells` reads `chunks.chunks.count` — a missing
+  `//sys/chunks` crashes the page with `Cannot read properties of undefined
+  (reading 'count')` (this predated the mock's other fixes and is easy to
+  misattribute).
+
+The mock serves all of these as empty containers/zero counters (data.py
+"System page containers"); pinned by `test_protocol.py
+test_system_page_paths_resolve_empty`.

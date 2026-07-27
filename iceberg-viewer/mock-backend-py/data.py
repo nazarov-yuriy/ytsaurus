@@ -213,6 +213,44 @@ def _audit_log_rows():
 _insert('sys/logs', make_map_node())
 _insert('sys/logs/audit_log', make_live_table(AUDIT_LOG_SCHEMA, _audit_log_rows))
 
+# System page containers (store/actions/system/*): empty lists render clean
+# empty sections instead of resolve-error blocks. nodes.ts throws on ANY
+# failed batch item, so every node-type flavor must resolve.
+for _p in ('sys/racks', 'sys/cluster_nodes', 'sys/data_nodes', 'sys/exec_nodes',
+           'sys/tablet_nodes', 'sys/chaos_nodes', 'sys/rpc_proxies',
+           'sys/scheduler/instances', 'sys/controller_agents/instances'):
+    _insert(_p, make_map_node())
+# Resources.js destructures these unguarded once //sys/cluster_nodes/@
+# resolves (prepareDiskResources); zeros keep the meters honest and hidden.
+root.children['sys'].children['cluster_nodes'].attrs.update(
+    available_space_per_medium={'default': 0}, used_space_per_medium={'default': 0},
+    full_node_count=0, online_node_count=0)
+# schedulers.js always batch-reads //sys/scheduler/@alerts; an error item
+# there raises a "failed to get scheduler states" alert even with no instances.
+root.children['sys'].children['scheduler'].attrs['alerts'] = []
+_insert('sys/scheduler/orchid/scheduler/cluster', make_document({
+    'resource_limits': {'cpu': 0.0, 'user_memory': 0, 'gpu': 0},
+    'resource_usage': {'cpu': 0.0, 'user_memory': 0, 'gpu': 0}}))
+# masters.ts: primary+secondary failures throw "Masters' details cannot be
+# loaded", and the flow hard-requires the primary master's cell_id orchid
+# (third id segment minus its last 4 hex digits = cell tag, here 1).
+for _p in ('sys/secondary_masters', 'sys/timestamp_providers', 'sys/discovery_servers'):
+    _insert(_p, make_map_node())
+_insert('sys/primary_masters/primary-master/orchid/config/primary_master/cell_id',
+        make_document('1c93d4c8-64299bcb-10259-8ba15abc'))
+# chunks.js reads @count/@multicell_count of every virtual chunk map and
+# crashes on `chunks.chunks.count` when the first one is missing; the //sys
+# flags feed the replication indicators.
+for _p in ('chunks', 'foreign_chunks', 'overreplicated_chunks',
+           'underreplicated_chunks', 'quorum_missing_chunks',
+           'data_missing_chunks', 'parity_missing_chunks', 'lost_chunks',
+           'lost_vital_chunks', 'unsafely_placed_chunks'):
+    _node = _insert(f'sys/{_p}', make_map_node())
+    _node.attrs.update(count=0, multicell_count={})
+root.children['sys'].attrs.update(
+    chunk_replicator_enabled=True, chunk_sealer_enabled=True,
+    chunk_refresh_enabled=True, chunk_requisition_update_enabled=True)
+
 
 def _fill_paths(node: Node, path: str) -> None:
     """YT absolute paths start with '//' (root is '/')."""

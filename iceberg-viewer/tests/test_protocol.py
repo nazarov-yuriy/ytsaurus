@@ -905,6 +905,56 @@ class TestParameterSources(BackendTestCase):
                                      body={'path': '//sys/logs/audit_log/@row_count'})
             self.assertGreater(count_after, count_before)  # the table is live
 
+    def test_system_page_paths_resolve_empty(self):
+        # store/actions/system/{nodes.ts,schedulers.js,rpc-proxies.ts,
+        # resources.js}: the System page throws error blocks on ANY failed
+        # batch item; every path it reads must resolve (empty is fine).
+        for port in self.each():
+            _, batch, _ = call(port, 'POST', '/api/v3/execute_batch', body={'requests': [
+                {'command': 'list', 'parameters': {'path': '//sys/racks'}},
+                *({'command': 'list',
+                   'parameters': {'path': f'//sys/{t}',
+                                  'attributes': ['state', 'banned', 'rack']}}
+                  for t in ('cluster_nodes', 'data_nodes', 'exec_nodes',
+                            'tablet_nodes', 'chaos_nodes')),
+                {'command': 'list', 'parameters': {'path': '//sys/scheduler/instances'}},
+                {'command': 'list',
+                 'parameters': {'path': '//sys/controller_agents/instances'}},
+                {'command': 'get', 'parameters': {'path': '//sys/rpc_proxies'}},
+                {'command': 'get', 'parameters': {'path': '//sys/scheduler/@alerts'}},
+                {'command': 'get',
+                 'parameters': {'path': '//sys/scheduler/orchid/scheduler/cluster'}},
+                {'command': 'get', 'parameters': {'path': '//sys/cluster_nodes/@'}}]})
+            for item in batch:
+                self.assertIn('output', item, item)
+            self.assertEqual(batch[-4]['output'], {})   # rpc_proxies: no proxies
+            self.assertEqual(batch[-3]['output'], [])   # scheduler alerts
+            self.assertIn('resource_limits', batch[-2]['output'])
+            # Resources.js prepareDiskResources indexes these without guards.
+            attrs = batch[-1]['output']
+            self.assertEqual(attrs['available_space_per_medium'], {'default': 0})
+            self.assertEqual(attrs['used_space_per_medium'], {'default': 0})
+
+            # masters.ts throws unless primary AND secondary resolve, and
+            # hard-requires the primary master's cell_id orchid.
+            _, batch, _ = call(port, 'POST', '/api/v3/execute_batch', body={'requests': [
+                {'command': 'get', 'parameters': {'path': '//sys/secondary_masters'}},
+                {'command': 'get', 'parameters': {'path': '//sys/timestamp_providers'}},
+                {'command': 'get', 'parameters': {'path': '//sys/primary_masters/'
+                    'primary-master/orchid/config/primary_master/cell_id'}}]})
+            for item in batch:
+                self.assertIn('output', item, item)
+            self.assertRegex(batch[-1]['output'], r'^[0-9a-f-]+$')
+
+            # chunks.js crashes on `chunks.chunks.count` if the virtual chunk
+            # maps are missing; flags feed the replication indicators.
+            _, chunks, _ = call(port, 'POST', '/api/v3/get',
+                                body={'path': '//sys/chunks/@'})
+            self.assertEqual((chunks['count'], chunks['multicell_count']), (0, {}))
+            _, flags, _ = call(port, 'POST', '/api/v3/get',
+                               body={'path': '//sys/@chunk_replicator_enabled'})
+            self.assertIs(flags, True)
+
     def test_cluster_params_version_paths_resolve(self):
         # cluster-params.ts:88,149,173: the UI server's boot batches read the
         # scheduler and first-primary-master orchid versions. ui >= 1.60
