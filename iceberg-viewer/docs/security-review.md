@@ -1,530 +1,559 @@
 # Backend security review
 
-Review date: 2026-07-26
+Review date: 2026-07-27
 
-Reviewed revision: `d82922e8a44`
+Reviewed backend revision: `0d428fb4982db5f9d0775b81c7eaac1766e92158`
 
-## Remediation status at current HEAD
+Reviewed UI boundary: `ghcr.io/ytsaurus/ui:1.60.1` and the matching
+`ui-v1.60.1` source tag
 
-This document preserves the evidence and line references from the reviewed
-revision above. They are a historical snapshot, not a description of the
-current implementation. The follow-up status below was checked on 2026-07-27;
-a finding marked partial or open remains a deployment consideration.
+## Executive result
 
-| ID | Current status | Follow-up |
-|---|---|---|
-| SEC-01 | **Fixed** | Helm now fails unless authentication is configured or `auth.allowAnonymous=true` is explicitly selected for development (`5c4cf417520`, `75c8194c50d`). |
-| SEC-02 | **Fixed** | Runtime seed users were removed; published password pairs and the robot placeholder are rejected by both deployment and direct-runtime paths (`bcee1c0a3b1`, `1087d6a2c07`). |
-| SEC-03 | **Partial** | Helm inline values and external Secrets, plus `PGPASSWORD`-based backend deployments, reject `mock-password` (`7c6404859d9`, `ba01d47a92e`), but the runtime role is still the PostgreSQL bootstrap owner and network isolation remains open. |
-| SEC-04 | **Open** | The catalog still grants every authenticated identity global read access. This now includes the live `//sys/logs/audit_log` metadata projection (`ts`, `login`, `endpoint`, `http_code`; not `details`), so the exposure is no longer limited to fake data. Define and enforce authorization before attaching data with differing entitlements, and decide who may browse audit metadata. |
-| SEC-05 | **Fixed** | CORS is default-deny with an exact allowlist, CSRF uses a secret HMAC, and session cookies use `SameSite=Lax` (`4f9e61d3327`, `8c74b8829ad`, `a53d75dd86b`). |
-| SEC-06 | **Fixed** | Error response headers escape control characters and raw-wire regressions cover the boundary (`2113e886ad0`). |
-| SEC-07 | **Partial** | The backend emits `Secure; HttpOnly; SameSite=Lax`, but the chart does not require HTTPS and the UI can strip `Secure` for HTTP origins; service-to-service TLS is also unenforced. |
-| SEC-08 | **Partial** | FastAPI/uvicorn replaced the unbounded stdlib server; health and audit work have bounded dedicated executors and readiness has a total deadline (`1c688b40130`, `21888c0ef31`, `5d245df8a74`). Request-body, login, batch, and workload resource budgets remain open. |
-| SEC-09 | **Open** | The chart still has no NetworkPolicy separating UI, backend, PostgreSQL, and other workloads. |
-| SEC-10 | **Partial** | Sessions now expire and are password-revision-bound in both stores, but there is no logout/revoke endpoint and stored bearer values remain reusable until expiry. |
-| SEC-11 | **Fixed** | The hand-written HTTP parser was removed in favor of uvicorn (`1c688b40130`). |
-| SEC-12 | **Open** | Command-specific verb and operation policy is still not enforced. This is lower risk only while every implemented data command is read-only. |
-| SEC-13 | **Partial** | Recordings redact secrets, omit unsafe bodies, are size-bounded and forbidden with authentication; user passwords no longer enter argv (`d099f3f5771`, `d8a42d9e9d7`). External-Secret support for the robot credential and secret-derived annotations remain. |
-| SEC-14 | **Open** | The default ConfigMap-source workload still runs as root and pod hardening/service-account controls are not enforced. |
-| SEC-15 | **Partial** | Python versions are exact-pinned, but the default pod still installs them at startup without package hashes and images remain tag-based (`f54b83e7088`). |
-| SEC-16 | **Fixed** | Direct runs bind `127.0.0.1` unless explicitly overridden, container manifests opt into their required wildcard bind, and the anonymous Compose UI is loopback-only (`081a51f72ca`, `c8fa5fdef2f`). |
+The Python backend's strict-authentication path fails closed: missing,
+expired, or incorrect user cookies and incorrect robot tokens are rejected. The
+authenticated PostgreSQL Helm profile also renders with strict authentication,
+does not create default users, and rejects the published robot and database
+placeholders.
 
-The critical authentication and published-credential entry paths in the
-supported Helm profile are closed. The service is still not a general
-multi-tenant production profile: at minimum, resolve SEC-04, SEC-07, SEC-08,
-and SEC-09 for the intended environment, or explicitly document the accepted
-global-read and trusted network assumptions.
+There is nevertheless one current authentication-boundary bypass in the
+deployed UI layer. The stock UI authentication middleware continues to a
+protected handler after any verifier failure other than HTTP 401. A malformed
+cookie can trigger that path without a valid session. In the current chart an
+unauthenticated caller can use it to obtain the fixed, robot-fetched
+`cluster-params` response. That response currently contains only bootstrap
+metadata, not arbitrary catalog rows, but it violates the intended fail-closed
+boundary and must be fixed before the authentication guarantee can be relied
+on.
 
-OAuth is not enabled by this chart. If it is added, do not enable the stock
-UI callback as-is: the hardened state/cookie work currently exists only in the
-ignored standalone UI checkout and is not shipped by the parent Helm or
-Compose configuration. See [google-oauth.md](google-oauth.md).
+Authentication is also the backend's only data-access decision. Every valid
+local user and the shared robot can read every implemented catalog path. This
+includes the live audit projection at `//sys/logs/audit_log`; the other current
+catalog contents are synthetic. If all authenticated users are deliberately
+one global-read role, that can be accepted as a documented product decision.
+It is a deployment blocker if users are expected to have different
+entitlements.
 
-## Scope and threat model
+For an internal deployment, the other important access paths are credential
+theft on plaintext hops, broad ClusterIP reachability, and compromise of the
+PostgreSQL bootstrap-superuser credential used by the backend. Internal
+placement alone does not close any of those paths.
 
-The primary target is the chart-deployed Python backend, its PostgreSQL
-authentication store, the UI-to-backend proxy hop, and the Helm/Docker
-boundary.
+## Scope and assumptions
+
+The review covered:
+
+- the Python HTTP, authentication, session, CSRF, command-dispatch, and audit
+  code in [`mock-backend-py`](../mock-backend-py);
+- the UI-to-backend password-authentication boundary implemented by the stock
+  UI version selected in
+  [`Chart.yaml`](../deploy/helm/iceberg-ui-mock/Chart.yaml);
+- the Helm UI, backend, PostgreSQL, Secret, Service, and Ingress templates in
+  [`deploy/helm/iceberg-ui-mock`](../deploy/helm/iceberg-ui-mock); and
+- the default backend container and dependency-installation paths.
 
 The review assumes:
 
+- local passwords are verified by this service and users, sessions, the CSRF
+  secret, and audit rows are persisted in the chart-managed PostgreSQL;
+- delegated/external authentication is not configured;
+- browser OAuth is not implemented and is outside this review;
 - ordinary internal users can reach the UI;
-- a malicious or compromised workload may be able to reach ClusterIP Services;
-- internal users are not trusted with other users' sessions or unrestricted
-  catalog access;
-- the current fake/read-only data will eventually be replaced by data whose
-  confidentiality matters; and
-- an attacker does not start with Kubernetes administrator or host access.
+- a malicious or compromised internal workload may be able to reach ClusterIP
+  Services, but the attacker does not begin with Kubernetes administrator or
+  host access;
+- users must not obtain another user's session or data outside their intended
+  entitlement; and
+- denial of service is lower priority. Availability weaknesses are mentioned
+  only where they help cross an authentication boundary or guess credentials.
 
-The chart at the reviewed revision described itself as a development mock.
-That explained some of the choices below, but also meant that revision was not
-a safe internal deployment profile.
+Compose remains an anonymous, loopback-published development profile and is not
+the reviewed internal-deployment profile.
 
-## Overall result at the reviewed revision
+## Current finding summary
 
-**Do not expose the current deployment to internal users yet.** Authentication
-is disabled by default. Enabling the supplied authenticated mode does not
-close the boundary because the application, robot, and PostgreSQL credentials
-are published defaults. After those blockers, the service still needs
-authorization enforcement, network/TLS isolation, browser-origin controls,
-and request resource limits.
+| ID | Severity | Status | Finding |
+|---|---|---|---|
+| SEC-17 | **Medium** | Open | The stock UI authorization middleware fails open on non-401 verifier errors; an unauthenticated caller can currently receive robot-fetched bootstrap data |
+| SEC-04 | **High** | Open / design decision | Every authenticated identity has global read access, including access to live audit metadata |
+| SEC-07 | **High** | Open | User passwords, sessions, the robot token, and sensitive database traffic can cross plaintext hops |
+| SEC-09 | **High** | Open | UI, backend, and PostgreSQL have no network isolation from other cluster workloads |
+| SEC-03 | **High** | Open | The backend uses PostgreSQL's bootstrap superuser as its runtime identity |
+| SEC-18 | **Medium** | Open | Weak local passwords and robot tokens are accepted, while login timing reveals known users and attempts are not throttled |
+| SEC-13 | **Medium** | Open | The shared robot bearer token is unscoped, hard to attribute, and has a weak Secret lifecycle |
+| SEC-10 | **Medium** | Open | A stolen session remains valid after UI logout and is stored as a replayable bearer value |
+| SEC-19 | **Medium** | Open | Audit metadata is globally readable and rejected login attempts can spoof the `login` attribution field |
+| SEC-14 | **Medium** | Open | Default workloads are insufficiently hardened and receive unnecessary Kubernetes API credentials |
+| SEC-15 | **Medium** | Open | Default startup executes network-fetched packages as root and images are selected by mutable tags |
+| SEC-12 | **Low, latent** | Open | HTTP verb and CSRF policy are not tied to command semantics |
+| SEC-20 | **Low** | Open / accept | Health, version, API-version, and host-discovery routes are unauthenticated |
 
-### Finding summary
-
-| ID | Severity | Finding |
-|---|---|---|
-| SEC-01 | Critical | The default Helm deployment is anonymous and the backend fails open |
-| SEC-02 | Critical | Strict authentication accepts published user and robot credentials |
-| SEC-03 | Critical | PostgreSQL exposes a published bootstrap-superuser credential |
-| SEC-04 | High | Authentication does not enforce any catalog/object authorization |
-| SEC-05 | High | Arbitrary credentialed CORS and predictable CSRF defeat the browser boundary |
-| SEC-06 | High | Attacker-controlled error text causes HTTP response-header injection |
-| SEC-07 | High | Passwords, robot tokens, and sessions travel over plaintext HTTP |
-| SEC-08 | High | Unauthenticated clients can exhaust threads, memory, CPU, and request time |
-| SEC-09 | High | There is no network isolation between users/workloads, backend, and PostgreSQL |
-| SEC-10 | Medium | Sessions cannot be reliably expired or revoked |
-| SEC-11 | Medium | The hand-written HTTP framing accepts ambiguous or malformed requests |
-| SEC-12 | Medium | Verb and command dispatch do not enforce a safe operation policy |
-| SEC-13 | Medium | Recording and administration workflows expose reusable credentials |
-| SEC-14 | Medium | The default backend workload is root and receives an unnecessary API token |
-| SEC-15 | Medium | Startup executes mutable, unpinned third-party code |
-| SEC-16 | Medium | Direct-run defaults bind to every IPv4 and IPv6 interface |
+The severity of SEC-04 becomes low if global read access—including the audit
+metadata described under SEC-19—is explicitly intended for every account. It
+becomes the main confidentiality blocker as soon as catalog paths have
+different entitlements.
 
 ## Findings
 
-### SEC-01 — The default Helm deployment is anonymous and the backend fails open
+### SEC-17 — The deployed UI authorization middleware fails open
 
-**Severity: Critical — deployment blocker**
+**Severity: Medium; fix before relying on the login boundary**
 
-PostgreSQL is disabled and cluster authentication is empty in
-[`values.yaml`](../deploy/helm/iceberg-ui-mock/values.yaml#L24-L28) and
-[`values.yaml`](../deploy/helm/iceberg-ui-mock/values.yaml#L62-L71).
-The helper resolves that combination to `authentication: none`
-([`_helpers.tpl`](../deploy/helm/iceberg-ui-mock/templates/_helpers.tpl#L80-L92)),
-so the Deployment omits `MOCK_REQUIRE_AUTH`
-([`mock-backend.yaml`](../deploy/helm/iceberg-ui-mock/templates/mock-backend.yaml#L64-L72)).
-The backend then maps a request with no credential to the `iceberg` identity
-([`server.py`](../mock-backend-py/server.py#L73-L87)).
+The UI version selected by the chart is `1.60.1`. Its
+[`createAuthMiddleware`](https://github.com/ytsaurus/ytsaurus-ui/blob/ui-v1.60.1/packages/ui/src/server/middlewares/authorization.ts#L18-L41)
+returns 401 only when the authentication check itself reports HTTP 401. A
+timeout, network failure, malformed outgoing header, or backend 5xx falls
+through to `next()`, including for non-UI routes that are supposed to be
+protected.
 
-`helm template` with no overrides confirmed that the rendered cluster uses
-`authentication: "none"` and that the backend container has no authentication
-gate. Any caller able to reach the UI tunnel or backend Service can issue API
-commands without authenticating.
+This can be reached without a valid session. The password-auth resolver copies
+the browser's cluster cookie into a backend `Cookie` header
+([`yt-auth.ts`](https://github.com/ytsaurus/ytsaurus-ui/blob/ui-v1.60.1/packages/ui/src/server/middlewares/yt-auth.ts#L6-L23)).
+For example, a URL-decoded NUL in that cookie makes Axios reject the outgoing
+`/auth/whoami` request with `ERR_INVALID_CHAR`. That error is not classified as
+an authentication failure, so the requested handler runs.
 
-**Required change:** fail closed by default. Authentication enforcement must
-not depend on enabling optional persistence. Anonymous mode should require an
-explicit, conspicuously named development-only opt-in, and Helm should reject
-an exposed release without a configured authentication mechanism.
+A targeted reproduction against the checked-out UI build demonstrated:
 
-### SEC-02 — Strict authentication accepts published user and robot credentials
+```text
+GET /api/cluster-params/mock
+Cookie: mock_YTCypressCookie=%00
 
-**Severity: Critical — deployment blocker**
+HTTP 200
+```
 
-The user store always seeds `iceberg` with password `iceberg` and `root` with
-an empty password
-([`userdb.py`](../mock-backend-py/userdb.py#L14-L19)). PostgreSQL connection
-initialization inserts those users again whenever they are missing
-([`userdb.py`](../mock-backend-py/userdb.py#L89-L98)), so deleting a seed
-account is not durable across a later reconnect. The chart also publishes
-`mock-robot-token` as the accepted bearer token
-([`values.yaml`](../deploy/helm/iceberg-ui-mock/values.yaml#L48-L51)), and
-strict mode accepts that token directly
-([`server.py`](../mock-backend-py/server.py#L78-L83)).
+The same request without the malformed cookie returned 401. The exact
+`ui-v1.60.1` source contains the same vulnerable middleware, resolver, cookie
+decoding, and Axios/Node header path; the exact `1.60.1` container image was not
+live-tested in this review. The handler uses the server-side robot through
+[`getPreloadedClusterParams`](https://github.com/ytsaurus/ytsaurus-ui/blob/ui-v1.60.1/packages/ui/src/server/components/cluster-params.ts#L26-L36),
+so the reproduction returned media and scheduler/master version bootstrap data
+plus the expected missing/empty UI-configuration results. The current backend
+does not let the caller choose an arbitrary path through this route, and the
+reviewed response contained no table or audit rows. The impact is therefore
+limited today, but this is a real authentication bypass, not only a future
+guardrail issue.
 
-A live strict-mode check confirmed that
-`Authorization: Basic cm9vdDo=` (`root:`) returns `200` and creates a session.
-`iceberg:iceberg` and `Authorization: OAuth mock-robot-token` are equivalent
-published entry paths. The `root` identity has no extra privilege in the
-current mock, but the request has fully crossed the authentication boundary.
+Routes without `:ytAuthCluster` also take the non-401 fall-through path because
+the middleware cannot construct a cluster setup. Their currently enabled
+responses are low-sensitivity metadata or local utilities, and VCS is not
+configured by this chart. Separately, configured robot-backed remote settings
+and table-column presets would be affected by the general non-401 fall-through
+path. Enabling a new UI-server integration without fixing the middleware could
+silently expose it.
 
-**Required change:** remove runtime seed accounts, bootstrap an initial
-administrator once from a required high-entropy Secret, never recreate deleted
-accounts, and require an external/generated robot token while rejecting the
-documented default. Existing deployments must rotate all three credentials and
-revoke sessions created with them.
+**Required change:** protected UI routes must fail closed for every failed or
+incomplete authentication check. Return 401 for invalid credentials and
+502/503 for verifier/storage/network errors. Only routes deliberately marked
+public should bypass the check. Add regressions for malformed cookies, backend
+500, timeout, missing `ytAuthCluster`, `cluster-params`, and every server-side
+robot route. Deploy the fix in a rebuilt, digest-pinned UI image selected by
+the chart, or enforce an equivalent independent gateway check; changing only a
+standalone source checkout does not alter the stock image used by this release.
 
-### SEC-03 — PostgreSQL exposes a published bootstrap-superuser credential
+### SEC-04 — Authentication does not enforce object authorization
 
-**Severity: Critical — deployment blocker when PostgreSQL is enabled**
+**Severity: High when users have different entitlements**
 
-The chart publishes database `mockusers`, role `mock`, and password
-`mock-password`
-([`values.yaml`](../deploy/helm/iceberg-ui-mock/values.yaml#L27-L40)).
-That role is passed as `POSTGRES_USER` to the official image
-([`postgres.yaml`](../deploy/helm/iceberg-ui-mock/templates/postgres.yaml#L57-L66)).
-For a newly initialized official PostgreSQL container, this is the bootstrap
-database superuser. The backend uses the same role
-([`mock-backend.yaml`](../deploy/helm/iceberg-ui-mock/templates/mock-backend.yaml#L73-L88)),
-and PostgreSQL is exposed through a namespace/cluster-reachable Service
-([`postgres.yaml`](../deploy/helm/iceberg-ui-mock/templates/postgres.yaml#L112-L126)).
+The backend authenticates once in
+[`api_command`](../mock-backend-py/server.py#L856-L923), but `cmd_get`,
+`cmd_list`, `cmd_read_table`, and `exists` do not use the authenticated identity
+to authorize the requested path
+([`server.py`](../mock-backend-py/server.py#L306-L414)).
+`check_permission` and `check_permission_by_acl` unconditionally report
+`allow`
+([`server.py`](../mock-backend-py/server.py#L416-L420)).
 
-A workload that can reach that Service can use the published password to read
-live bearer-session cookies, replace password hashes, insert sessions, or use
-PostgreSQL superuser facilities in the database container. Changing only the
-UI password or robot token does not close this path. Even after rotating the
-database password, a backend compromise still obtains a database superuser
-credential.
+As a result, every local account and the robot can enumerate and read every
+implemented path. Most current rows are static mock fixtures. The exception is
+`//sys/logs/audit_log`, whose rows are loaded from PostgreSQL through
+[`userdb.audit_rows`](../mock-backend-py/userdb.py#L534-L537) and exposed by
+[`data.py`](../mock-backend-py/data.py#L195-L214). This authenticated
+global-read projection omits the free-form `details` value, but contains
+timestamp, claimed/authenticated login, endpoint, and HTTP status.
 
-**Required change:** reject the default database password, isolate PostgreSQL
-at the network layer, and separate a migration/owner identity from a
-least-privilege runtime role limited to the required user and session
-operations. Keep administrator credentials out of the backend pod.
+UI permission checks are advisory and cannot substitute for enforcement in
+the command handler.
 
-### SEC-04 — Authentication does not enforce any catalog/object authorization
+**Required change:** either:
 
-**Severity: High when users have different data entitlements**
+1. document and test that every account intentionally belongs to one
+   global-read role, while applying a separate policy to audit metadata; or
+2. define a deny-by-default path/table policy, enforce it before resolution and
+   reads, make both permission-reporting commands use the same policy, and
+   scope the robot to only its required bootstrap paths.
 
-`get`, `list`, and `read_table` receive the authenticated identity but never
-use it to authorize the requested path
-([`server.py`](../mock-backend-py/server.py#L107-L188)). Dispatch checks only
-that some identity exists
-([`server.py`](../mock-backend-py/server.py#L405-L430)).
-`check_permission` and `check_permission_by_acl` always report `allow`
-([`server.py`](../mock-backend-py/server.py#L208-L225)).
+Do not attach data with different user entitlements until the second model is
+implemented.
 
-Consequently every password user and the robot can enumerate and read every
-path the service identity can access. A UI permission result is advisory and
-cannot replace enforcement in the command handler. This is currently less
-visible because data is fake and commands are read-only, but it becomes a
-direct confidentiality boundary when a real Iceberg catalog is attached.
+### SEC-07 — Authenticated traffic is not required to use TLS
 
-**Required change:** define the intended authorization model before attaching
-real data. Enforce it server-side, deny by default before resolving or reading
-a path, scope the catalog service identity to the minimum data it may expose,
-and make permission-reporting commands reflect the same policy. If all
-authenticated users intentionally receive global read access, document and
-test that as an explicit security decision.
+**Severity: High when the internal network or an intermediary is not fully trusted**
 
-### SEC-05 — Arbitrary credentialed CORS and predictable CSRF defeat the browser boundary
-
-**Severity: High when a browser can reach the backend**
-
-The backend reflects every `Origin` value while returning
-`Access-Control-Allow-Credentials: true` and allowing authorization and CSRF
-headers
-([`server.py`](../mock-backend-py/server.py#L248-L257)). Its CSRF token is the
-predictable string `csrf-<username>` and is shared by every session for that
-user
-([`server.py`](../mock-backend-py/server.py#L69-L93)). The token is also
-returned by `/auth/whoami`
-([`server.py`](../mock-backend-py/server.py#L396-L403)).
-
-A live strict-mode request from `https://attacker.internal.example` received
-the reflected origin, `Allow-Credentials: true`, and the authenticated
-`root` response. A malicious same-site internal origin can therefore read GET
-results using a victim's backend cookie and can obtain or guess the token for
-POST requests. The precondition is realistic for sibling internal domains
-because `SameSite` is not an origin boundary. Future mutating commands would
-also inherit this exposure.
-
-**Required change:** disable backend CORS in the normal server-to-server UI
-topology. If direct browser access is necessary, use an exact origin allowlist,
-reject `null`, emit `Vary: Origin`, and validate `Origin`/`Referer` on
-state-changing requests. CSRF secrets must be random and session-bound, and
-the cookie needs an explicit `SameSite` policy.
-
-### SEC-06 — Attacker-controlled error text causes HTTP response-header injection
-
-**Severity: High**
-
-Missing paths are copied into error messages without validation
-([`server.py`](../mock-backend-py/server.py#L63-L64) and
-[`server.py`](../mock-backend-py/server.py#L167-L171)). `send_yt_error` writes
-that message directly into `X-YT-Response-Message`
-([`server.py`](../mock-backend-py/server.py#L278-L281)). Python's
-`BaseHTTPRequestHandler.send_header` does not remove embedded CR/LF.
-
-A raw-wire test using the JSON path
-`"//missing\r\nSet-Cookie: injected=yes"` produced a real second
-`Set-Cookie` response header. This is not contained at the backend boundary:
-the UI error path streams the upstream response and forwards every header
-except `content-length`, `vary`, and `www-authenticate`
-([`index.ts`](../ytsaurus-ui/packages/ui/src/server/utils/index.ts#L81-L83) and
-[`index.ts`](../ytsaurus-ui/packages/ui/src/server/utils/index.ts#L132-L147)).
-An ordinary authenticated user—or any caller in anonymous mode—can therefore
-plant arbitrary headers on a UI-origin response, manipulate cookies, and
-create response parsing ambiguity in intermediaries.
-
-**Required change:** never place raw error text in a response header. Omit the
-header or strictly reject all control characters before header construction,
-and keep detailed error data in the JSON body. The UI proxy should
-defense-in-depth allowlist response headers and reject `Set-Cookie` on command
-responses. Add a raw-socket regression covering parameters from query, header,
-and body sources.
-
-### SEC-07 — Passwords, robot tokens, and sessions travel over plaintext HTTP
-
-**Severity: High under a hostile internal network**
-
-The generated UI cluster hard-codes `secure: false`
-([`_helpers.tpl`](../deploy/helm/iceberg-ui-mock/templates/_helpers.tpl#L136-L148)),
-the UI always enables insecure YT authentication
+The generated cluster configuration hard-codes `secure: false`
+([`_helpers.tpl`](../deploy/helm/iceberg-ui-mock/templates/_helpers.tpl#L176-L188)),
+the UI always sets `YT_AUTH_ALLOW_INSECURE=1`
 ([`ui.yaml`](../deploy/helm/iceberg-ui-mock/templates/ui.yaml#L76-L84)), and the
-backend only serves HTTP. Ingress TLS is optional and empty by default
-([`values.yaml`](../deploy/helm/iceberg-ui-mock/values.yaml#L84-L93)).
-The 30-day session cookie lacks both `Secure` and `SameSite`
-([`server.py`](../mock-backend-py/server.py#L391-L394)).
+backend exposes HTTP only. Ingress TLS is optional and empty by default
+([`values.yaml`](../deploy/helm/iceberg-ui-mock/values.yaml#L107-L116)).
+The PostgreSQL connection also has no TLS configuration
+([`mock-backend.yaml`](../deploy/helm/iceberg-ui-mock/templates/mock-backend.yaml#L82-L98)).
 
-Basic passwords, the robot bearer token, and user bearer cookies can therefore
-be observed and replayed by an on-path internal component. TLS at the public
-ingress alone does not protect the UI-to-backend hop.
+The backend itself emits `Secure; HttpOnly; SameSite=Lax` session cookies
+([`server.py`](../mock-backend-py/server.py#L837-L841)). However, the UI is
+explicitly allowed to remove `Secure` when the browser origin is HTTP, and TLS
+at an external ingress still leaves the UI-to-backend Basic password, session
+cookie, and robot-token hops in plaintext. An on-path component can replay any
+of those bearer credentials.
 
-**Required change:** require TLS for every authenticated ingress, configure the
-UI cluster as secure, remove the insecure-auth override, and emit
-`Secure; HttpOnly; SameSite=...` cookies. Protect UI-to-backend and
-backend-to-PostgreSQL traffic with TLS/mTLS or an equivalent service-mesh
-policy when the cluster network is in threat scope.
+**Required change:** require HTTPS and redirect/HSTS at every authenticated
+user ingress. Do not expose the UI Service directly to an HTTP user network.
+Use TLS/mTLS or an equivalent service-mesh transport for UI-to-backend and
+backend-to-PostgreSQL when the pod network is in scope. Restrict insecure-cookie
+stripping to an explicit local-development profile.
 
-### SEC-08 — Unauthenticated clients can exhaust threads, memory, CPU, and request time
+### SEC-09 — The chart does not isolate service reachability
 
-**Severity: High**
+**Severity: High under the reviewed internal-workload threat model**
 
-The Python server reads the complete request body before routing or
-authenticating
-([`server.py`](../mock-backend-py/server.py#L333-L346)). It accepts arbitrary
-`Content-Length` values and accumulates arbitrary chunked bodies with no total
-limit
-([`server.py`](../mock-backend-py/server.py#L305-L315)). The five-second socket
-timeout is installed only after a response is being sent
-([`server.py`](../mock-backend-py/server.py#L259-L270)), while
-`ThreadingHTTPServer` creates an unbounded thread per connection
-([`server.py`](../mock-backend-py/server.py#L438-L450)). Thus many slow
-`POST /ping` requests can hold threads indefinitely without ever reaching
-authentication.
+There is no `NetworkPolicy` in the chart. UI, backend, and PostgreSQL are all
+ClusterIP Services
+([`ui.yaml`](../deploy/helm/iceberg-ui-mock/templates/ui.yaml#L133-L148),
+[`mock-backend.yaml`](../deploy/helm/iceberg-ui-mock/templates/mock-backend.yaml#L138-L153),
+and
+[`postgres.yaml`](../deploy/helm/iceberg-ui-mock/templates/postgres.yaml#L130-L144)).
+In the absence of other cluster policy, pods are non-isolated by default; a
+ClusterIP is a routing choice, not an authorization boundary
+([Kubernetes NetworkPolicy behavior](https://kubernetes.io/docs/concepts/services-networking/network-policies/)).
 
-There are additional work amplifiers:
+Another workload can bypass the UI and address `/login`, backend API routes,
+and PostgreSQL directly. Strong application/database credentials still gate
+those services, so reachability alone is not an authentication bypass. It does,
+however, expose every credential boundary and makes SEC-03, SEC-07, SEC-13,
+and SEC-18 materially easier to exploit.
 
-- `/login` has no rate limit; a wrong password for a known user performs
-  PBKDF2-600k
-  ([`userdb.py`](../mock-backend-py/userdb.py#L39-L57)), so parallel attempts
-  can saturate CPU and reveal valid usernames by timing.
-- `execute_batch` has no item, nesting, cost, or deadline limit and permits
-  nested batches
-  ([`server.py`](../mock-backend-py/server.py#L191-L225)). Configured
-  `MOCK_DELAY` makes one large batch hold a worker long after the UI's request
-  has timed out.
-- backend, UI, and PostgreSQL resource limits default to empty objects
-  ([`values.yaml`](../deploy/helm/iceberg-ui-mock/values.yaml#L18-L22),
-  [`values.yaml`](../deploy/helm/iceberg-ui-mock/values.yaml#L44-L46), and
-  [`values.yaml`](../deploy/helm/iceberg-ui-mock/values.yaml#L73-L79)).
+**Required change:** apply namespace default-deny ingress and egress, then
+allow only ingress-controller/gateway to UI, UI to backend, backend to
+PostgreSQL, and the required DNS/operational flows. If Helm tests remain
+enabled, give only the labeled smoke pod the temporary flows it needs. Verify
+that the cluster's CNI actually enforces NetworkPolicy. The current
+ConfigMap-source backend also needs PyPI egress at every start; switch to the
+baked image before denying that egress, or temporarily allow only a controlled
+package proxy. Do not expose backend or PostgreSQL with Ingress, NodePort, or
+LoadBalancer. Prefer a dedicated namespace and distinct workload identities.
 
-**Required change:** use a production HTTP server or put equivalent limits in
-the application: decoded-body and declared-length caps, immediate
-header/body/idle deadlines, a bounded worker/concurrency queue, disconnect
-cancellation, batch item/depth/work budgets, and a total command deadline.
-Rate-limit login per source and account, bound password-hash concurrency, and
-perform a dummy hash for unknown users. Enforce matching proxy limits and
-Kubernetes requests/limits.
+### SEC-03 — The backend holds a PostgreSQL superuser credential
 
-### SEC-09 — There is no network isolation between users/workloads, backend, and PostgreSQL
+**Severity: High because compromise permits authentication-store takeover**
 
-**Severity: High**
+The chart passes one configured role as `POSTGRES_USER`
+([`postgres.yaml`](../deploy/helm/iceberg-ui-mock/templates/postgres.yaml#L75-L84))
+and gives the same role and password to the backend
+([`mock-backend.yaml`](../deploy/helm/iceberg-ui-mock/templates/mock-backend.yaml#L82-L98)).
+The official PostgreSQL image creates the role named by `POSTGRES_USER` with
+superuser power
+([official image documentation](https://github.com/docker-library/docs/blob/master/postgres/README.md#postgres_user)).
 
-The chart contains no `NetworkPolicy`. The backend
-([`mock-backend.yaml`](../deploy/helm/iceberg-ui-mock/templates/mock-backend.yaml#L129-L144)),
-PostgreSQL
-([`postgres.yaml`](../deploy/helm/iceberg-ui-mock/templates/postgres.yaml#L112-L126)),
-and UI
-([`ui.yaml`](../deploy/helm/iceberg-ui-mock/templates/ui.yaml#L133-L148)) are
-ClusterIP Services. `ClusterIP` prevents public exposure by itself, but it does
-not restrict other pods or corporate networks with routed Service access.
+The published password is correctly rejected, but a backend compromise or
+theft of the replacement password still permits an attacker to read plaintext
+session tokens, replace password hashes, create sessions, change the CSRF
+secret, or exercise database-superuser capabilities. That crosses the
+application authentication boundary without knowing a user's password.
 
-Any reachable workload can skip UI routing and call `/login` or API commands
-directly. With PostgreSQL enabled, it can also target the identity store
-directly. This makes the UI an interface, not a network security boundary.
+The current connection initializer executes the full `SCHEMA` DDL whenever it
+opens or replaces a connection
+([`userdb.py`](../mock-backend-py/userdb.py#L364-L383)). A DML-only runtime role
+cannot be introduced until that initialization is separated.
 
-**Required change:** add a default-deny policy and explicit flows for
-ingress-controller-to-UI, UI-to-backend, backend-to-PostgreSQL, and required
-DNS/operational traffic. Do not expose backend or PostgreSQL through Ingress,
-NodePort, or LoadBalancer. Prefer distinct workload identities and, where
-practical, a dedicated namespace.
+**Required change:** move schema creation/reconciliation to a one-time
+owner-controlled initialization Job, then use a least-privilege runtime role.
+Grant that role only the specific tables, sequences, and operations it needs,
+keep the owner credential out of the backend pod, and permit PostgreSQL ingress
+only from the backend. Rotate the database credential and revoke all sessions
+after any suspected exposure.
 
-### SEC-10 — Sessions cannot be reliably expired or revoked
-
-**Severity: Medium**
-
-PostgreSQL sessions have a 30-day server-side expiry but are stored as plaintext
-bearer values
-([`userdb.py`](../mock-backend-py/userdb.py#L21-L31) and
-[`userdb.py`](../mock-backend-py/userdb.py#L156-L165)). In-RAM sessions store
-only `cookie -> login` and never expire server-side
-([`userdb.py`](../mock-backend-py/userdb.py#L204-L212)). Password changes do
-not revoke existing sessions
-([`userdb.py`](../mock-backend-py/userdb.py#L167-L174) and
-[`userdb.py`](../mock-backend-py/userdb.py#L214-L216)).
-
-There is no backend logout/revoke endpoint. UI logout only deletes browser
-cookies
-([`yt-auth.ts`](../ytsaurus-ui/packages/ui/src/server/components/yt-auth.ts#L11-L21)),
-so a copied cookie remains usable for 30 days with PostgreSQL and indefinitely
-in RAM until process restart.
-
-**Required change:** enforce expiry in both stores, shorten and optionally idle
-expire sessions, revoke them on logout and password reset, provide
-administrator revoke-all, and delete expired rows. Store a hash of the session
-token rather than the replayable token itself.
-
-### SEC-11 — The hand-written HTTP framing accepts ambiguous or malformed requests
-
-**Severity: Medium; higher behind a pooling HTTP intermediary**
-
-The Python chunk decoder treats `Transfer-Encoding` as chunked only when its
-entire lower-cased value is exactly `chunked`, accepts requests containing both
-`Transfer-Encoding` and `Content-Length`, trusts arbitrary chunk sizes, does
-not validate the two bytes after each chunk, and allows unlimited trailers
-([`server.py`](../mock-backend-py/server.py#L305-L315)).
-
-An upstream proxy can interpret duplicate/obfuscated framing differently and
-leave bytes to be parsed as another request on a pooled backend connection.
-The current UI/Axios path reconstructs most requests, which reduces the
-cross-user smuggling risk, but a future ingress or service mesh may not have
-identical parsing rules.
-
-**Required change:** reject `Content-Length` plus `Transfer-Encoding`,
-duplicates, unsupported encodings, invalid CRLF/trailers, and every overflow;
-close the connection on a framing error. Prefer a maintained production HTTP
-parser instead of custom chunk decoding.
-
-### SEC-12 — Verb and command dispatch do not enforce a safe operation policy
-
-**Severity: Medium; current commands are read-only**
-
-Python maps GET, POST, PUT, and DELETE to the same handler
-([`server.py`](../mock-backend-py/server.py#L405-L435)), while CSRF exempts GET
-([`server.py`](../mock-backend-py/server.py#L90-L93)). A future mutating command
-would therefore become GET-callable and bypass CSRF unless every author
-remembers to add a separate guard.
-
-**Required change:** define allowed verbs and read/write classification per
-command, return `405` for other methods, and enforce CSRF from operation
-metadata rather than the caller's verb. Explicitly forbid nested/unknown batch
-commands.
-
-### SEC-13 — Recording and administration workflows expose reusable credentials
-
-**Severity: Medium when enabled**
-
-Recording mode deliberately captures `Authorization`, `Cookie`, and
-`X-Csrf-Token`, along with request and response bodies
-([`server.py`](../mock-backend-py/server.py#L235-L239) and
-[`server.py`](../mock-backend-py/server.py#L283-L303)). Basic credentials are
-reversible; robot tokens and sessions are immediately replayable. The file is
-unbounded, so a request flood can also consume disk. Normal request logging
-prints the first 300 body bytes before authentication
-([`server.py`](../mock-backend-py/server.py#L333-L341)).
-
-The user administration CLI requires a password in the process argument list
-([`userdb.py`](../mock-backend-py/userdb.py#L223-L231)), and deployment
-documentation recommends passing secrets through Helm `--set`
-([`README.md`](../deploy/README.md#L100-L106)). The robot token has no
-`existingSecret` option. Secret-derived SHA-256 values are also placed in
-readable pod annotations
-([`mock-backend.yaml`](../deploy/helm/iceberg-ui-mock/templates/mock-backend.yaml#L30-L38)),
-providing offline verifiers for weak values.
-
-**Required change:** omit or irreversibly redact all credential headers,
-restrict and rotate recordings, cap their size, and refuse recording in a
-secure deployment profile. Read passwords from stdin/a Secret rather than
-argv, support external Secret references for every credential, and use a
-non-secret rotation revision instead of hashing secret material into
-annotations.
-
-### SEC-14 — The default backend workload is root and receives an unnecessary API token
+### SEC-18 — Credential strength and online guessing are not controlled
 
 **Severity: Medium**
 
-The default path mounts source into stock `python:3.12-slim`
-([`values.yaml`](../deploy/helm/iceberg-ui-mock/values.yaml#L1-L14)), whose
-default user is root. The chart exposes only an empty pod-level
-`securityContext`
-([`values.yaml`](../deploy/helm/iceberg-ui-mock/values.yaml#L95-L99) and
-[`mock-backend.yaml`](../deploy/helm/iceberg-ui-mock/templates/mock-backend.yaml#L108-L117)).
-It does not enforce `runAsNonRoot`, `allowPrivilegeEscalation: false`, a
-capability drop, read-only root filesystem, or RuntimeDefault seccomp.
+`set_password` accepts any string, including empty and one-character passwords
+([`userdb.py`](../mock-backend-py/userdb.py#L504-L516)), and the administration
+CLI does not enforce a policy
+([`userdb.py`](../mock-backend-py/userdb.py#L667-L697)). The UI rejects empty
+passwords, but direct HTTP Basic login does not. Robot validation rejects only
+an empty value and the published placeholder
+([`_helpers.tpl`](../deploy/helm/iceberg-ui-mock/templates/_helpers.tpl#L126-L131));
+a one-character robot token is valid.
 
-The pod spec also omits `automountServiceAccountToken: false` and a dedicated
-zero-RBAC ServiceAccount. A code-execution foothold can therefore steal the
-namespace's default ServiceAccount token; impact depends on external RBAC
-bindings. The optional baked backend image does use UID 65534
-([`mock-backend.Dockerfile`](../deploy/docker/mock-backend.Dockerfile#L5-L11)),
-but it is not the default deployment path.
+Login responses mask unknown users, but their timing does not. A known login
+with a wrong password performs PBKDF2 while an unknown login returns after the
+database lookup
+([`userdb.py`](../mock-backend-py/userdb.py#L451-L476)). `/login` has no source,
+account, or concurrency throttling
+([`server.py`](../mock-backend-py/server.py#L788-L835)). This supports username
+enumeration and targeted online password/token guessing. The concern here is
+account takeover, not denial of service.
 
-**Required change:** make a baked, scanned, non-root image the supported path;
-apply pod and container security contexts, drop all capabilities, disallow
-privilege escalation, use a read-only filesystem with explicit writable
-mounts, and set RuntimeDefault seccomp. Disable ServiceAccount token automount
-for UI, backend, PostgreSQL, and test pods unless a narrowly scoped identity is
-actually required.
+**Required change:** reject empty passwords at minimum and define an
+operator-approved password policy. Generate a high-entropy robot token instead
+of accepting arbitrary short input. Apply bounded login and robot-token
+attempt throttling at the gateway/backend, and perform equivalent password-hash
+work for unknown users so the response timing does not disclose account
+existence.
 
-### SEC-15 — Startup downloads third-party code and images remain mutable
+### SEC-13 — The robot credential is shared, unscoped, and difficult to attribute
 
 **Severity: Medium**
 
-With PostgreSQL and the default ConfigMap source mode, every pod start runs
-`python3 -m pip install --requirement /app/requirements.txt` from the network
-before starting the backend
-([`mock-backend.yaml`](../deploy/helm/iceberg-ui-mock/templates/mock-backend.yaml#L48-L55)).
-The requirements file pins every installed distribution to an exact version,
-and the baked image consumes the same file. Package hashes are not pinned; the
-startup installation also runs as root, and the image uses a mutable base tag
-([`mock-backend.Dockerfile`](../deploy/docker/mock-backend.Dockerfile#L5-L8)).
-Backend, PostgreSQL, and UI images are tag-based rather than digest-pinned
-([`values.yaml`](../deploy/helm/iceberg-ui-mock/values.yaml#L8-L11),
-[`values.yaml`](../deploy/helm/iceberg-ui-mock/values.yaml#L29-L32), and
-[`values.yaml`](../deploy/helm/iceberg-ui-mock/values.yaml#L54-L59)).
+The fixed robot token is an exact bearer credential. It bypasses the
+cookie-CSRF check and maps to the hard-coded login `iceberg`
+([`authenticate`](../mock-backend-py/server.py#L264-L288)). It can call every
+command and path, even though the UI needs it only for specific server-side
+bootstrap reads. A local human account may also be named `iceberg`, making
+audit attribution ambiguous and making future name-based authorization
+dangerous.
 
-A compromised package release, package index, registry, or mutable tag becomes
-code execution in a pod holding database and robot credentials.
+The chart accepts the token only as `auth.robotToken`, renders it into the UI
+Secret, mounts that Secret into the UI, and injects the same Secret value into
+the backend environment
+([`ui.yaml`](../deploy/helm/iceberg-ui-mock/templates/ui.yaml#L14-L28) and
+[`mock-backend.yaml`](../deploy/helm/iceberg-ui-mock/templates/mock-backend.yaml#L73-L80)).
+There is no external-Secret reference for it. A token-derived SHA-256 value is
+placed in readable backend and UI pod annotations
+([`mock-backend.yaml`](../deploy/helm/iceberg-ui-mock/templates/mock-backend.yaml#L31-L38)
+and [`ui.yaml`](../deploy/helm/iceberg-ui-mock/templates/ui.yaml#L47-L50)),
+which provides offline verifiers for a weak token. The Helm smoke pod also
+receives the production robot Secret and uses a mutable-tag curl image, with no
+hook deletion policy
+([`test-smoke.yaml`](../deploy/helm/iceberg-ui-mock/templates/tests/test-smoke.yaml#L1-L25)).
+Compromise of the UI pod, backend pod, test image while it runs, Helm release
+values, or Secret grants direct backend access until manual rotation.
 
-**Required change:** build once in CI from a lockfile with hashes, pin base and
-runtime images by digest, scan/sign/verify the result, and remove runtime
-package installation and PyPI egress.
+**Required change:** create a reserved robot principal distinct from every
+human login, record the authentication mechanism in audit rows, and authorize
+only the fixed bootstrap commands/paths it needs. Support an existing/external
+Secret, require high entropy, use a non-secret rotation revision in pod
+annotations, restrict Secret RBAC, and document rotation. Do not pass the
+production robot to a general smoke image; use a scoped short-lived test
+credential if authenticated smoke checks are required, and clean up completed
+test hooks.
 
-### SEC-16 — Direct-run defaults bind to every IPv4 and IPv6 interface
+### SEC-10 — Logout does not revoke a server session
 
-**Severity: Medium for local/direct execution**
+**Severity: Medium**
 
-`MOCK_HOST` defaults to `localhost:<port>` and is displayed as though it were
-the listening address
-([`server.py`](../mock-backend-py/server.py#L26-L30)), but the actual server
-binds to the IPv6 wildcard and explicitly enables dual-stack IPv4
-([`server.py`](../mock-backend-py/server.py#L438-L450)). Running the documented
-`python3 server.py 8000` therefore exposes the service to every reachable
-interface, not just loopback.
+Sessions are 256-bit random and expire server-side, but the default lifetime is
+30 days. PostgreSQL stores the bearer cookie itself as the session primary key
+([`userdb.py`](../mock-backend-py/userdb.py#L100-L105)), and session lookup
+accepts it until expiry or a password-revision change
+([`userdb.py`](../mock-backend-py/userdb.py#L478-L494)).
 
-**Required change:** separate advertised host from bind address, default
-direct runs to loopback, and require an explicit wildcard bind for containers.
+The backend has no logout or per-session revocation route. UI logout deletes
+browser cookies only
+([`yt-auth.ts`](https://github.com/ytsaurus/ytsaurus-ui/blob/ui-v1.60.1/packages/ui/src/server/components/yt-auth.ts#L11-L21)).
+A copied cookie therefore remains usable for direct backend calls after the
+user sees a successful logout. Changing the user's password correctly
+deletes/revokes all sessions and is the current emergency control.
 
-## Positive controls observed
+**Required change:** add an authenticated backend logout that revokes the
+current session and administrator revoke-one/revoke-all operations. Shorten the
+default, expose and validate `MOCK_COOKIE_TTL_SECONDS` in Helm, and consider
+idle expiry. Store a hash of the session token rather than the replayable
+value, and rotate/revoke sessions after credential or database exposure.
 
-The user store uses parameterized SQL, PBKDF2-HMAC-SHA256, constant-time
-comparisons, cryptographically random Python session tokens, and `HttpOnly`
-cookies. Services default to ClusterIP with Ingress disabled, and the optional
-baked image is non-root. These controls do not compensate for the blockers
-above.
+### SEC-19 — Audit visibility and attribution do not form a security boundary
+
+**Severity: Medium**
+
+Every authenticated identity can read the audit projection described in
+SEC-04. It reveals who used the service, when, which endpoint was called, and
+the response status. That can expose account names and operational activity
+even if global catalog read is intended.
+
+For `/login`, the backend assigns `request.state.audit_user` from the claimed
+Basic username before verifying the password
+([`server.py`](../mock-backend-py/server.py#L810-L835)). An unauthenticated
+caller can therefore insert a rejected audit row whose `login` column names any
+chosen user. The accompanying HTTP 401 still distinguishes the attempt from a
+successful login, but the column cannot be treated as an authenticated actor.
+Robot calls and a human named `iceberg` are also indistinguishable.
+
+The user-controlled audit payload is credential-redacted, bounded below 1,000
+bytes, and its free-form details are not exposed through the catalog table.
+Those controls reduce payload leakage but do not solve access or attribution.
+
+**Required change:** authorize audit reads separately, preferably to an
+administrative/auditor role. Store authenticated actor and claimed login in
+separate fields, leave actor null for a rejected login, record the
+authentication mechanism/principal, and document the meaning of each column.
+
+### SEC-14 — Workloads lack post-compromise containment
+
+**Severity: Medium**
+
+The default ConfigMap-source backend runs in stock `python:3.12-slim` as root
+and installs packages before startup
+([`values.yaml`](../deploy/helm/iceberg-ui-mock/values.yaml#L7-L18) and
+[`mock-backend.yaml`](../deploy/helm/iceberg-ui-mock/templates/mock-backend.yaml#L45-L55)).
+The chart provides only an empty, shared pod-level `securityContext` by
+default. It does not enforce per-container `runAsNonRoot`,
+`allowPrivilegeEscalation: false`, capability dropping, a read-only root
+filesystem, or RuntimeDefault seccomp; PostgreSQL and the smoke pod have no
+equivalent controls.
+
+No pod sets `automountServiceAccountToken: false` or selects a dedicated
+zero-RBAC ServiceAccount. Kubernetes otherwise supplies the assigned/default
+ServiceAccount credential to the pod
+([Kubernetes ServiceAccount documentation](https://kubernetes.io/docs/concepts/security/service-accounts/)).
+A code-execution foothold therefore gains the pod's robot/database material
+and a Kubernetes API identity whose impact depends on cluster RBAC.
+
+The optional baked backend image does run as UID/GID 65534
+([`mock-backend.Dockerfile`](../deploy/docker/mock-backend.Dockerfile#L1-L12)),
+but it is not the default.
+
+**Required change:** make a baked non-root image the supported deployment,
+define per-workload pod and container security contexts, drop all capabilities,
+disallow privilege escalation, use RuntimeDefault seccomp and a read-only root
+filesystem with explicit writable mounts, and disable API-token automount for
+UI, backend, PostgreSQL, and test pods. Use dedicated zero-RBAC service
+accounts where identities are operationally required.
+
+### SEC-15 — Startup executes mutable third-party artifacts
+
+**Severity: Medium**
+
+The default backend pod runs `pip install` from the network as root on every
+start
+([`mock-backend.yaml`](../deploy/helm/iceberg-ui-mock/templates/mock-backend.yaml#L49-L55)).
+Every resolved Python distribution is exact-version-pinned
+([`requirements.txt`](../mock-backend-py/requirements.txt)), which prevents
+ordinary version drift, but hashes are not pinned. Backend, PostgreSQL, and UI
+images are also tag-selected rather than digest-selected.
+
+A compromised package index/release, registry, or mutable tag therefore
+becomes code execution in a pod holding the robot or database credential. This
+is an unexpected-access path even though it is not directly reachable through
+an HTTP request.
+
+**Required change:** build once in CI from a hash-locked dependency set, pin
+base and runtime images by digest, scan/sign/verify the result, and remove
+runtime package installation and PyPI egress.
+
+### SEC-12 — Command policy is based on the request verb, not the operation
+
+**Severity: Low and latent while every implemented command is read-only**
+
+The API route accepts GET, POST, PUT, and DELETE for every command, while CSRF
+is waived for GET and for robot-token requests
+([`server.py`](../mock-backend-py/server.py#L281-L288) and
+[`server.py`](../mock-backend-py/server.py#L856-L867)). `execute_batch` invokes
+the same command map recursively
+([`server.py`](../mock-backend-py/server.py#L392-L405)).
+
+All current implemented data commands are read-only, so this does not create a
+current mutation or privilege-escalation exploit. A future write/admin command
+would be GET-callable and cookie-CSRF-exempt unless the author adds an
+independent guard.
+
+**Required change before adding writes:** attach allowed verbs, read/write
+classification, required principal/permission, and CSRF requirements to
+command metadata. Enforce the same policy for every batch subcommand and
+return 405 for unsupported verbs.
+
+### SEC-20 — Limited infrastructure metadata is public
+
+**Severity: Low**
+
+`/ping`, `/ready`, `/version`, `/service/version`, `/hosts*`, and `/api[/]`
+do not authenticate
+([`server.py`](../mock-backend-py/server.py#L731-L785)). They expose liveness,
+storage readiness, a mock version, the advertised backend address, and
+supported API versions. They do not expose catalog rows, users, sessions, or
+audit details.
+
+The global exception wrapper also returns `str(exception)` to the client
+([`server.py`](../mock-backend-py/server.py#L691-L718)). An unauthenticated
+login or identity check that encounters a database failure may therefore reveal
+internal host, database, or schema details. No password or bearer-token
+disclosure was observed.
+
+**Required change or acceptance:** keep `/ping` and `/ready` available only to
+the intended Kubernetes probes and UI/gateway through network policy. Remove
+or restrict host/version discovery if that metadata is not operationally
+required; otherwise document it as intentionally public inside the service
+boundary. Return a generic 500 body/header to clients and log detailed
+exceptions server-side.
+
+## Revalidated controls
+
+The following previously problematic entry paths are closed in the reviewed
+profile:
+
+| Previous ID | Result |
+|---|---|
+| SEC-01 | Helm rendering fails unless PostgreSQL/strict authentication is configured or an explicit development-only anonymous opt-in is supplied. |
+| SEC-02 | Strict mode has no seed users and rejects the published user-password pairs and robot placeholder. |
+| SEC-05 | CORS is default-deny with exact origins; CSRF uses a persisted random HMAC secret and constant-time validation; the backend cookie is `Secure`, `HttpOnly`, and `SameSite=Lax`. |
+| SEC-06 | Error-header control characters are escaped. |
+| SEC-11 | FastAPI/uvicorn replaced the hand-written HTTP parser. |
+| SEC-13, recording portion | Recording redacts credential-shaped values, bounds bodies/files, and cannot start with authentication enabled. |
+| SEC-16 | Direct runs bind to loopback unless an explicit wildcard bind is configured; Compose publishes its anonymous UI on host loopback only. |
+
+Additional positive controls observed:
+
+- PBKDF2-HMAC-SHA256 uses per-user random salts, a 600,000-iteration floor,
+  bounded verification work, and constant-time comparison.
+- Session tokens contain 256 bits of randomness, expire server-side, and are
+  password-revision-bound. Password changes revoke all existing sessions.
+- SQL values are parameterized; catalog path resolution accesses only the
+  in-memory node tree and does not perform filesystem traversal.
+- Unknown commands and routes return errors; recording and user-administration
+  functions are not exposed as HTTP command handlers.
+- Audit payloads are credential-redacted, depth/width/size-bounded, and the
+  browsable projection excludes the schemaless details.
+- The authenticated Helm mode rejects the published robot/database
+  placeholders and the render regression suite passes.
 
 ## Recommended remediation order
 
-1. Keep the service unexposed; make authentication fail closed (SEC-01).
-2. Remove published application/robot credentials and revoke old sessions
-   (SEC-02).
-3. Replace and reduce PostgreSQL privileges, then isolate all three Services
-   (SEC-03 and SEC-09).
-4. Require TLS and secure cookie settings (SEC-07).
-5. Close CORS/CSRF and response-header injection (SEC-05 and SEC-06).
-6. Add request, concurrency, login, and batch budgets (SEC-08, SEC-11, SEC-12).
-7. Implement the catalog authorization model before connecting real data
-   (SEC-04).
-8. Complete session, secret, workload, and supply-chain hardening
-   (SEC-10 and SEC-13 through SEC-16).
+1. Make the UI authentication middleware fail closed and add the malformed
+   cookie/non-401 regressions (SEC-17).
+2. Decide whether all authenticated users intentionally have global read
+   access. If not, implement server-side path authorization. In either case,
+   restrict audit reads and fix attribution (SEC-04 and SEC-19).
+3. Require HTTPS at the user boundary and protect internal credential hops
+   (SEC-07).
+4. Move the backend and UI to built, digest-pinned artifacts so runtime PyPI
+   egress can be removed (SEC-15).
+5. Add NetworkPolicy and replace the PostgreSQL bootstrap-superuser runtime
+   role (SEC-09 and SEC-03).
+6. Enforce credential strength/throttling and reduce the robot token's scope
+   and exposure (SEC-18 and SEC-13).
+7. Implement backend session revocation and hashed session storage (SEC-10).
+8. Complete non-root workload and ServiceAccount hardening (SEC-14).
+9. Add command/verb/CSRF metadata before implementing any mutating command
+   (SEC-12).
 
-Deployment fixes that rotate credentials must include migration notes.
+Request-body, batch-work, login-work, and Kubernetes resource budgets remain
+incomplete, but availability-only denial-of-service work is intentionally not
+ranked in this review.
 
-## Review limitations
+## Verification performed
 
-This was a source and local wire-behavior review, not a live-cluster
-penetration test. It did not inspect organization-specific ingress,
-service-mesh, CNI, RBAC, storage encryption, secret-manager, or backup
-configuration. It also did not perform a third-party dependency CVE/SBOM scan
-or a complete security audit of the upstream ytsaurus-ui application.
+- Source review of the current backend revision and Helm templates.
+- Source review of the exact `ui-v1.60.1` UI tag selected by the chart.
+- `python3 tests/test_userdb.py`: 22 tests passed.
+- `bash deploy/helm/iceberg-ui-mock/tests/test-auth-render.sh`: passed.
+- Targeted live reproduction of the malformed-cookie UI bypass against the
+  checked-out UI build, plus source-path verification in exact tag
+  `ui-v1.60.1`; the exact `1.60.1` container was not live-tested.
+- `python3 db/sync.py check`: generated documentation indexes are current.
+
+## Limitations
+
+This was a source, rendering, and targeted local behavior review, not a
+live-cluster penetration test. It did not inspect organization-specific
+Ingress/Gateway configuration, service mesh, CNI enforcement, RBAC bindings,
+Secret encryption, storage/backup controls, or image-admission policy. It did
+not run a dependency CVE/SBOM scan or audit the complete upstream UI beyond the
+password-authentication and robot-backed routes relevant to this deployment.

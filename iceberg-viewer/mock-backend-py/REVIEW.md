@@ -37,10 +37,10 @@ python3 db/sync.py check && python3 db/sync.py audit   # docs<->DB<->code<->traf
    the `//sys/logs/audit_log` column allowlist as a trust decision; the
    remaining fixtures are mostly mechanical.
 
-Prior review artifacts you can lean on: `docs/security-review.md` (a historical
-review whose findings remain open unless a later commit and regression test
-demonstrate otherwise), `docs/architecture-review.md`, and `docs/auth.md` (the
-protocol contract this code implements).
+Review artifacts you can lean on: `docs/security-review.md` (a current review
+at its stated revision; recheck findings after later changes),
+`docs/architecture-review.md`, and `docs/auth.md` (the protocol contract this
+code implements).
 
 ---
 

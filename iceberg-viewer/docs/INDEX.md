@@ -14,7 +14,7 @@ Which doc covers what, and which doc mentions which. Regenerate with `python3 db
 ### [docs/auth.md](../docs/auth.md)
 *YTsaurus UI ↔ backend authentication, at wire level*
 - mentions: [docs/google-oauth.md](../docs/google-oauth.md)
-- mentioned by: [README.md](../README.md), [deploy/README.md](../deploy/README.md), [docs/architecture-review.md](../docs/architecture-review.md), [docs/google-oauth.md](../docs/google-oauth.md), [docs/history.md](../docs/history.md), [docs/iceberg-considerations.md](../docs/iceberg-considerations.md), [docs/security-review.md](../docs/security-review.md), [mock-backend-py/README.md](../mock-backend-py/README.md)
+- mentioned by: [README.md](../README.md), [deploy/README.md](../deploy/README.md), [docs/architecture-review.md](../docs/architecture-review.md), [docs/google-oauth.md](../docs/google-oauth.md), [docs/history.md](../docs/history.md), [docs/iceberg-considerations.md](../docs/iceberg-considerations.md), [mock-backend-py/README.md](../mock-backend-py/README.md)
 
 ### [docs/table-viewer.md](../docs/table-viewer.md)
 *YTsaurus UI ↔ cluster wire protocol: Navigation + static Table viewer*
@@ -53,7 +53,7 @@ Which doc covers what, and which doc mentions which. Regenerate with `python3 db
 
 ### [docs/security-review.md](../docs/security-review.md)
 *Backend security review*
-- mentions: [README.md](../README.md), [deploy/README.md](../deploy/README.md), [docs/auth.md](../docs/auth.md), [docs/google-oauth.md](../docs/google-oauth.md)
+- mentions: [README.md](../README.md)
 
 ### [docs/proxy-test-coverage.md](../docs/proxy-test-coverage.md)
 *YTsaurus http-proxy test suites vs the mock backend*
@@ -87,7 +87,7 @@ Which doc covers what, and which doc mentions which. Regenerate with `python3 db
 ### [deploy/README.md](../deploy/README.md)
 *Deployment: docker compose (local testing) and Kubernetes (Helm)*
 - mentions: [README.md](../README.md), [docs/auth.md](../docs/auth.md), [mock-backend-py/README.md](../mock-backend-py/README.md)
-- mentioned by: [README.md](../README.md), [docs/security-review.md](../docs/security-review.md)
+- mentioned by: [README.md](../README.md)
 
 ## Ungrouped
 
@@ -98,7 +98,7 @@ Which doc covers what, and which doc mentions which. Regenerate with `python3 db
 ### [docs/google-oauth.md](../docs/google-oauth.md)
 *Google OAuth for the Iceberg viewer — design notes*
 - mentions: [docs/auth.md](../docs/auth.md)
-- mentioned by: [docs/architecture-review.md](../docs/architecture-review.md), [docs/auth.md](../docs/auth.md), [docs/iceberg-considerations.md](../docs/iceberg-considerations.md), [docs/security-review.md](../docs/security-review.md)
+- mentioned by: [docs/architecture-review.md](../docs/architecture-review.md), [docs/auth.md](../docs/auth.md), [docs/iceberg-considerations.md](../docs/iceberg-considerations.md)
 
 ### [docs/history.md](../docs/history.md)
 *Findings and corrections worth keeping*
