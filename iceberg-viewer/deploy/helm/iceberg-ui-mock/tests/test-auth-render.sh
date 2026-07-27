@@ -122,6 +122,26 @@ assert_absent "$test_tmp/upstream.yaml" '-u iceberg:iceberg'
 if "$helm_bin" template auth-regression "$chart_dir" \
     --namespace auth-regression \
     --set-string auth.ytUpstream=https://proxy.yt.example \
+    --set-string "auth.robotToken=$safe_test_token" \
+    --set mockBackend.replicaCount=2 \
+    >"$test_tmp/ram-replicas.yaml" 2>"$test_tmp/ram-replicas.stderr"; then
+    fail "authenticated RAM-backed deployment rendered with multiple replicas"
+fi
+assert_present "$test_tmp/ram-replicas.stderr" \
+    'mockBackend.replicaCount must be 1 for authenticated deployments without PostgreSQL'
+
+"$helm_bin" template auth-regression "$chart_dir" \
+    --namespace auth-regression \
+    --set postgres.enabled=true \
+    --set-string "postgres.password=$safe_database_password" \
+    --set-string "auth.robotToken=$safe_test_token" \
+    --set mockBackend.replicaCount=2 \
+    >"$test_tmp/postgres-replicas.yaml"
+assert_present "$test_tmp/postgres-replicas.yaml" '  replicas: 2'
+
+if "$helm_bin" template auth-regression "$chart_dir" \
+    --namespace auth-regression \
+    --set-string auth.ytUpstream=https://proxy.yt.example \
     --set-string ui.cluster.authentication=none \
     --set-string "auth.robotToken=$safe_test_token" \
     >"$test_tmp/invalid.yaml" 2>"$test_tmp/invalid.stderr"; then

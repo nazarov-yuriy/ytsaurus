@@ -111,6 +111,18 @@ none
 {{- end -}}
 {{- end }}
 
+{{/*
+Authenticated RAM-backed users and sessions are local to one process. Running
+more than one backend replica would make login success depend on which pod
+receives the next request.
+*/}}
+{{- define "iceberg-ui-mock.mock.validateReplicas" -}}
+{{- $mode := include "iceberg-ui-mock.auth.mode" . -}}
+{{- if and (ne $mode "none") (not .Values.postgres.enabled) (gt (int .Values.mockBackend.replicaCount) 1) -}}
+{{- fail "mockBackend.replicaCount must be 1 for authenticated deployments without PostgreSQL-backed users and sessions" -}}
+{{- end -}}
+{{- end }}
+
 {{- define "iceberg-ui-mock.auth.robotToken" -}}
 {{- $token := required "auth.robotToken must be non-empty when authentication is enabled" .Values.auth.robotToken | toString -}}
 {{- if eq $token "mock-robot-token" -}}

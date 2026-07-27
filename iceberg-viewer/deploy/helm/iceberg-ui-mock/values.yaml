@@ -1,5 +1,7 @@
 # Mock YT proxy (the backend under test).
 mockBackend:
+  # Authenticated deployments without PostgreSQL keep users and sessions in
+  # process memory, so the chart rejects more than one replica in that mode.
   replicaCount: 1
   # By default the chart runs the backend sources shipped in files/ on a stock
   # python image, installing the pinned requirements.txt at pod start (needs

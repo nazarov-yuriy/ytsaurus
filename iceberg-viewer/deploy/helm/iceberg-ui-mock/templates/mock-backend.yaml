@@ -1,3 +1,4 @@
+{{- include "iceberg-ui-mock.mock.validateReplicas" . -}}
 {{- if .Values.mockBackend.sourcesFromConfigMap }}
 apiVersion: v1
 kind: ConfigMap
