@@ -7,6 +7,7 @@ data stays fake. CLI: python3 userdb.py add-user <login> <password> | list-users
 import collections
 import hashlib
 import json
+import math
 import os
 import secrets
 import sys
@@ -19,6 +20,18 @@ SEED_USERS = {'iceberg': 'iceberg', 'root': ''}
 PASSWORD_SCHEME = 'pbkdf2_sha256'
 PBKDF2_ITERATIONS = 600_000
 PBKDF2_MAX_VERIFY_ITERATIONS = 5_000_000
+
+# This is a compact-JSON limit for the user-controlled part of one audit row:
+# login, endpoint, and details.  Keep the component limits conservative enough
+# that the envelope is also strictly smaller than 1,000 bytes.
+AUDIT_PAYLOAD_LIMIT_BYTES = 1000
+_AUDIT_LOGIN_JSON_BYTES = 120
+_AUDIT_ENDPOINT_JSON_BYTES = 240
+_AUDIT_DETAILS_JSON_BYTES = 600
+_AUDIT_VALUE_JSON_BYTES = 160
+_AUDIT_KEY_JSON_BYTES = 64
+_AUDIT_MAX_ITEMS = 8
+_AUDIT_MAX_DEPTH = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -80,6 +93,178 @@ def _new_password(password):
 def _new_cookie(login):
     # GenerateCookieValue parity (cypress_cookie.cpp:47-53): 32 random bytes, hex.
     return secrets.token_hex(32)
+
+
+def _compact_json(value):
+    return json.dumps(
+        value, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
+
+
+def _json_size(value):
+    return len(_compact_json(value).encode('utf-8'))
+
+
+def _bounded_audit_text(value, encoded_limit):
+    """Return text whose JSON representation fits encoded_limit UTF-8 bytes."""
+    text = value if isinstance(value, str) else str(value)
+    # No valid PostgreSQL jsonb value can contain U+0000.  Normalising invalid
+    # surrogates also makes the size calculation and database encoding agree.
+    sample = text[:encoded_limit].encode('utf-8', 'replace').decode('utf-8')
+    sample = sample.replace('\x00', '\ufffd')
+    was_cut = len(text) > encoded_limit
+    if not was_cut and _json_size(sample) <= encoded_limit:
+        return sample
+
+    suffix = '\u2026'
+    low, high = 0, len(sample)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if _json_size(sample[:middle] + suffix) <= encoded_limit:
+            low = middle
+        else:
+            high = middle - 1
+    return sample[:low] + suffix
+
+
+def _normalise_audit_value(value, depth=0):
+    """Copy only a bounded JSON prefix and report whether anything was omitted."""
+    if isinstance(value, str):
+        safe = _bounded_audit_text(value, _AUDIT_VALUE_JSON_BYTES)
+        return safe, safe != value
+    if value is None or isinstance(value, (bool, int)):
+        if isinstance(value, int) and value.bit_length() > 256:
+            return '<large integer>', True
+        return value, False
+    if isinstance(value, float):
+        return (value, False) if math.isfinite(value) else (str(value), True)
+    if depth >= _AUDIT_MAX_DEPTH:
+        if isinstance(value, (dict, list, tuple)):
+            return {'item_count': len(value)}, True
+        return _bounded_audit_text(value, _AUDIT_VALUE_JSON_BYTES), True
+    if isinstance(value, dict):
+        result = {}
+        truncated = len(value) > _AUDIT_MAX_ITEMS
+        for index, (key, child) in enumerate(value.items()):
+            if index >= _AUDIT_MAX_ITEMS:
+                break
+            safe_key = _bounded_audit_text(key, _AUDIT_KEY_JSON_BYTES)
+            if safe_key in result:
+                truncated = True
+                continue
+            if depth == 0 and safe_key == 'requests' and isinstance(child, (list, tuple)):
+                summaries, omitted, child_truncated = _normalise_batch_requests(child)
+                result[safe_key] = summaries
+                if omitted:
+                    result['requests_omitted'] = omitted
+                truncated = truncated or child_truncated
+                continue
+            safe_child, child_truncated = _normalise_audit_value(child, depth + 1)
+            result[safe_key] = safe_child
+            truncated = truncated or child_truncated or safe_key != key
+        return result, truncated
+    if isinstance(value, (list, tuple)):
+        result = []
+        truncated = len(value) > _AUDIT_MAX_ITEMS
+        for child in value[:_AUDIT_MAX_ITEMS]:
+            safe_child, child_truncated = _normalise_audit_value(child, depth + 1)
+            result.append(safe_child)
+            truncated = truncated or child_truncated
+        return result, truncated
+    return _bounded_audit_text(value, _AUDIT_VALUE_JSON_BYTES), True
+
+
+def _normalise_batch_requests(requests):
+    allowed = ('command', 'path', 'status', 'error_code')
+    summaries = []
+    truncated = len(requests) > _AUDIT_MAX_ITEMS
+    for request in requests[:_AUDIT_MAX_ITEMS]:
+        if not isinstance(request, dict):
+            truncated = True
+            continue
+        summary = {}
+        truncated = truncated or len(request) > sum(key in request for key in allowed)
+        for key in allowed:
+            if key in request:
+                summary[key], child_truncated = _normalise_audit_value(request[key], 2)
+                truncated = truncated or child_truncated
+        summaries.append(summary)
+    omitted = len(requests) - len(summaries)
+    return summaries, omitted, truncated
+
+
+def _audit_scalar(value):
+    if isinstance(value, str):
+        return _bounded_audit_text(value, 80)
+    if value is None or isinstance(value, (bool, int)):
+        return (value if not isinstance(value, int) or value.bit_length() <= 256
+                else '<large integer>')
+    if isinstance(value, float) and math.isfinite(value):
+        return value
+    return _bounded_audit_text(value, 80)
+
+
+def _bounded_audit_details(details):
+    details, truncated = _normalise_audit_value(details)
+    if truncated:
+        details = ({**details, '_audit_truncated': True}
+                   if isinstance(details, dict)
+                   else {'value': details, '_audit_truncated': True})
+    if _json_size(details) <= _AUDIT_DETAILS_JSON_BYTES:
+        return details
+
+    # Oversized data becomes an allowlisted summary. In particular, a future
+    # caller cannot accidentally retain complete execute_batch requests.
+    result = {'_audit_truncated': True}
+    if not isinstance(details, dict):
+        return result
+    for key in ('method', 'status', 'outcome', 'origin',
+                'command', 'path', 'error_code'):
+        if key in details:
+            candidate = {**result, key: _audit_scalar(details[key])}
+            if _json_size(candidate) <= _AUDIT_DETAILS_JSON_BYTES:
+                result = candidate
+
+    requests = details.get('requests')
+    if not isinstance(requests, list):
+        return result
+    previously_omitted = details.get('requests_omitted', 0)
+    if not isinstance(previously_omitted, int) or previously_omitted < 0:
+        previously_omitted = 0
+    total = len(requests) + previously_omitted
+    batch = {**result, 'requests': [], 'requests_omitted': total}
+    if _json_size(batch) > _AUDIT_DETAILS_JSON_BYTES:
+        return result
+    result = batch
+    for request in requests[:_AUDIT_MAX_ITEMS]:
+        if not isinstance(request, dict):
+            continue
+        summary = {key: _audit_scalar(request[key])
+                   for key in ('command', 'path', 'status', 'error_code')
+                   if key in request}
+        kept = [*result['requests'], summary]
+        candidate = {**result, 'requests': kept,
+                     'requests_omitted': total - len(kept)}
+        if not candidate['requests_omitted']:
+            del candidate['requests_omitted']
+        if _json_size(candidate) > _AUDIT_DETAILS_JSON_BYTES:
+            break
+        result = candidate
+    return result
+
+
+def _sanitize_audit(login, endpoint, details):
+    safe_login = (
+        None if login is None
+        else _bounded_audit_text(login, _AUDIT_LOGIN_JSON_BYTES))
+    safe_endpoint = _bounded_audit_text(endpoint, _AUDIT_ENDPOINT_JSON_BYTES)
+    safe_details = _bounded_audit_details(details)
+    payload = {'login': safe_login, 'endpoint': safe_endpoint, 'details': safe_details}
+    # The component limits currently leave seven bytes of headroom. Keep a
+    # runtime fallback too, so optimized Python and future field changes cannot
+    # silently disable the storage bound.
+    if _json_size(payload) >= AUDIT_PAYLOAD_LIMIT_BYTES:
+        safe_details = {'_audit_truncated': True}
+    return safe_login, safe_endpoint, safe_details
 
 
 if DSN:
@@ -237,9 +422,10 @@ if DSN:
                 for login, origin in _query('SELECT login, origin FROM users ORDER BY login')]
 
     def audit(login, endpoint, details):
+        login, endpoint, details = _sanitize_audit(login, endpoint, details)
         _query('INSERT INTO audit_log (login, endpoint, details)'
                ' VALUES (%s, %s, %s::jsonb) RETURNING id',
-               (login, endpoint, json.dumps(details, ensure_ascii=False)), retry=False)
+               (login, endpoint, _compact_json(details)), retry=False)
 
     def audit_tail(count):
         rows = _query('SELECT ts, login, endpoint, details FROM audit_log'
@@ -354,6 +540,7 @@ else:  # in-RAM fallback: same behavior, nothing persisted
     _audit = collections.deque(maxlen=10_000)
 
     def audit(login, endpoint, details):
+        login, endpoint, details = _sanitize_audit(login, endpoint, details)
         with _lock:
             _audit.append((datetime.now(timezone.utc), login, endpoint, details))
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Focused tests for password hashing and PostgreSQL connection recovery."""
 import importlib.util
+import json
 import os
 import sys
 import threading
@@ -189,6 +190,75 @@ class TestPasswordStorage(unittest.TestCase):
         self.assertEqual(endpoint, '/login')
         self.assertEqual(details['novel_field'], [1, {'x': 2}])
 
+    def test_audit_payload_is_bounded_and_batch_requests_are_summarised(self):
+        requests = [
+            {'command': f'command-{index}-' + ('c' * 500),
+             'path': f'//huge/path/{index}/' + ('p' * 2_000),
+             # A future call site must not accidentally log whole requests.
+             'parameters': {'body': 'secret-request-payload' * 500}}
+            for index in range(100)
+        ]
+        self.userdb.audit(
+            'login-' + ('u' * 10_000),
+            '/api/v3/execute_batch/' + ('e' * 10_000),
+            {'method': 'POST', 'status': 200, 'command': 'execute_batch',
+             'requests': requests, 'unbounded': 'x' * 100_000})
+        _, login, endpoint, details = self.userdb.audit_tail(1)[0]
+
+        payload = {'login': login, 'endpoint': endpoint, 'details': details}
+        self.assertLess(
+            len(json.dumps(
+                payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8')),
+            self.userdb.AUDIT_PAYLOAD_LIMIT_BYTES)
+        self.assertTrue(login.endswith('\u2026'))
+        self.assertTrue(endpoint.endswith('\u2026'))
+        self.assertEqual(
+            (details['method'], details['status'], details['command']),
+            ('POST', 200, 'execute_batch'))
+        self.assertTrue(details['_audit_truncated'])
+        self.assertLess(len(details['requests']), len(requests))
+        self.assertEqual(
+            details['requests_omitted'],
+            len(requests) - len(details['requests']))
+        self.assertNotIn('parameters', details['requests'][0])
+        self.assertNotIn(
+            'secret-request-payload',
+            self.userdb._compact_json(payload))
+
+    def test_audit_stores_a_detached_sanitised_copy(self):
+        details = {'path': '//tmp/\x00object', 'values': ['before']}
+        self.userdb.audit('user\x00name', '/api/\x00get', details)
+        details['values'][0] = 'after'
+        _, login, endpoint, stored = self.userdb.audit_tail(1)[0]
+
+        self.assertNotIn('\x00', login + endpoint + stored['path'])
+        self.assertEqual(stored['values'], ['before'])
+
+    def test_audit_normalisation_has_bounded_depth_and_width(self):
+        class NoFullIteration(list):
+            def __iter__(self):
+                raise AssertionError('audit traversed the full list')
+
+        deep = 'leaf'
+        for _ in range(5_000):
+            deep = {'next': deep}
+        wide = NoFullIteration(range(100_000))
+
+        self.userdb.audit('alice', '/api/v4/get', {
+            'method': 'POST', 'deep': deep, 'wide': wide,
+            'huge_text': 'x' * 1_000_000})
+        _, _, _, stored = self.userdb.audit_tail(1)[0]
+
+        self.assertTrue(stored['_audit_truncated'])
+        self.assertEqual(
+            stored['deep']['next']['next'], {'item_count': 1})
+        self.assertEqual(stored['wide'], list(range(8)))
+        self.assertTrue(stored['huge_text'].endswith('\u2026'))
+        self.assertLess(
+            self.userdb._json_size({
+                'login': 'alice', 'endpoint': '/api/v4/get', 'details': stored}),
+            self.userdb.AUDIT_PAYLOAD_LIMIT_BYTES)
+
     def test_malformed_or_excessive_pbkdf2_hashes_fail_closed(self):
         malformed_hashes = [
             'pbkdf2_sha256$not-a-number$00',
@@ -206,6 +276,38 @@ class TestPasswordStorage(unittest.TestCase):
 
 
 class TestPostgresRecovery(unittest.TestCase):
+    def test_postgres_audit_uses_the_same_bounded_payload(self):
+        connections = []
+
+        class RecordingConnection(FakeConnection):
+            def __init__(self):
+                super().__init__()
+                self.executions = []
+
+            def execute(self, statement, params=()):
+                self.executions.append((statement, params))
+                return super().execute(statement, params)
+
+        def connect(_dsn, autocommit):
+            connection = RecordingConnection()
+            connections.append(connection)
+            return connection
+
+        userdb = load_userdb('dbname=mock', fake_psycopg(connect))
+        userdb.audit('u' * 10_000, '/unknown/' + ('p' * 10_000),
+                     {'path': 'x' * 100_000})
+        _, params = next(
+            execution for execution in connections[0].executions
+            if execution[0].startswith('INSERT INTO audit_log'))
+        login, endpoint, raw_details = params
+        details = json.loads(raw_details)
+
+        self.assertLess(
+            len(json.dumps(
+                {'login': login, 'endpoint': endpoint, 'details': details},
+                ensure_ascii=False, separators=(',', ':')).encode('utf-8')),
+            userdb.AUDIT_PAYLOAD_LIMIT_BYTES)
+
     def test_mutation_connection_loss_is_not_replayed(self):
         connections = []
 

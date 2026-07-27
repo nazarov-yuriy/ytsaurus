@@ -628,9 +628,22 @@ class Handler(BaseHTTPRequestHandler):
             if 'path' in params:
                 self.audit_extra['path'] = params['path']
             if command == 'execute_batch':
-                self.audit_extra['requests'] = [
-                    {'command': r.get('command'), 'path': (r.get('parameters') or {}).get('path')}
-                    for r in params.get('requests') or []]
+                requests = params.get('requests')
+                if isinstance(requests, list):
+                    summaries = []
+                    for request in requests[:8]:
+                        if not isinstance(request, dict):
+                            continue
+                        parameters = request.get('parameters')
+                        summaries.append({
+                            'command': request.get('command'),
+                            'path': (parameters.get('path')
+                                     if isinstance(parameters, dict) else None),
+                        })
+                    self.audit_extra['requests'] = summaries
+                    if omitted := len(requests) - len(summaries):
+                        self.audit_extra['requests_omitted'] = omitted
+                        self.audit_extra['_audit_truncated'] = True
             impl = COMMANDS.get(command)
             if not impl:
                 log(f'  !! unimplemented command: {command}')

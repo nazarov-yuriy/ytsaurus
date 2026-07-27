@@ -84,6 +84,13 @@ change freely (currently `method`, `status`, and per-endpoint extras such as
 `command`, `path`, `requests`, `outcome`, `origin`, `error_code`). Adding a
 field is just adding a dict key at the call site; no migration.
 
+The compact JSON representation of `login`, `endpoint`, and `details` is
+strictly smaller than 1,000 bytes per row. Oversized text is shortened, details
+keep the high-signal fields, and large batches retain only the leading
+command/path summaries plus a `requests_omitted` count; `_audit_truncated`
+marks a lossy record. Full request/response bodies, headers, and credentials
+are never retained.
+
 Storage follows `userdb.py`: the `audit_log` table in PostgreSQL (indexed by
 `ts`), or a bounded in-RAM deque (last 10,000 entries) without `MOCK_PG_DSN`.
 Writes are fail-open — a storage outage logs `audit write failed` and the
