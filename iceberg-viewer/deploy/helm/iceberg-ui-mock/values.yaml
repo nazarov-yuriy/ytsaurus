@@ -54,6 +54,9 @@ postgres:
 # is mounted into the UI and backend. The published value is an anonymous-mode
 # placeholder; chart rendering rejects it whenever authentication is enabled.
 auth:
+  # Anonymous access is a development-only posture and must be explicit. With
+  # this false default, rendering requires PostgreSQL or auth.ytUpstream.
+  allowAnonymous: false
   robotToken: mock-robot-token
   # Real YTsaurus HTTP proxy URL that verifies users not added locally; on
   # first success they are provisioned into the configured user store
@@ -80,15 +83,16 @@ ui:
     environment: development
     group: Mock
     theme: grapefruit
-    # Empty selects "basic" with PostgreSQL or auth.ytUpstream, and "none"
-    # otherwise. Set an explicit value to override that behavior. "none" may
-    # opt out with PostgreSQL, but is rejected when auth.ytUpstream is set.
+    # Empty selects "basic" with PostgreSQL or auth.ytUpstream. Without either,
+    # rendering fails unless auth.allowAnonymous=true. An explicit "none" also
+    # requires that opt-in and remains incompatible with auth.ytUpstream.
+    # Explicit "basic" requires PostgreSQL or auth.ytUpstream.
     authentication: ""
     proxy: ""
   env: []
   service:
-    # ClusterIP keeps the unauthenticated mock private by default. Opt in to a
-    # NodePort or ingress only when that exposure is intentional.
+    # ClusterIP is still not an authentication boundary. Opt in to a NodePort
+    # or ingress only with the intended authentication and network policy.
     type: ClusterIP
     port: 80
   resources: {}

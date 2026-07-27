@@ -31,8 +31,17 @@ assert_absent() {
 command -v "$helm_bin" >/dev/null ||
     fail "Helm executable not found: $helm_bin"
 
+if "$helm_bin" template auth-regression "$chart_dir" \
+    --namespace auth-regression \
+    >"$test_tmp/unconfigured.yaml" 2>"$test_tmp/unconfigured.stderr"; then
+    fail "chart rendered without authentication or an anonymous-mode opt-in"
+fi
+assert_present "$test_tmp/unconfigured.stderr" \
+    'explicitly opt in to development-only anonymous mode'
+
 "$helm_bin" template auth-regression "$chart_dir" \
-    --namespace auth-regression >"$test_tmp/default.yaml"
+    --namespace auth-regression \
+    --set auth.allowAnonymous=true >"$test_tmp/default.yaml"
 assert_present "$test_tmp/default.yaml" '"authentication":"none"'
 assert_absent "$test_tmp/default.yaml" '            - name: ALLOW_PASSWORD_AUTH'
 assert_absent "$test_tmp/default.yaml" '            - name: MOCK_REQUIRE_AUTH'
@@ -41,6 +50,7 @@ assert_absent "$test_tmp/default.yaml" '            - name: MOCK_CORS_ORIGINS'
 
 "$helm_bin" template cors-regression "$chart_dir" \
     --namespace auth-regression \
+    --set auth.allowAnonymous=true \
     --set-string 'mockBackend.corsOrigins[0]=https://viewer.internal' \
     >"$test_tmp/cors.yaml"
 assert_present "$test_tmp/cors.yaml" '            - name: MOCK_CORS_ORIGINS'
@@ -54,6 +64,16 @@ if "$helm_bin" template auth-regression "$chart_dir" \
 fi
 assert_present "$test_tmp/default-token.stderr" \
     'auth.robotToken must be changed from the published mock-robot-token default'
+
+if "$helm_bin" template auth-regression "$chart_dir" \
+    --namespace auth-regression \
+    --set-string ui.cluster.authentication=basic \
+    >"$test_tmp/basic-without-verifier.yaml" \
+    2>"$test_tmp/basic-without-verifier.stderr"; then
+    fail "basic authentication rendered without a user store or upstream verifier"
+fi
+assert_present "$test_tmp/basic-without-verifier.stderr" \
+    'authentication=basic requires postgres.enabled=true or non-empty auth.ytUpstream'
 
 if "$helm_bin" template auth-regression "$chart_dir" \
     --namespace auth-regression \

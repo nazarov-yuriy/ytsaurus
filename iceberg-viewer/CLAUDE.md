@@ -25,7 +25,7 @@ LOCAL_DEV_PORT=8080 npm run dev             # client on 8080, node server on 808
 #   NODE_PATH=ytsaurus-ui/packages/ui/node_modules node <script>.js
 
 # Deployment validation (no cluster/docker needed): helm + kubeconform in PATH
-helm lint deploy/helm/iceberg-ui-mock
+helm lint deploy/helm/iceberg-ui-mock --set auth.allowAnonymous=true
 bash deploy/helm/iceberg-ui-mock/tests/test-auth-render.sh
 ```
 

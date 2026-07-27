@@ -80,18 +80,31 @@ app.kubernetes.io/component: postgres
 {{/*
 An explicit cluster authentication value wins, except that delegated
 authentication may never be paired with "none". Otherwise PostgreSQL or an
-upstream YTsaurus proxy enables password auth automatically; the all-in-RAM
-default remains anonymous.
+upstream YTsaurus proxy enables password auth automatically; an all-in-RAM
+anonymous deployment requires the explicit development opt-in.
 */}}
 {{- define "iceberg-ui-mock.auth.mode" -}}
-{{- if and .Values.auth.ytUpstream (eq .Values.ui.cluster.authentication "none") -}}
+{{- $configured := .Values.ui.cluster.authentication -}}
+{{- if eq $configured "none" -}}
+{{- if .Values.auth.ytUpstream -}}
 {{- fail "ui.cluster.authentication=none is incompatible with non-empty auth.ytUpstream" -}}
-{{- else if .Values.ui.cluster.authentication -}}
-{{- .Values.ui.cluster.authentication -}}
+{{- else if not .Values.auth.allowAnonymous -}}
+{{- fail "authentication=none requires the explicit development-only auth.allowAnonymous=true opt-in" -}}
+{{- end -}}
+none
+{{- else if eq $configured "basic" -}}
+{{- if not (or .Values.postgres.enabled .Values.auth.ytUpstream) -}}
+{{- fail "authentication=basic requires postgres.enabled=true or non-empty auth.ytUpstream" -}}
+{{- end -}}
+basic
+{{- else if $configured -}}
+{{- fail "ui.cluster.authentication supports only none or basic in this chart" -}}
 {{- else if or .Values.postgres.enabled .Values.auth.ytUpstream -}}
 basic
-{{- else -}}
+{{- else if .Values.auth.allowAnonymous -}}
 none
+{{- else -}}
+{{- fail "configure postgres or auth.ytUpstream, or explicitly opt in to development-only anonymous mode with auth.allowAnonymous=true" -}}
 {{- end -}}
 {{- end }}
 
