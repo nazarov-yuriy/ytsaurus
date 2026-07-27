@@ -267,6 +267,35 @@ class TestUserPersistence(unittest.TestCase):
         # Credentials must never reach the audit trail.
         self.assertNotIn('wrong-password-audit', json.dumps([r[3] for r in rows]))
 
+    def test_9b_unexpected_calls_are_audited_too(self):
+        # Drift detection depends on this: a UI (or anything else) hitting a
+        # route or command we do not serve must leave an attributed trace.
+        robot = {'Authorization': 'OAuth persistence-test-robot'}
+        call('POST', '/api/v4/frobnicate_table', robot)
+        call('GET', '/internal/discover_versions/v2', robot)
+        call('POST', '/api/v3/execute_batch', robot, body={'requests': [
+            {'command': 'mystery_cmd', 'parameters': {'path': '//x'}}]})
+
+        with psycopg.connect(type(self).dsn) as conn:
+            rows = conn.execute(
+                'SELECT login, endpoint, details FROM audit_log ORDER BY id').fetchall()
+
+        def last(endpoint):
+            return next(r for r in reversed(rows) if r[1] == endpoint)
+
+        login, _, details = last('/api/v4/frobnicate_table')  # unknown command
+        self.assertEqual(login, 'iceberg')
+        self.assertEqual((details['status'], details['error_code'], details['command']),
+                         (404, 1, 'frobnicate_table'))
+
+        login, _, details = last('/internal/discover_versions/v2')  # unknown route
+        self.assertEqual(login, 'iceberg')
+        self.assertEqual((details['status'], details['error_code']), (404, 1))
+
+        _, _, details = last('/api/v3/execute_batch')  # unknown batch item
+        self.assertEqual(details['requests'],
+                         [{'command': 'mystery_cmd', 'path': '//x'}])
+
     def test_7_database_connection_recovers_after_termination(self):
         _, cookie = self.login('iceberg', 'iceberg')
         with psycopg.connect(DSN, autocommit=True) as conn:

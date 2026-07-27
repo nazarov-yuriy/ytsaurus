@@ -2,9 +2,10 @@
 mockBackend:
   replicaCount: 1
   # By default the chart runs the backend sources shipped in files/ on a stock
-  # python image (no registry needed). To use a build of
-  # deploy/docker/mock-backend.Dockerfile instead, set sourcesFromConfigMap=false
-  # and set both image.repository and image.tag to the image you pushed.
+  # python image, installing the pinned requirements.txt at pod start (needs
+  # PyPI egress). To use a build of deploy/docker/mock-backend.Dockerfile
+  # instead (self-contained, for air-gapped clusters), set
+  # sourcesFromConfigMap=false and both image.repository and image.tag.
   image:
     repository: python
     tag: "3.12-slim"
@@ -22,8 +23,8 @@ mockBackend:
   resources: {}
 
 # Optional real user persistence: users + login sessions in PostgreSQL.
-# When enabled, the mock gets MOCK_PG_DSN; run-from-ConfigMap mode installs the
-# exact versions in requirements.txt at container start. Table data stays fake.
+# When enabled, the mock gets MOCK_PG_DSN (the PG driver is already part of
+# the always-installed requirements.txt). Table data stays fake.
 postgres:
   enabled: false
   image:

@@ -2,7 +2,8 @@
 """Mock YTsaurus HTTP proxy serving in-RAM fake data to ytsaurus-ui.
 
 Run: python3 server.py [port]   (default 8000)
-This is the sole mock-backend implementation.
+This is the sole mock-backend implementation: protocol logic on a
+FastAPI/uvicorn HTTP layer (see requirements.txt for the pinned versions).
 Set MOCK_RECORD=<path> to append request/response pairs as JSONL.
 """
 import base64
@@ -12,7 +13,6 @@ import json
 import os
 import re
 import secrets
-import socket
 import sys
 import time
 import urllib.error
@@ -20,8 +20,9 @@ import urllib.request
 from datetime import datetime, timezone
 from email.utils import format_datetime
 from http.cookies import CookieError, SimpleCookie
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qsl, urlsplit
+
+import uvicorn
+from fastapi import FastAPI, Request, Response
 
 import userdb
 from data import resolve
@@ -407,282 +408,277 @@ RECORDED_HEADERS = ('authorization', 'cookie', 'x-csrf-token', 'content-type', '
 AUDIT_EXEMPT = ('/ping', '/ready', '/version', '/service/version', '/api', '/api/', '/hosts')
 
 
-class Handler(BaseHTTPRequestHandler):
-    protocol_version = 'HTTP/1.1'
+# ---- HTTP layer (FastAPI/uvicorn) ------------------------------------------
 
-    def log_message(self, *args):
-        pass
+app = FastAPI(openapi_url=None)  # the YT proxy protocol is not REST; no docs
+METHODS = ['GET', 'POST', 'PUT', 'DELETE']
 
-    def cors_headers(self):
-        origin = self.headers.get('Origin')
-        if not origin:
-            return {}
-        return {'Access-Control-Allow-Origin': origin,
-                'Access-Control-Allow-Credentials': 'true',
-                'Access-Control-Allow-Methods': 'POST, PUT, GET, OPTIONS',
-                'Access-Control-Allow-Headers': CORS_ALLOW,
-                'Access-Control-Expose-Headers': CORS_EXPOSE,
-                'Access-Control-Max-Age': '3600'}
 
-    def emit_audit(self, status):
-        if (self.command == 'OPTIONS' or self.audit_path in AUDIT_EXEMPT
-                or self.audit_path.startswith('/hosts/')):
-            return
+def cors_headers(request):
+    origin = request.headers.get('Origin')
+    if not origin:
+        return {}
+    return {'Access-Control-Allow-Origin': origin,
+            'Access-Control-Allow-Credentials': 'true',
+            'Access-Control-Allow-Methods': 'POST, PUT, GET, OPTIONS',
+            'Access-Control-Allow-Headers': CORS_ALLOW,
+            'Access-Control-Expose-Headers': CORS_EXPOSE,
+            'Access-Control-Max-Age': '3600'}
+
+
+def record(request, status, body_bytes):
+    if not RECORD_PATH:
+        return
+
+    def parse(buf):
+        if not buf:
+            return None
+        try:
+            return json.loads(buf)
+        except ValueError:
+            return buf.decode('utf-8', 'replace')[:4000]
+
+    with open(RECORD_PATH, 'a') as f:
+        f.write(json.dumps({
+            'ts': datetime.now(timezone.utc).isoformat(),
+            'method': request.method, 'path': request.url.path,
+            'query': f'?{request.url.query}' if request.url.query else '',
+            'request_headers': {h: request.headers[h] for h in RECORDED_HEADERS
+                                if request.headers.get(h)},
+            'request_body': parse(request.state.body_buf), 'status': status,
+            'response_body': parse(body_bytes)}, ensure_ascii=False) + '\n')
+
+
+def respond(request, status, body_bytes, headers=None, media_type=None):
+    record(request, status, body_bytes)
+    return Response(body_bytes, status_code=status, media_type=media_type,
+                    headers={**cors_headers(request), **(headers or {})})
+
+
+def json_response(request, status, body, extra=None):
+    return respond(request, status, json.dumps(body, ensure_ascii=False).encode(),
+                   extra, 'application/json')
+
+
+def yt_error_response(request, status, err, extra=None, error_format=None):
+    # X-YT-Error-Format governs the X-YT-Error header only. The real proxy
+    # keeps the pre-flush response body as ordinary JSON (context.cpp).
+    header_text, header_ctype = format_error_header(err, error_format or ('json', False))
+    request.state.audit_extra.setdefault('error_code', err['code'])
+    return json_response(request, status, err, {
+        'X-YT-Error': header_text,
+        'X-YT-Error-Content-Type': header_ctype,
+        'X-YT-Response-Code': str(err['code']),
+        'X-YT-Response-Message': escape_header_value(err['message']),
+        **(extra or {})})
+
+
+@app.middleware('http')
+async def request_pipeline(request, call_next):
+    """Body buffering, request log, enveloped 500s, and the audit write.
+
+    The audit entry is emitted before the response is handed to the transport,
+    so the trail never lags what a client saw; writes are fail-open. Handlers
+    are sync (threadpool) because command logic blocks (PG, PBKDF2, MOCK_DELAY);
+    they read the body via request.state.body_buf, buffered here.
+    """
+    request.state.audit_user = None
+    request.state.audit_extra = {}
+    if request.method == 'OPTIONS':
+        request.state.body_buf = b''
+        return respond(request, 200, b'')
+    request.state.body_buf = await request.body()  # uvicorn decodes chunked itself
+    log(request.method,
+        request.url.path + (f'?{request.url.query}' if request.url.query else ''),
+        f'body={request.state.body_buf[:300]}' if request.state.body_buf else '')
+    try:
+        response = await call_next(request)
+    except Exception as e:
+        log('  !! internal error', repr(e))
+        response = yt_error_response(request, 500, yt_error(1, str(e)))
+    path = request.url.path
+    if path not in AUDIT_EXEMPT and not path.startswith('/hosts/'):
         try:  # audit is fail-open: a storage outage must not break serving
-            userdb.audit(self.audit_user, self.audit_path,
-                         {'method': self.command, 'status': status, **self.audit_extra})
+            userdb.audit(request.state.audit_user, path,
+                         {'method': request.method, 'status': response.status_code,
+                          **request.state.audit_extra})
         except Exception as e:
             log('  !! audit write failed', repr(e))
+    return response
 
-    def send_body(self, status, body_bytes, headers):
-        self.emit_audit(status)  # before the response leaves: the trail never lags it
-        self.send_response(status)
-        for k, v in headers.items():
-            self.send_header(k, v)
-        self.send_header('Content-Length', str(len(body_bytes)))
-        # The UI's Node HTTP client treats a header-less HTTP/1.1 response as
-        # keep-alive and would pool a socket we are about to close.
-        self.send_header('Connection', 'close' if self.close_connection else 'keep-alive')
-        if not self.close_connection:
-            self.send_header('Keep-Alive', 'timeout=5')
-            self.connection.settimeout(5)
-        self.end_headers()
-        self.wfile.write(body_bytes)
-        self.record(status, body_bytes)
 
-    def send_json(self, status, body, extra=None):
-        data = json.dumps(body, ensure_ascii=False).encode()
-        self.send_body(status, data, {'Content-Type': 'application/json', **(extra or {})})
+@app.api_route('/ping', methods=METHODS)
+def ping(request: Request):
+    return json_response(request, 200, {})
 
-    def send_yt_error(self, status, err, extra=None, error_format=None):
-        # X-YT-Error-Format governs the X-YT-Error header only. The real proxy
-        # keeps the pre-flush response body as ordinary JSON (context.cpp).
-        header_text, header_ctype = format_error_header(
-            err, error_format or ('json', False))
-        self.audit_extra.setdefault('error_code', err['code'])
-        body = json.dumps(err, ensure_ascii=False).encode()
-        self.send_body(status, body, {
-            'Content-Type': 'application/json',
-            'X-YT-Error': header_text,
-            'X-YT-Error-Content-Type': header_ctype,
-            'X-YT-Response-Code': str(err['code']),
-            'X-YT-Response-Message': escape_header_value(err['message']),
-            **(extra or {})})
 
-    def record(self, status, body_bytes):
-        if not RECORD_PATH:
-            return
+@app.api_route('/ready', methods=METHODS)
+def ready(request: Request):
+    return json_response(request, 200 if userdb.healthy() else 503, {})
 
-        def parse(buf):
-            if not buf:
-                return None
-            try:
-                return json.loads(buf)
-            except ValueError:
-                return buf.decode('utf-8', 'replace')[:4000]
 
-        split = urlsplit(self.path)
-        with open(RECORD_PATH, 'a') as f:
-            f.write(json.dumps({
-                'ts': datetime.now(timezone.utc).isoformat(),
-                'method': self.command, 'path': split.path,
-                'query': f'?{split.query}' if split.query else '',
-                'request_headers': {h: self.headers[h] for h in RECORDED_HEADERS if self.headers.get(h)},
-                'request_body': parse(self.body_buf), 'status': status,
-                'response_body': parse(body_bytes)}, ensure_ascii=False) + '\n')
+@app.api_route('/version', methods=METHODS)
+@app.api_route('/service/version', methods=METHODS)
+def version(request: Request):
+    return respond(request, 200, b'mock-proxy-1.0.0', media_type='text/plain')
 
-    def read_request_body(self):
-        # axios streams proxied requests as chunked; http.server does not decode it.
-        if (self.headers.get('Transfer-Encoding') or '').lower() == 'chunked':
-            chunks = []
-            while (size := int(self.rfile.readline(65536).strip().split(b';')[0] or b'0', 16)):
-                chunks.append(self.rfile.read(size))
-                self.rfile.read(2)
-            while self.rfile.readline(65536) not in (b'\r\n', b'\n', b''):
-                pass
-            return b''.join(chunks)
-        return self.rfile.read(int(self.headers.get('Content-Length') or 0))
 
-    def collect_params(self, query, body_buf):
-        params = dict(parse_qsl(query))
-        if hdr := self.headers.get('X-YT-Parameters'):
-            try:
-                params.update(json.loads(hdr))
-            except ValueError:
-                log(f'  !! bad X-YT-Parameters: {hdr[:200]}')
-        if body_buf and ('json' in (self.headers.get('Content-Type') or 'json')):
-            try:
-                body = json.loads(body_buf)
-                if isinstance(body, dict):
-                    params.update(body)
-            except ValueError:
-                pass  # raw data body
-        return params
+@app.api_route('/hosts/all', methods=METHODS)
+def hosts_all(request: Request):
+    return json_response(request, 200, [])
 
-    def handle_request(self):
-        split = urlsplit(self.path)
-        cors = self.cors_headers()
-        self.body_buf = b''
-        self.audit_path = split.path
-        self.audit_user = None
-        self.audit_extra = {}
-        if self.command == 'OPTIONS':
-            return self.send_body(200, b'', cors)
-        self.body_buf = self.read_request_body()
-        log(self.command, split.path + (f'?{split.query}' if split.query else ''),
-            f'body={self.body_buf[:300]}' if self.body_buf else '')
+
+@app.api_route('/hosts', methods=METHODS)
+@app.api_route('/hosts/{_rest:path}', methods=METHODS)
+def hosts(request: Request, _rest=''):
+    # Role filtering like coordinator.cpp: this mock is one "data"-role proxy
+    # (the default role filter); other roles have no members.
+    role = request.query_params.get('role', 'data')
+    return json_response(request, 200, [HOST] if role == 'data' else [])
+
+
+@app.api_route('/api', methods=METHODS)
+@app.api_route('/api/', methods=METHODS)
+def api_versions(request: Request):
+    return json_response(request, 200, ['v3', 'v4'])
+
+
+@app.api_route('/login', methods=METHODS)
+@app.api_route('/login/{_rest:path}', methods=METHODS)
+def login(request: Request, _rest=''):
+    # HTTP Basic; real proxy sets YTCypressCookie, no SameSite.
+    authorization = request.headers.get('Authorization')
+    if authorization is None:
+        return respond(request, 401, b'', {'WWW-Authenticate': 'Basic'})
+    if ' ' not in authorization:
+        return yt_error_response(request, 400, yt_error(
+            1, 'Malformed "Authorization" header: failed to parse authorization method'))
+    method, encoded_credentials = authorization.split(' ', 1)
+    if method != 'Basic':
+        return yt_error_response(
+            request, 400, yt_error(1, f'Unsupported authorization method "{method}"'))
+    try:
+        credentials = base64.b64decode(encoded_credentials, validate=True)
+    except (binascii.Error, ValueError):
+        return yt_error_response(
+            request, 400, yt_error(1, 'Failed to decode user credentials'))
+    if b':' not in credentials:
+        return yt_error_response(
+            request, 400, yt_error(1, 'Failed to parse user credentials'))
+    user_bytes, password_bytes = credentials.split(b':', 1)
+    user = user_bytes.decode('utf-8', 'replace')
+    password = password_bytes.decode('utf-8', 'replace')
+    request.state.audit_user = user
+    cookie = userdb.authenticate_and_create_session(user, password)
+    # Locally-added users (test users) never reach the external YTsaurus;
+    # everyone else is verified there and provisioned on first success.
+    if cookie is None and UPSTREAM and userdb.user_origin(user) != 'local':
+        verdict = upstream_login(encoded_credentials)
+        if verdict is None:
+            request.state.audit_extra['outcome'] = 'upstream_unavailable'
+            return yt_error_response(
+                request, 503, yt_error(1, 'External authentication is unavailable'))
+        if verdict:
+            cookie = userdb.external_login(user)
+    if cookie is None:
+        # Real proxy masks the cause: generic code 1 (cypress_cookie_login.cpp:83).
+        request.state.audit_extra['outcome'] = 'rejected'
+        return yt_error_response(
+            request, 401, yt_error(1, 'Incorrect login or password'),
+            {'WWW-Authenticate': 'Basic'})
+    request.state.audit_extra.update(outcome='success', origin=userdb.user_origin(user))
+    expires = format_datetime(datetime.now(timezone.utc) + userdb.SESSION_TTL, usegmt=True)
+    return respond(request, 200, b'', {
+        'Set-Cookie': f'YTCypressCookie={cookie}; Expires={expires}; Secure; HttpOnly; Path=/'})
+
+
+@app.api_route('/auth/whoami', methods=METHODS)
+def whoami(request: Request):  # must succeed with truthy csrf_token even without credentials
+    auth = authenticate(request.headers)
+    if not auth:
+        return yt_error_response(request, 401, yt_error(900, 'Authentication failed'))
+    request.state.audit_user = auth['user']
+    return json_response(request, 200, {
+        'login': auth['user'],
+        'realm': 'cypress_cookie' if auth['via_cookie'] else 'mock',
+        'real_login': auth['user'], 'csrf_token': csrf_token_for(auth['user'])})
+
+
+@app.api_route('/api/{version}/{command}', methods=METHODS)
+def api_command(request: Request, version: str, command: str):
+    if version not in ('v3', 'v4') or not re.fullmatch(r'\w+', command):
+        return unhandled(request)
+    request.state.audit_extra['command'] = command
+    auth = authenticate(request.headers)
+    if not auth:
+        return yt_error_response(request, 401, yt_error(900, 'Authentication failed'))
+    request.state.audit_user = auth['user']
+    if csrf_error := check_csrf(request.method, request.headers, auth):
+        status, error = csrf_error
+        return yt_error_response(request, status, error)
+
+    params = dict(request.query_params)
+    if hdr := request.headers.get('X-YT-Parameters'):
         try:
-            self.route(split.path, split.query, cors)
-        except Exception as e:
-            log('  !! internal error', repr(e))
-            self.send_yt_error(500, yt_error(1, str(e)), cors)
+            params.update(json.loads(hdr))
+        except ValueError:
+            log(f'  !! bad X-YT-Parameters: {hdr[:200]}')
+    body_buf = request.state.body_buf
+    if body_buf and 'json' in (request.headers.get('Content-Type') or 'json'):
+        try:
+            body = json.loads(body_buf)
+            if isinstance(body, dict):
+                params.update(body)
+        except ValueError:
+            pass  # raw data body
+    if 'path' in params:
+        request.state.audit_extra['path'] = params['path']
+    if command == 'execute_batch' and isinstance(params.get('requests'), list):
+        requests = params['requests']
+        summaries = [
+            {'command': r.get('command'),
+             'path': r['parameters'].get('path') if isinstance(r.get('parameters'), dict) else None}
+            for r in requests[:8] if isinstance(r, dict)]
+        request.state.audit_extra['requests'] = summaries
+        if omitted := len(requests) - len(summaries):
+            request.state.audit_extra.update(requests_omitted=omitted, _audit_truncated=True)
 
-    def route(self, p, query, cors):
-        if p == '/ping':
-            return self.send_json(200, {}, cors)
-        if p == '/ready':
-            return self.send_json(200 if userdb.healthy() else 503, {}, cors)
-        if p in ('/version', '/service/version'):
-            return self.send_body(200, b'mock-proxy-1.0.0', {'Content-Type': 'text/plain', **cors})
-        if p == '/hosts/all':
-            return self.send_json(200, [], cors)
-        if p == '/hosts' or p.startswith('/hosts/'):
-            # Role filtering like coordinator.cpp: this mock is one "data"-role
-            # proxy (the default role filter); other roles have no members.
-            role = dict(parse_qsl(query)).get('role', 'data')
-            return self.send_json(200, [HOST] if role == 'data' else [], cors)
-        if p in ('/api', '/api/'):
-            return self.send_json(200, ['v3', 'v4'], cors)
-
-        if p == '/login' or p.startswith('/login/'):
-            # HTTP Basic; real proxy sets YTCypressCookie, no SameSite.
-            authorization = self.headers.get('Authorization')
-            if authorization is None:
-                return self.send_body(
-                    401, b'', {**cors, 'WWW-Authenticate': 'Basic'})
-            if ' ' not in authorization:
-                return self.send_yt_error(400, yt_error(
-                    1, 'Malformed "Authorization" header: failed to parse authorization method'),
-                    cors)
-            method, encoded_credentials = authorization.split(' ', 1)
-            if method != 'Basic':
-                return self.send_yt_error(
-                    400, yt_error(1, f'Unsupported authorization method "{method}"'), cors)
-            try:
-                credentials = base64.b64decode(encoded_credentials, validate=True)
-            except (binascii.Error, ValueError):
-                return self.send_yt_error(
-                    400, yt_error(1, 'Failed to decode user credentials'), cors)
-            if b':' not in credentials:
-                return self.send_yt_error(
-                    400, yt_error(1, 'Failed to parse user credentials'), cors)
-            user_bytes, password_bytes = credentials.split(b':', 1)
-            user = user_bytes.decode('utf-8', 'replace')
-            password = password_bytes.decode('utf-8', 'replace')
-            self.audit_user = user
-            cookie = userdb.authenticate_and_create_session(user, password)
-            # Locally-added users (test users) never reach the external YTsaurus;
-            # everyone else is verified there and provisioned on first success.
-            if cookie is None and UPSTREAM and userdb.user_origin(user) != 'local':
-                verdict = upstream_login(encoded_credentials)
-                if verdict is None:
-                    self.audit_extra['outcome'] = 'upstream_unavailable'
-                    return self.send_yt_error(
-                        503, yt_error(1, 'External authentication is unavailable'), cors)
-                if verdict:
-                    cookie = userdb.external_login(user)
-            if cookie is None:
-                # Real proxy masks the cause: generic code 1 (cypress_cookie_login.cpp:83).
-                self.audit_extra['outcome'] = 'rejected'
-                return self.send_yt_error(
-                    401, yt_error(1, 'Incorrect login or password'),
-                    {**cors, 'WWW-Authenticate': 'Basic'})
-            self.audit_extra.update(outcome='success', origin=userdb.user_origin(user))
-            expires = format_datetime(datetime.now(timezone.utc) + userdb.SESSION_TTL, usegmt=True)
-            return self.send_body(200, b'', {
-                **cors,
-                'Set-Cookie': (
-                    f'YTCypressCookie={cookie}; Expires={expires}; Secure; HttpOnly; Path=/')})
-
-        if p == '/auth/whoami':  # must succeed with truthy csrf_token even without credentials
-            auth = authenticate(self.headers)
-            if not auth:
-                return self.send_yt_error(401, yt_error(900, 'Authentication failed'), cors)
-            self.audit_user = auth['user']
-            return self.send_json(200, {
-                'login': auth['user'],
-                'realm': 'cypress_cookie' if auth['via_cookie'] else 'mock',
-                'real_login': auth['user'], 'csrf_token': csrf_token_for(auth['user'])}, cors)
-
-        if m := re.match(r'^/api/(v3|v4)/(\w+)$', p):
-            version, command = m.groups()
-            self.audit_extra['command'] = command
-            auth = authenticate(self.headers)
-            if not auth:
-                return self.send_yt_error(401, yt_error(900, 'Authentication failed'), cors)
-            self.audit_user = auth['user']
-            if csrf_error := check_csrf(self.command, self.headers, auth):
-                status, error = csrf_error
-                return self.send_yt_error(status, error, cors)
-            params = self.collect_params(query, self.body_buf)
-            if 'path' in params:
-                self.audit_extra['path'] = params['path']
-            if command == 'execute_batch':
-                requests = params.get('requests')
-                if isinstance(requests, list):
-                    summaries = []
-                    for request in requests[:8]:
-                        if not isinstance(request, dict):
-                            continue
-                        parameters = request.get('parameters')
-                        summaries.append({
-                            'command': request.get('command'),
-                            'path': (parameters.get('path')
-                                     if isinstance(parameters, dict) else None),
-                        })
-                    self.audit_extra['requests'] = summaries
-                    if omitted := len(requests) - len(summaries):
-                        self.audit_extra['requests_omitted'] = omitted
-                        self.audit_extra['_audit_truncated'] = True
-            impl = COMMANDS.get(command)
-            if not impl:
-                log(f'  !! unimplemented command: {command}')
-                return self.send_yt_error(404, yt_error(1, f'Command {command} is not registered'), cors)
-            try:
-                error_format = parse_error_format(self.headers)
-            except ValueError as error:
-                return self.send_yt_error(400, yt_error(1, str(error)), cors)
-            try:
-                maybe_delay(command, params)
-                result = impl(params, auth)
-            except CommandError as e:
-                return self.send_yt_error(e.status, e.err, cors, error_format)
-            of = params.get('output_format')
-            typed = isinstance(of, dict) and of.get('$attributes', {}).get('annotate_with_types')
-            if command in RAW_OUTPUT:
-                payload = result
-            else:
-                payload = typed_annotate(result) if typed else annotated(result)
-            if version == 'v4' and command in ('get', 'list', 'exists'):
-                payload = {'value': payload}
-            return self.send_json(200, payload, {**cors, 'X-YT-Proxy': HOST})
-
-        log('  !! unhandled route')
-        self.send_yt_error(404, yt_error(1, f'No such route: {p}'), cors)
-
-    do_GET = do_POST = do_PUT = do_DELETE = do_OPTIONS = handle_request
+    impl = COMMANDS.get(command)
+    if not impl:
+        log(f'  !! unimplemented command: {command}')
+        return yt_error_response(
+            request, 404, yt_error(1, f'Command {command} is not registered'))
+    try:
+        error_format = parse_error_format(request.headers)
+    except ValueError as error:
+        return yt_error_response(request, 400, yt_error(1, str(error)))
+    try:
+        maybe_delay(command, params)
+        result = impl(params, auth)
+    except CommandError as e:
+        return yt_error_response(request, e.status, e.err, error_format=error_format)
+    of = params.get('output_format')
+    typed = isinstance(of, dict) and of.get('$attributes', {}).get('annotate_with_types')
+    if command in RAW_OUTPUT:
+        payload = result
+    else:
+        payload = typed_annotate(result) if typed else annotated(result)
+    if version == 'v4' and command in ('get', 'list', 'exists'):
+        payload = {'value': payload}
+    return json_response(request, 200, payload, {'X-YT-Proxy': HOST})
 
 
-class DualStackServer(ThreadingHTTPServer):
-    # Dual-stack localhost support; backlog 511: a page load bursts ~20 connections.
-    address_family = socket.AF_INET6
-    request_queue_size = 511
-
-    def server_bind(self):
-        self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
-        super().server_bind()
+@app.api_route('/{_rest:path}', methods=METHODS)
+def unhandled(request: Request, _rest=''):
+    log('  !! unhandled route')
+    if auth := authenticate(request.headers):  # attribute probes when possible
+        request.state.audit_user = auth['user']
+    return yt_error_response(
+        request, 404, yt_error(1, f'No such route: {request.url.path}'))
 
 
 if __name__ == '__main__':
-    log(f'mock YT proxy (python) listening on http://{HOST}')
-    DualStackServer(('', PORT), Handler).serve_forever()
+    log(f'mock YT proxy (python/fastapi) listening on http://{HOST}')
+    uvicorn.run(app, host='', port=PORT, log_level='warning', timeout_keep_alive=5)
+
+

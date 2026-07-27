@@ -71,11 +71,12 @@ the stock `python:3.12-slim` image. The UI image is pulled from
   the backend reject missing/unknown credentials. Set
   `ui.cluster.authentication=none` explicitly only when an unauthenticated
   PostgreSQL-backed mock is intentional. The seed login is `iceberg`/`iceberg`.
-  In run-from-ConfigMap mode the container installs the exact versions in
-  `mock-backend-py/requirements.txt` at start, so it needs egress to PyPI; a
-  startup probe protects that installation. The Docker image and Compose test
-  runner consume the same file, preventing dependency-version drift. Use the
-  baked image for air-gapped clusters.
+- In run-from-ConfigMap mode the container always installs the exact versions
+  in `mock-backend-py/requirements.txt` at start (the FastAPI/uvicorn HTTP
+  layer plus the optional PG driver), so it needs egress to PyPI; a startup
+  probe protects that installation. The Docker image and Compose test runner
+  consume the same file, preventing dependency-version drift. Use the baked
+  image for air-gapped clusters.
 - External authentication (`auth.ytUpstream=https://proxy.yt.example`): users
   not added locally are verified against that real YTsaurus proxy's `/login`
   and provisioned into the configured user store on first success (no password

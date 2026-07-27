@@ -47,12 +47,10 @@ spec:
           imagePullPolicy: {{ .Values.mockBackend.image.pullPolicy }}
           {{- if .Values.mockBackend.sourcesFromConfigMap }}
           workingDir: /app
-          {{- if .Values.postgres.enabled }}
-          # Stock python image lacks the PG driver; install the pinned dependencies at start.
+          # Stock python image lacks fastapi/uvicorn (and the PG driver);
+          # install the pinned dependencies at start. Needs PyPI egress —
+          # use the baked image (sourcesFromConfigMap=false) when air-gapped.
           command: ["sh", "-c", "python3 -m pip install --quiet --requirement /app/requirements.txt && exec python3 /app/server.py 8000"]
-          {{- else }}
-          command: ["python3", "/app/server.py", "8000"]
-          {{- end }}
           {{- end }}
           env:
             - name: MOCK_HOST

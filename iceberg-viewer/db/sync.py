@@ -362,11 +362,11 @@ def audit() -> None:
     server dispatches must exist in the DB with a non-'unused' status, and every
     non-'unused' proxy /api command in the DB must exist in the server."""
     server = (ROOT / "mock-backend-py" / "server.py").read_text()
-    served_paths = set(re.findall(r"if p == '(/[^']*)'", server))
-    served_paths |= {p for group in re.findall(r"if p in \(([^)]*)\)", server)
-                     for p in re.findall(r"'(/[^']*)'", group)}
-    for prefix in re.findall(r"p\.startswith\('(/[^']+?)/?'\)", server):
-        served_paths.add(prefix.rstrip("/"))
+    served_paths = set()
+    for route in re.findall(r"api_route\('([^']+)'", server):
+        path = re.sub(r"/\{[^}]+\}.*", "", route)  # strip parameterized tails
+        if path:
+            served_paths.add(path)
     commands_block = server.split("COMMANDS = {", 1)[1].split("\n}", 1)[0]
     served_commands = set(re.findall(r"^    '(\w+)':", commands_block, re.M))
 

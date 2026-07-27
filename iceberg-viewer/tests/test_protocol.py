@@ -762,14 +762,13 @@ class TestErrorEnvelope(BackendTestCase):
 
 class TestConnectionManagement(BackendTestCase):
     def test_connection_decision_is_advertised(self):
-        # Hard-won empirical rule (see mock-backend-py/server.py send_body): an
-        # HTTP/1.1 response with NO Connection header implies keep-alive to Node
-        # clients. A server that then closes the socket (as Python's http.server
-        # does silently for `Connection: close` requests) leaves clients pooling
+        # Hard-won empirical rule (docs/empirical-findings.md): an HTTP/1.1
+        # response with NO Connection header implies keep-alive to Node clients.
+        # A server that then closes the socket (as Python's http.server did
+        # silently for `Connection: close` requests) leaves clients pooling
         # dead sockets -> intermittent "socket hang up" -> 504s in the UI.
-        # The backend must therefore say what it will do:
-        #   request Connection: keep-alive -> response Connection: keep-alive + Keep-Alive
-        #   request Connection: close      -> response Connection: close
+        # The invariant: a header-less response means the socket MUST actually
+        # stay usable, and a close decision must be advertised.
         # urllib always injects its own `Connection: close`, so use raw http.client.
         import http.client
         for port in self.each():
@@ -777,9 +776,9 @@ class TestConnectionManagement(BackendTestCase):
             conn.request('GET', '/ping', headers={'Connection': 'keep-alive'})
             r = conn.getresponse()
             r.read()
-            self.assertEqual(r.getheader('Connection'), 'keep-alive')
-            self.assertIn('timeout', r.getheader('Keep-Alive') or '')
-            # the same socket must be reusable
+            self.assertIn(r.getheader('Connection'), (None, 'keep-alive'))
+            self.assertFalse(r.will_close)
+            # the same socket must be reusable — the promise the header implies
             conn.request('GET', '/ping', headers={'Connection': 'keep-alive'})
             r2 = conn.getresponse()
             r2.read()

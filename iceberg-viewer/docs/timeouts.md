@@ -22,7 +22,7 @@ browser (jsw wrapper) ──► [dev: Rspack proxy | prod: nginx] ──► UI n
 | 6 | UI node server → proxy: `/version` (cluster-info) | **5 s** | `cluster-queries.ts:77` |
 | 7 | UI node server → proxy: robot batches for cluster-params (`//sys/media`, `@ui_config`, …) | **5 s** | `src/server/components/requestsSetup.ts:61` |
 | 8 | Mock backend: per request | none (a handler may take arbitrarily long) | `mock-backend-py/server.py` |
-| 9 | Mock backend: idle keep-alive between requests | 5 s, advertised via `Keep-Alive: timeout=5` | `server.py send_body` |
+| 9 | Mock backend: idle keep-alive between requests | 5 s (uvicorn `timeout_keep_alive`) | `server.py` entrypoint |
 | 10 | Mock (python) → PostgreSQL | connect 5 s (chart DSN `connect_timeout=5`); no statement timeout | chart `mock-backend.yaml` |
 | 10a | Mock (python) → external YTsaurus `/login` (`MOCK_YT_UPSTREAM`) | **5 s** default, `MOCK_YT_UPSTREAM_TIMEOUT` | `server.py upstream_login` |
 | 11 | k8s probes (chart): liveness/readiness `/ping`, `/ready` | 1 s per attempt (k8s default `timeoutSeconds`), period 10 s | `deploy/helm/.../mock-backend.yaml` |

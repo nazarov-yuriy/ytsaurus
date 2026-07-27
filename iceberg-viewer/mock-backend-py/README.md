@@ -1,11 +1,12 @@
 # Mock YTsaurus HTTP proxy — Python implementation
 
-The sole mock-backend implementation. It uses only the Python standard library
-unless PostgreSQL-backed user and session storage is enabled.
+The sole mock-backend implementation: protocol logic on a FastAPI/uvicorn
+HTTP layer (see "HTTP layer" below), PostgreSQL optional.
 
 ## Run
 
 ```bash
+python3 -m pip install --requirement requirements.txt   # pinned versions
 python3 server.py 8000
 # then point ytsaurus-ui's clusters-config.json at localhost:8000
 ```
@@ -60,8 +61,8 @@ in-RAM storage (seed users `iceberg`/`iceberg`, `root`/empty) otherwise.
   `MOCK_PG_DSN=... python3 userdb.py add-user <login> <password>` (also `list-users`).
 - `/ping` reports that the process is alive; `/ready` also checks PostgreSQL and
   returns 503 while storage is unavailable.
-- PG mode requires the exact dependency versions in `requirements.txt`; install
-  them with `python3 -m pip install --requirement requirements.txt`.
+- The PG driver ships in the always-installed `requirements.txt` (exact
+  versions; the Helm chart installs the same file at pod start).
 - Tests: `MOCK_PG_TEST_DSN=... python3 ../tests/test_user_persistence.py`
   (isolated-schema restart/reconnect, CLI users, password storage); the whole
   `tests/test_protocol.py` suite also passes with `MOCK_PG_DSN` set — the wire
@@ -74,8 +75,12 @@ in-RAM storage (seed users `iceberg`/`iceberg`, `root`/empty) otherwise.
 Every user-attributable request is recorded before its response is sent —
 `/login` attempts (success/rejected/upstream_unavailable, never the password),
 `/auth/whoami`, and each `/api/v3|v4` command including per-item summaries of
-`execute_batch`. Infrastructure endpoints (`/ping`, `/ready`, `/version`,
-`/hosts*`, `/api` discovery, CORS preflights) are exempt.
+`execute_batch`. Unexpected calls are covered too: unknown routes and
+unregistered commands are audited as 404s with `error_code`, attributed to the
+caller when their credentials are valid — a UI hitting something we do not
+serve leaves a trace (`tests/test_user_persistence.py` test 9b). Infrastructure
+endpoints (`/ping`, `/ready`, `/version`, `/hosts*`, `/api` discovery, CORS
+preflights) are exempt.
 
 The schema separates what is stable from what is not: strict columns for the
 essentials — `ts timestamptz`, `login` (NULL when unauthenticated), `endpoint`
@@ -110,6 +115,19 @@ request is still served (`/ready` reports the outage). Inspect with
 - `webjson.py` — annotated JSON, typed annotation, and `web_json` encoders
   (schemaless and YQL value formats).
 
+## HTTP layer
+
+The server is protocol logic on a FastAPI/uvicorn HTTP layer. It originally
+ran on stdlib `http.server` to keep deployments dependency-free, which
+required hand-rolled transport fixes (see "Implementation notes"); once
+PostgreSQL made pinned dependencies part of the deployment anyway, the HTTP
+layer was swapped for FastAPI — uvicorn owns keep-alive semantics, chunked
+request decoding, listen backlog, and dual-stack binding natively. The swap
+was validated against the full recorded golden corpus (165/165 byte-identical
+responses) and every protocol suite. The protocol logic itself (error
+envelopes, header formats, auth, commands) is framework-independent and moved
+unchanged.
+
 ## Validation
 
 The backend is covered by:
@@ -125,21 +143,16 @@ The backend is covered by:
 
 Found the hard way while making the UI run cleanly on this server:
 
-- **Connection headers must be explicit.** Python's `http.server` closes
-  `Connection: close` requests silently; the UI's Node/axios proxy treats a
-  header-less HTTP/1.1 response as keep-alive and pools the dying socket,
-  causing intermittent `socket hang up` errors and UI 504s. `send_body`
-  therefore always sends
-  `Connection: close|keep-alive` (+ `Keep-Alive: timeout=5`, enforced with a
-  socket timeout).
-- **Listen backlog**: `http.server` defaults to 5; a UI page load bursts ~20
-  parallel connections, so `request_queue_size` is raised to 511.
-- **Dual-stack bind**: Python defaults to IPv4-only, while clients may resolve
-  `localhost` to `::1`.
-- **Chunked request bodies**: axios streams proxied requests with
-  `Transfer-Encoding: chunked`, which `BaseHTTPRequestHandler` does not decode.
 - **Wire encoding details**: integer-valued floats are stringified without a
   decimal point, and empty `$attributes` objects must be retained.
+- **Transport (stdlib era, now owned by uvicorn but still asserted by tests):**
+  the UI's Node/axios proxy treats a header-less HTTP/1.1 response as
+  keep-alive and pools the socket — a server that then closes it silently (as
+  `http.server` did for `Connection: close` requests) causes intermittent
+  `socket hang up` errors and UI 504s; a UI page load bursts ~20 parallel
+  connections (backlog); clients may resolve `localhost` to `::1` (dual-stack);
+  axios streams proxied requests as `Transfer-Encoding: chunked`.
+  `tests/test_protocol.py TestConnectionManagement` keeps these pinned.
 
 This is still a development mock without login rate limiting, not a production
 identity service.

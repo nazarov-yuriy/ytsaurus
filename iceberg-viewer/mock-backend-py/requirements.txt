@@ -1,4 +1,17 @@
-# Optional PostgreSQL-backed user/session storage. Keep every resolved
+# Backend dependencies: FastAPI/uvicorn HTTP layer (always required) and
+# optional PostgreSQL-backed user/session storage. Keep every resolved
 # distribution exact because Helm installs this file at pod startup.
+annotated-doc==0.0.4
+annotated-types==0.8.0
+anyio==4.14.2
+click==8.4.2
+fastapi==0.140.0
+h11==0.16.0
+idna==3.18
 psycopg[binary]==3.3.4
+pydantic==2.13.4
+pydantic-core==2.46.4
+starlette==1.3.1
 typing-extensions==4.16.0
+typing-inspection==0.4.2
+uvicorn==0.51.0
