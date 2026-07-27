@@ -83,3 +83,17 @@ parameters at all — e.g. `get //sys/pool_trees/@default_tree` became
 `Error resolving path None` and the UI fell back to a default pool tree with a
 warning toast. Pinned by `test_protocol.py
 TestParameterSources.test_base64_numbered_parameter_headers`.
+
+## schedulerVersion/masterVersion must be real version strings
+
+The cluster-params 5-tuple carries `schedulerVersion` and `masterVersion` from
+the UI server's robot batches (`cluster-params.ts:149,173`, reading
+`//sys/scheduler/orchid/service/version` and
+`//sys/primary_masters/<first>/orchid/service/version`). Published UI builds
+newer than our dev checkout (observed with `ghcr.io/ytsaurus/ui:1.60.1`) call
+`.match(/(\d+)\.(\d+)\.(\d+)/)` on those values without an undefined-guard
+(`support.ts`), so a batch **error** in either item crashes the whole page
+right after cluster selection. The mock therefore serves both paths as
+document leaves with `"24.1.0-mock"`; `//sys/primary_masters` lists one
+`primary-master`. Pinned by
+`test_protocol.py TestParameterSources.test_cluster_params_version_paths_resolve`.

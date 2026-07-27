@@ -93,17 +93,23 @@ def _base_attrs(node_type: str) -> dict:
 
 
 class Node:
-    __slots__ = ('kind', 'attrs', 'children', 'rows')
+    __slots__ = ('kind', 'attrs', 'children', 'rows', 'value')
 
-    def __init__(self, kind, attrs, children=None, rows=None):
+    def __init__(self, kind, attrs, children=None, rows=None, value=None):
         self.kind = kind
         self.attrs = attrs
         self.children = children
         self.rows = rows
+        self.value = value
 
 
 def make_map_node() -> Node:
     return Node('map_node', _base_attrs('map_node'), children={})
+
+
+def make_document(value) -> Node:
+    """A leaf whose `get` returns a plain value (orchid-style version strings)."""
+    return Node('document', _base_attrs('document'), value=value)
 
 
 def make_table(schema, rows) -> Node:
@@ -169,6 +175,13 @@ _insert('sys/groups', make_map_node())
 _pool_trees = _insert('sys/pool_trees', make_map_node())
 _pool_trees.attrs['default_tree'] = 'physical'
 _insert('sys/pool_trees/physical', make_map_node())
+# Cluster-params boot also reads these versions (cluster-params.ts:149,173).
+# They must be real "N.N.N-..." strings: ui >= 1.60 crashes on an undefined
+# version (support.ts calls .match on it), so batch errors here are not an
+# option. Keep these inserts last — earlier node ids must stay stable.
+_insert('sys/scheduler/orchid/service/version', make_document('24.1.0-mock'))
+_insert('sys/primary_masters/primary-master/orchid/service/version',
+        make_document('24.1.0-mock'))
 
 
 def _fill_paths(node: Node, path: str) -> None:

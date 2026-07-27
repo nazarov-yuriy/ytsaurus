@@ -64,7 +64,10 @@ def setUpModule():
 
 
 def tearDownModule():
+    # Wait: uvicorn shuts down gracefully, and a lingering server would hold
+    # the port against the next run's setUpModule.
     _proc.terminate()
+    _proc.wait(timeout=10)
 
 
 def send(entry):

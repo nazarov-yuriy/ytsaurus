@@ -873,6 +873,25 @@ class TestParameterSources(BackendTestCase):
                            body={'path': '//home/iceberg/warehouse/trips/@dynamic'})
             self.assertIs(b, False)
 
+    def test_cluster_params_version_paths_resolve(self):
+        # cluster-params.ts:88,149,173: the UI server's boot batches read the
+        # scheduler and first-primary-master orchid versions. ui >= 1.60
+        # crashes on an undefined version (support.ts .match), so these must
+        # be real "N.N.N-..." strings, not batch errors.
+        for port in self.each():
+            _, masters, _ = call(port, 'POST', '/api/v3/list',
+                                 body={'path': '//sys/primary_masters'})
+            self.assertEqual(masters, ['primary-master'])
+            _, batch, _ = call(port, 'POST', '/api/v3/execute_batch', body={'requests': [
+                {'command': 'get',
+                 'parameters': {'path': '//sys/scheduler/orchid/service/version'}},
+                {'command': 'get',
+                 'parameters': {'path': f'//sys/primary_masters/{masters[0]}'
+                                        '/orchid/service/version'}}]})
+            for item in batch:
+                self.assertIn('output', item)
+                self.assertRegex(item['output'], r'^\d+\.\d+\.\d+')
+
     def test_base64_numbered_parameter_headers(self):
         # ytsaurus-ui 1.60.x sends parameters as base64 numbered header parts
         # (X-YT-Parameters-0..N) like the real proxy's gathered YT headers.

@@ -310,7 +310,7 @@ def cmd_get(params, auth):
                             '$value': {} if c.kind == 'map_node' else None}
                      for name, c in node.children.items()}
         else:
-            value = None
+            value = node.value  # tables: None; document leaves: the stored value
         attrs = attributes_for(node, params.get('attributes'))
         return {'$attributes': attrs, '$value': value} if attrs else value
     if attr_path == '':
