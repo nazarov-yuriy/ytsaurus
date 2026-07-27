@@ -34,6 +34,7 @@ from webjson import annotated, typed_annotate, web_json_body, yson_text
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
 HOST = os.environ.get('MOCK_HOST', f'localhost:{PORT}')
+BIND_HOST = os.environ.get('MOCK_BIND_HOST', '127.0.0.1')
 RECORD_PATH = os.environ.get('MOCK_RECORD')
 REQUIRE_AUTH = bool(os.environ.get('MOCK_REQUIRE_AUTH'))
 ROBOT_TOKEN = os.environ.get('MOCK_ROBOT_TOKEN', '')
@@ -913,5 +914,9 @@ def unhandled(request: Request, _rest=''):
 
 
 if __name__ == '__main__':
-    log(f'mock YT proxy (python/fastapi) listening on http://{HOST}')
-    uvicorn.run(app, host='', port=PORT, log_level='warning', timeout_keep_alive=5)
+    log(
+        'mock YT proxy (python/fastapi) '
+        f'bound to {BIND_HOST}:{PORT}, advertised as http://{HOST}')
+    uvicorn.run(
+        app, host=BIND_HOST, port=PORT, log_level='warning',
+        timeout_keep_alive=5)

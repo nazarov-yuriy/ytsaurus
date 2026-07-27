@@ -56,6 +56,8 @@ assert_absent "$test_tmp/default.yaml" '            - name: ALLOW_PASSWORD_AUTH'
 assert_absent "$test_tmp/default.yaml" '            - name: MOCK_REQUIRE_AUTH'
 assert_absent "$test_tmp/default.yaml" '            - name: MOCK_ENABLE_DEV_SEED_USERS'
 assert_absent "$test_tmp/default.yaml" '            - name: MOCK_CORS_ORIGINS'
+assert_present "$test_tmp/default.yaml" '            - name: MOCK_BIND_HOST'
+assert_present "$test_tmp/default.yaml" '              value: "0.0.0.0"'
 
 "$helm_bin" template cors-regression "$chart_dir" \
     --namespace auth-regression \

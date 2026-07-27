@@ -15,6 +15,9 @@ python3 server.py 8000
 
 Environment:
 
+- `MOCK_BIND_HOST=<address>` selects the listening interface. Direct runs
+  default to `127.0.0.1`; container deployments explicitly set `0.0.0.0`.
+  `MOCK_HOST` is separate and controls the proxy address advertised to the UI.
 - `MOCK_RECORD=<path>` appends sanitized request/response pairs as JSONL for
   anonymous development sessions only. Startup rejects it in strict or
   delegated-authentication mode. Credential-shaped headers, query parameters,
@@ -150,7 +153,8 @@ ran on stdlib `http.server` to keep deployments dependency-free, which
 required hand-rolled transport fixes (see "Implementation notes"); once
 PostgreSQL made pinned dependencies part of the deployment anyway, the HTTP
 layer was swapped for FastAPI — uvicorn owns keep-alive semantics, chunked
-request decoding, listen backlog, and dual-stack binding natively. The swap
+request decoding, and listen backlog. Direct execution now binds IPv4 loopback
+unless `MOCK_BIND_HOST` explicitly selects another interface. The swap
 was validated against the full recorded golden corpus (165/165 byte-identical
 responses) and every protocol suite. The protocol logic itself (error
 envelopes, header formats, auth, commands) is framework-independent and moved

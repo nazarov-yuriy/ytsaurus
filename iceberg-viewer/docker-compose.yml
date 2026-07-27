@@ -32,6 +32,7 @@ services:
       dockerfile: deploy/docker/mock-backend.Dockerfile
     environment:
       MOCK_HOST: mock-backend:8000
+      MOCK_BIND_HOST: "0.0.0.0"
       # libpq conninfo via PG* env; the password never appears in a URI.
       PGHOST: postgres
       PGPORT: "5432"
