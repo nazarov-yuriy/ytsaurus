@@ -377,6 +377,8 @@ CORS_EXPOSE = ('Content-Type, X-YT-Error, X-YT-Response-Code, X-YT-Response-Mess
 RECORDED_HEADERS = ('authorization', 'cookie', 'x-csrf-token', 'content-type', 'accept',
                     'x-yt-correlation-id', 'x-yt-parameters', 'x-yt-input-format',
                     'x-yt-output-format', 'x-yt-header-format', 'x-yt-suppress-redirect')
+# Infrastructure endpoints (health probes, discovery) are not user actions.
+AUDIT_EXEMPT = ('/ping', '/ready', '/version', '/service/version', '/api', '/api/', '/hosts')
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -396,7 +398,18 @@ class Handler(BaseHTTPRequestHandler):
                 'Access-Control-Expose-Headers': CORS_EXPOSE,
                 'Access-Control-Max-Age': '3600'}
 
+    def emit_audit(self, status):
+        if (self.command == 'OPTIONS' or self.audit_path in AUDIT_EXEMPT
+                or self.audit_path.startswith('/hosts/')):
+            return
+        try:  # audit is fail-open: a storage outage must not break serving
+            userdb.audit(self.audit_user, self.audit_path,
+                         {'method': self.command, 'status': status, **self.audit_extra})
+        except Exception as e:
+            log('  !! audit write failed', repr(e))
+
     def send_body(self, status, body_bytes, headers):
+        self.emit_audit(status)  # before the response leaves: the trail never lags it
         self.send_response(status)
         for k, v in headers.items():
             self.send_header(k, v)
@@ -420,6 +433,7 @@ class Handler(BaseHTTPRequestHandler):
         # keeps the pre-flush response body as ordinary JSON (context.cpp).
         header_text, header_ctype = format_error_header(
             err, error_format or ('json', False))
+        self.audit_extra.setdefault('error_code', err['code'])
         body = json.dumps(err, ensure_ascii=False).encode()
         self.send_body(status, body, {
             'Content-Type': 'application/json',
@@ -483,6 +497,9 @@ class Handler(BaseHTTPRequestHandler):
         split = urlsplit(self.path)
         cors = self.cors_headers()
         self.body_buf = b''
+        self.audit_path = split.path
+        self.audit_user = None
+        self.audit_extra = {}
         if self.command == 'OPTIONS':
             return self.send_body(200, b'', cors)
         self.body_buf = self.read_request_body()
@@ -536,21 +553,25 @@ class Handler(BaseHTTPRequestHandler):
             user_bytes, password_bytes = credentials.split(b':', 1)
             user = user_bytes.decode('utf-8', 'replace')
             password = password_bytes.decode('utf-8', 'replace')
+            self.audit_user = user
             cookie = userdb.authenticate_and_create_session(user, password)
             # Locally-added users (test users) never reach the external YTsaurus;
             # everyone else is verified there and provisioned on first success.
             if cookie is None and UPSTREAM and userdb.user_origin(user) != 'local':
                 verdict = upstream_login(encoded_credentials)
                 if verdict is None:
+                    self.audit_extra['outcome'] = 'upstream_unavailable'
                     return self.send_yt_error(
                         503, yt_error(1, 'External authentication is unavailable'), cors)
                 if verdict:
                     cookie = userdb.external_login(user)
             if cookie is None:
                 # Real proxy masks the cause: generic code 1 (cypress_cookie_login.cpp:83).
+                self.audit_extra['outcome'] = 'rejected'
                 return self.send_yt_error(
                     401, yt_error(1, 'Incorrect login or password'),
                     {**cors, 'WWW-Authenticate': 'Basic'})
+            self.audit_extra.update(outcome='success', origin=userdb.user_origin(user))
             expires = format_datetime(datetime.now(timezone.utc) + userdb.SESSION_TTL, usegmt=True)
             return self.send_body(200, b'', {
                 **cors,
@@ -561,6 +582,7 @@ class Handler(BaseHTTPRequestHandler):
             auth = authenticate(self.headers)
             if not auth:
                 return self.send_yt_error(401, yt_error(900, 'Authentication failed'), cors)
+            self.audit_user = auth['user']
             return self.send_json(200, {
                 'login': auth['user'],
                 'realm': 'cypress_cookie' if auth['via_cookie'] else 'mock',
@@ -568,13 +590,21 @@ class Handler(BaseHTTPRequestHandler):
 
         if m := re.match(r'^/api/(v3|v4)/(\w+)$', p):
             version, command = m.groups()
+            self.audit_extra['command'] = command
             auth = authenticate(self.headers)
             if not auth:
                 return self.send_yt_error(401, yt_error(900, 'Authentication failed'), cors)
+            self.audit_user = auth['user']
             if csrf_error := check_csrf(self.command, self.headers, auth):
                 status, error = csrf_error
                 return self.send_yt_error(status, error, cors)
             params = self.collect_params(query, self.body_buf)
+            if 'path' in params:
+                self.audit_extra['path'] = params['path']
+            if command == 'execute_batch':
+                self.audit_extra['requests'] = [
+                    {'command': r.get('command'), 'path': (r.get('parameters') or {}).get('path')}
+                    for r in params.get('requests') or []]
             impl = COMMANDS.get(command)
             if not impl:
                 log(f'  !! unimplemented command: {command}')

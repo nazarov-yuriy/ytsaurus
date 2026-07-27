@@ -222,6 +222,51 @@ class TestUserPersistence(unittest.TestCase):
         # no guessable password opens a session.
         self.assertEqual(self.login('remote-user', '')[0], 401)
 
+    def test_9_actions_are_audited_with_strict_fields_and_jsonb_details(self):
+        # mock-backend-py/README.md "Audit log": strict columns for
+        # ts/login/endpoint, everything else in a schemaless jsonb payload.
+        _, cookie = self.login('iceberg', 'iceberg')
+        self.login('iceberg', 'wrong-password-audit')
+        call('GET', '/auth/whoami', {'Cookie': cookie})
+        robot = {'Authorization': 'OAuth persistence-test-robot'}
+        call('POST', '/api/v4/get', robot, body={'path': '//home/iceberg/warehouse'})
+        call('POST', '/api/v3/execute_batch', robot, body={'requests': [
+            {'command': 'get', 'parameters': {'path': '//home'}},
+            {'command': 'exists', 'parameters': {'path': '//tmp'}}]})
+        call('GET', '/ping')
+
+        with psycopg.connect(type(self).dsn) as conn:
+            rows = conn.execute(
+                'SELECT ts, login, endpoint, details FROM audit_log ORDER BY id').fetchall()
+
+        def last(endpoint):
+            return next(r for r in reversed(rows) if r[2] == endpoint)
+
+        self.assertNotIn('/ping', [r[2] for r in rows])  # probes are exempt
+
+        ts, login, _, details = last('/api/v4/get')
+        self.assertIsNotNone(ts.tzinfo)
+        self.assertEqual(login, 'iceberg')
+        self.assertEqual((details['method'], details['status']), ('POST', 200))
+        self.assertEqual((details['command'], details['path']),
+                         ('get', '//home/iceberg/warehouse'))
+
+        _, _, _, details = last('/api/v3/execute_batch')
+        self.assertEqual(details['requests'], [
+            {'command': 'get', 'path': '//home'},
+            {'command': 'exists', 'path': '//tmp'}])
+
+        _, login, _, details = last('/login')  # the failed attempt was last
+        self.assertEqual(login, 'iceberg')
+        self.assertEqual((details['outcome'], details['status']), ('rejected', 401))
+        success = next(r[3] for r in reversed(rows)
+                       if r[2] == '/login' and r[3].get('outcome') == 'success')
+        self.assertEqual(success['origin'], 'local')
+
+        self.assertEqual(last('/auth/whoami')[1], 'iceberg')
+        # Credentials must never reach the audit trail.
+        self.assertNotIn('wrong-password-audit', json.dumps([r[3] for r in rows]))
+
     def test_7_database_connection_recovers_after_termination(self):
         _, cookie = self.login('iceberg', 'iceberg')
         with psycopg.connect(DSN, autocommit=True) as conn:

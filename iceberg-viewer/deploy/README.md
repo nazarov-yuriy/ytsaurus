@@ -112,6 +112,11 @@ helm upgrade --install iceberg-ui deploy/helm/iceberg-ui-mock \
   --set auth.robotToken='a-separate-random-robot-token'
 ```
 
+The same database also receives the backend's audit trail (`audit_log` table:
+strict `ts`/`login`/`endpoint` columns plus a schemaless `details` jsonb — see
+mock-backend-py/README.md "Audit log"); size it and set a retention policy
+before exposing an installation to real traffic.
+
 The database password stays in `PGPASSWORD`; it is not interpolated into a URI.
 The backend reconnects after a PostgreSQL connection loss, and `/ready` removes
 it from Service endpoints while storage is unavailable. Application-user

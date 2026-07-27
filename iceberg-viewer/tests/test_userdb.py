@@ -172,6 +172,23 @@ class TestPasswordStorage(unittest.TestCase):
         self.assertTrue(self.userdb.verify('promoted', 'pw'))
         self.assertIsNone(self.userdb.external_login('promoted'))
 
+    def test_audit_log_keeps_strict_essentials_and_free_form_details(self):
+        # Strict fields: timestamp, user, endpoint. Everything else is an
+        # arbitrary details payload whose shape is expected to change.
+        self.userdb.audit('alice', '/api/v4/get',
+                          {'command': 'get', 'path': '//home', 'status': 200})
+        self.userdb.audit(None, '/login', {'outcome': 'rejected', 'novel_field': [1, {'x': 2}]})
+        first, second = self.userdb.audit_tail(2)
+
+        ts, login, endpoint, details = first
+        self.assertIsNotNone(ts.tzinfo)
+        self.assertEqual((login, endpoint), ('alice', '/api/v4/get'))
+        self.assertEqual(details['path'], '//home')
+        ts, login, endpoint, details = second
+        self.assertIsNone(login)  # unauthenticated actions carry no user
+        self.assertEqual(endpoint, '/login')
+        self.assertEqual(details['novel_field'], [1, {'x': 2}])
+
     def test_malformed_or_excessive_pbkdf2_hashes_fail_closed(self):
         malformed_hashes = [
             'pbkdf2_sha256$not-a-number$00',

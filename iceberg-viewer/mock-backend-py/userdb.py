@@ -4,7 +4,9 @@
 Users and login sessions are the one piece of real state in the mock; table
 data stays fake. CLI: python3 userdb.py add-user <login> <password> | list-users
 """
+import collections
 import hashlib
+import json
 import os
 import secrets
 import sys
@@ -38,6 +40,15 @@ CREATE TABLE IF NOT EXISTS sessions (
     password_revision  bigint NOT NULL DEFAULT 0,
     created_at         timestamptz NOT NULL DEFAULT now(),
     expires_at         timestamptz NOT NULL);
+-- Strict columns only for the essentials; everything with a changing shape
+-- goes into the schemaless details. login is NULL for unauthenticated requests.
+CREATE TABLE IF NOT EXISTS audit_log (
+    id       bigserial PRIMARY KEY,
+    ts       timestamptz NOT NULL DEFAULT now(),
+    login    text,
+    endpoint text NOT NULL,
+    details  jsonb NOT NULL DEFAULT '{}');
+CREATE INDEX IF NOT EXISTS audit_log_ts ON audit_log (ts);
 """
 
 
@@ -225,6 +236,16 @@ if DSN:
         return [login if origin == 'local' else f'{login} ({origin})'
                 for login, origin in _query('SELECT login, origin FROM users ORDER BY login')]
 
+    def audit(login, endpoint, details):
+        _query('INSERT INTO audit_log (login, endpoint, details)'
+               ' VALUES (%s, %s, %s::jsonb) RETURNING id',
+               (login, endpoint, json.dumps(details, ensure_ascii=False)), retry=False)
+
+    def audit_tail(count):
+        rows = _query('SELECT ts, login, endpoint, details FROM audit_log'
+                      ' ORDER BY id DESC LIMIT %s', (count,))
+        return rows[::-1]
+
 else:  # in-RAM fallback: same behavior, nothing persisted
     _users = {}
     _origins = {}
@@ -330,6 +351,16 @@ else:  # in-RAM fallback: same behavior, nothing persisted
                 login if _origins.get(login, 'local') == 'local' else f'{login} (external)'
                 for login in _users)
 
+    _audit = collections.deque(maxlen=10_000)
+
+    def audit(login, endpoint, details):
+        with _lock:
+            _audit.append((datetime.now(timezone.utc), login, endpoint, details))
+
+    def audit_tail(count):
+        with _lock:
+            return list(_audit)[-count:]
+
 
 if __name__ == '__main__':
     cmd = sys.argv[1] if len(sys.argv) > 1 else ''
@@ -338,5 +369,9 @@ if __name__ == '__main__':
         print(f'user {sys.argv[2]} saved ({"postgres" if DSN else "RAM only — set MOCK_PG_DSN"})')
     elif cmd == 'list-users':
         print('\n'.join(list_users()))
+    elif cmd == 'audit-tail':
+        for ts, login, endpoint, details in audit_tail(int(sys.argv[2]) if len(sys.argv) > 2 else 20):
+            print(json.dumps({'ts': ts.isoformat(), 'user': login, 'endpoint': endpoint,
+                              'details': details}, ensure_ascii=False))
     else:
-        sys.exit('usage: userdb.py add-user <login> <password> | list-users')
+        sys.exit('usage: userdb.py add-user <login> <password> | list-users | audit-tail [n]')

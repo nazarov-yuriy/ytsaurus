@@ -69,6 +69,28 @@ in-RAM storage (seed users `iceberg`/`iceberg`, `root`/empty) otherwise.
 - `python3 ../tests/test_userdb.py` always runs without PostgreSQL and covers
   hash validation plus reconnect behavior with a fake driver.
 
+## Audit log
+
+Every user-attributable request is recorded before its response is sent —
+`/login` attempts (success/rejected/upstream_unavailable, never the password),
+`/auth/whoami`, and each `/api/v3|v4` command including per-item summaries of
+`execute_batch`. Infrastructure endpoints (`/ping`, `/ready`, `/version`,
+`/hosts*`, `/api` discovery, CORS preflights) are exempt.
+
+The schema separates what is stable from what is not: strict columns for the
+essentials — `ts timestamptz`, `login` (NULL when unauthenticated), `endpoint`
+— and a schemaless `details jsonb` for the payload, whose shape is expected to
+change freely (currently `method`, `status`, and per-endpoint extras such as
+`command`, `path`, `requests`, `outcome`, `origin`, `error_code`). Adding a
+field is just adding a dict key at the call site; no migration.
+
+Storage follows `userdb.py`: the `audit_log` table in PostgreSQL (indexed by
+`ts`), or a bounded in-RAM deque (last 10,000 entries) without `MOCK_PG_DSN`.
+Writes are fail-open — a storage outage logs `audit write failed` and the
+request is still served (`/ready` reports the outage). Inspect with
+`MOCK_PG_DSN=... python3 userdb.py audit-tail [n]` (JSON lines) or SQL, e.g.
+`SELECT * FROM audit_log WHERE details->>'command' = 'read_table'`.
+
 ## Files
 
 - `server.py` — routing, auth (Basic `/login`, `YTCypressCookie` sessions,
