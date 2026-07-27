@@ -55,16 +55,22 @@ services:
 
   ui:
     image: ghcr.io/ytsaurus/ui:1.60.1
-    # No `command:`: the image ENTRYPOINT already runs supervisord, and compose
-    # (unlike the Helm chart's `command:`) would pass an override as positional
-    # arguments to that entrypoint, which supervisord rejects.
+    # The image's supervisord preflight chowns /opt/app/secrets, which fails on
+    # a read-only bind mount inside it. Mirror the Helm chart's staging pattern
+    # (secret read-only at /vault, copied into the writable image directory),
+    # then exec the image's own supervisord command. compose `entrypoint:`
+    # replaces the image ENTRYPOINT; `command:` would only append arguments.
+    entrypoint: ["/bin/bash", "-c",
+                 "mkdir -p /opt/app/secrets
+                  && cp /vault/yt-interface-secret.json /opt/app/secrets/
+                  && exec /usr/bin/supervisord -c /etc/supervisor/supervisord.conf"]
     environment:
       APP_INSTALLATION: custom
       YT_AUTH_ALLOW_INSECURE: "1"
     volumes:
       - ./deploy/compose/clusters-config.json:/opt/app/clusters-config.json:ro
       - ./deploy/compose/common.js:/opt/app/dist/server/configs/custom/common.js:ro
-      - ./deploy/compose/yt-interface-secret.json:/opt/app/secrets/yt-interface-secret.json:ro
+      - ./deploy/compose/yt-interface-secret.json:/vault/yt-interface-secret.json:ro
     ports:
       - "127.0.0.1:8080:80"
     depends_on:

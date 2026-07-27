@@ -102,3 +102,9 @@ python3 db/sync.py check && python3 db/sync.py audit
   verify with a probe request after restarts.
 - Tests spawn `sys.executable`; run them with the venv interpreter or fastapi
   imports fail at server startup (backend "did not start" in setUpModule).
+- docker (unavailable in this sandbox) has semantics that "run the container
+  commands directly" cannot validate: compose `command:` does NOT replace an
+  image ENTRYPOINT (k8s `command:` does — the ghcr.io/ytsaurus/ui entrypoint
+  runs supervisord already), and the UI image's preflight `chown -R`s
+  `/opt/app/secrets`, which fails if a read-only mount sits inside it — stage
+  secrets via `/vault` + copy, like the Helm initContainer does.
