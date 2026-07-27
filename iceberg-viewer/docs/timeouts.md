@@ -24,6 +24,7 @@ browser (jsw wrapper) ──► [dev: Rspack proxy | prod: nginx] ──► UI n
 | 8 | Mock backend: per request | none (a handler may take arbitrarily long) | `mock-backend-py/server.py` |
 | 9 | Mock backend: idle keep-alive between requests | 5 s, advertised via `Keep-Alive: timeout=5` | `server.py send_body` |
 | 10 | Mock (python) → PostgreSQL | connect 5 s (chart DSN `connect_timeout=5`); no statement timeout | chart `mock-backend.yaml` |
+| 10a | Mock (python) → external YTsaurus `/login` (`MOCK_YT_UPSTREAM`) | **5 s** default, `MOCK_YT_UPSTREAM_TIMEOUT` | `server.py upstream_login` |
 | 11 | k8s probes (chart): liveness/readiness `/ping`, `/ready` | 1 s per attempt (k8s default `timeoutSeconds`), period 10 s | `deploy/helm/.../mock-backend.yaml` |
 | 12 | k8s startup probe (pip-install window, PG mode) | up to 300 s (60×5 s) | `mock-backend.yaml` startupProbe |
 | 13 | `helm test` smoke pod curls | none explicit (curl defaults) | `templates/tests/test-smoke.yaml` |

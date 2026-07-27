@@ -44,11 +44,11 @@ class FakeConnection:
         if statement == self.fail_statement:
             self.fail_statement = None
             raise FakeOperationalError('connection was lost during a mutation')
-        if statement == 'SELECT login FROM users ORDER BY login':
+        if statement == 'SELECT login, origin FROM users ORDER BY login':
             if self.fail_first_list:
                 self.fail_first_list = False
                 raise FakeOperationalError('connection was lost')
-            return FakeResult([('iceberg',), ('root',)])
+            return FakeResult([('iceberg', 'local'), ('root', 'local')])
         return FakeResult()
 
     def close(self):
@@ -149,6 +149,28 @@ class TestPasswordStorage(unittest.TestCase):
         self.assertIsNone(self.userdb.session_user(login_result[0]))
         self.assertFalse(self.userdb.verify('racing-owner', 'old-secret'))
         self.assertTrue(self.userdb.verify('racing-owner', 'new-secret'))
+
+    def test_external_login_provisions_user_without_password_material(self):
+        # docs/auth.md "External authentication": the row exists for sessions
+        # and settings, but no credential ever verifies locally.
+        cookie = self.userdb.external_login('eve')
+        self.assertEqual(self.userdb.session_user(cookie), 'eve')
+        self.assertEqual(self.userdb.user_origin('eve'), 'external')
+        self.assertFalse(self.userdb.verify('eve', ''))
+        self.assertFalse(self.userdb.verify('eve', 'anything'))
+        self.assertIsNone(self.userdb.authenticate_and_create_session('eve', ''))
+
+    def test_external_login_never_shadows_a_local_user(self):
+        self.userdb.set_password('local-only', 'pw')
+        self.assertIsNone(self.userdb.external_login('local-only'))
+        self.assertIsNone(self.userdb.external_login('iceberg'))  # seed user
+
+    def test_set_password_converts_external_user_to_local(self):
+        self.userdb.external_login('promoted')
+        self.userdb.set_password('promoted', 'pw')
+        self.assertEqual(self.userdb.user_origin('promoted'), 'local')
+        self.assertTrue(self.userdb.verify('promoted', 'pw'))
+        self.assertIsNone(self.userdb.external_login('promoted'))
 
     def test_malformed_or_excessive_pbkdf2_hashes_fail_closed(self):
         malformed_hashes = [

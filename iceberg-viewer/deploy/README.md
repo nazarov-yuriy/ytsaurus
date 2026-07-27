@@ -72,6 +72,12 @@ the stock `python:3.12-slim` image. The UI image is pulled from
   startup probe protects that installation. The Docker image and Compose test
   runner consume the same file, preventing dependency-version drift. Use the
   baked image for air-gapped clusters.
+- External authentication (`auth.ytUpstream=https://proxy.yt.example`): users
+  not added locally are verified against that real YTsaurus proxy's `/login`
+  and provisioned into PostgreSQL on first success (no password material is
+  stored for them). Locally-added users — `userdb.py add-user`, the seed
+  `iceberg`/`iceberg` — always authenticate locally and never contact the
+  upstream. See docs/auth.md "External authentication".
 - `docker/mock-backend.Dockerfile` — optional baked image (includes the pinned
   PostgreSQL dependencies).
   Build and push an explicit tag to a registry reachable by the cluster, then

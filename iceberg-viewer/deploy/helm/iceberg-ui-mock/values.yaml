@@ -49,6 +49,11 @@ postgres:
 # is mounted into the UI and backend; replace the default before exposing the UI.
 auth:
   robotToken: mock-robot-token
+  # Real YTsaurus HTTP proxy URL that verifies users not added locally; on
+  # first success they are provisioned into PostgreSQL (origin=external).
+  # Locally-added test users keep working without it. Empty disables delegation.
+  # See docs/auth.md "External authentication". Example: "https://proxy.yt.example".
+  ytUpstream: ""
 
 # ytsaurus-ui, deployed the same way as the official ui-helm-chart.
 ui:

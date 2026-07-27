@@ -15,6 +15,8 @@ import secrets
 import socket
 import sys
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from email.utils import format_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -29,6 +31,10 @@ HOST = os.environ.get('MOCK_HOST', f'localhost:{PORT}')
 RECORD_PATH = os.environ.get('MOCK_RECORD')
 REQUIRE_AUTH = bool(os.environ.get('MOCK_REQUIRE_AUTH'))
 ROBOT_TOKEN = os.environ.get('MOCK_ROBOT_TOKEN', '')
+# Real YTsaurus HTTP proxy that verifies identity for users not added locally,
+# e.g. http://proxy.yt.svc:80 — see docs/auth.md "External authentication".
+UPSTREAM = os.environ.get('MOCK_YT_UPSTREAM', '').rstrip('/')
+UPSTREAM_TIMEOUT = float(os.environ.get('MOCK_YT_UPSTREAM_TIMEOUT') or 5)
 
 # MOCK_DELAY simulates a slow catalog: "1500" delays every data command by 1.5s,
 # "read_table:5000,list:2000" per command. //sys paths are never delayed — the
@@ -138,6 +144,23 @@ def escape_header_value(value):
 
 
 # ---- auth (user/session storage lives in userdb: PostgreSQL or in-RAM) -----
+
+def upstream_login(encoded_credentials):
+    """Verify Basic credentials against the real YTsaurus /login.
+
+    True = accepted, False = rejected, None = upstream unavailable.
+    """
+    req = urllib.request.Request(
+        f'{UPSTREAM}/login', method='POST',
+        headers={'Authorization': f'Basic {encoded_credentials}'})
+    try:
+        with urllib.request.urlopen(req, timeout=UPSTREAM_TIMEOUT):
+            return True
+    except urllib.error.HTTPError as e:
+        return False if e.code < 500 else None
+    except OSError:
+        return None
+
 
 CSRF_TTL = int(os.environ.get('MOCK_CSRF_TTL_SECONDS') or 24 * 3600)
 
@@ -514,6 +537,15 @@ class Handler(BaseHTTPRequestHandler):
             user = user_bytes.decode('utf-8', 'replace')
             password = password_bytes.decode('utf-8', 'replace')
             cookie = userdb.authenticate_and_create_session(user, password)
+            # Locally-added users (test users) never reach the external YTsaurus;
+            # everyone else is verified there and provisioned on first success.
+            if cookie is None and UPSTREAM and userdb.user_origin(user) != 'local':
+                verdict = upstream_login(encoded_credentials)
+                if verdict is None:
+                    return self.send_yt_error(
+                        503, yt_error(1, 'External authentication is unavailable'), cors)
+                if verdict:
+                    cookie = userdb.external_login(user)
             if cookie is None:
                 # Real proxy masks the cause: generic code 1 (cypress_cookie_login.cpp:83).
                 return self.send_yt_error(

@@ -19,6 +19,7 @@ import subprocess
 import sys
 import time
 import unittest
+import unittest.mock
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -183,12 +184,43 @@ class TestUserPersistence(unittest.TestCase):
 
     def test_6_passwords_are_hashed_at_rest(self):
         with psycopg.connect(type(self).dsn) as conn:
-            rows = conn.execute('SELECT salt, password_hash FROM users').fetchall()
+            rows = conn.execute(
+                "SELECT salt, password_hash FROM users WHERE origin = 'local'").fetchall()
         self.assertGreaterEqual(len(rows), 2)
         for salt, password_hash in rows:
             self.assertTrue(salt)
             self.assertRegex(password_hash, r'^pbkdf2_sha256\$600000\$[0-9a-f]{64}$')
             self.assertNotIn(password_hash, ('iceberg', 's3cret', ''))
+
+    def test_8_external_user_row_and_session_persist_without_password_material(self):
+        # docs/auth.md "External authentication": a user verified by the real
+        # YTsaurus gets a local row (origin=external, no credentials) whose
+        # sessions live in PG like everyone else's.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            f'userdb_pg_{secrets.token_hex(4)}', BACKEND / 'userdb.py')
+        userdb = importlib.util.module_from_spec(spec)
+        with unittest.mock.patch.dict(os.environ, {'MOCK_PG_DSN': type(self).dsn}):
+            spec.loader.exec_module(userdb)
+        cookie = userdb.external_login('remote-user')
+        self.assertTrue(cookie)
+
+        type(self).proc.terminate()
+        type(self).proc.wait()
+        type(self).proc = start_server(type(self).dsn)  # fresh process, empty RAM
+        status, who, _ = call('GET', '/auth/whoami',
+                              {'Cookie': f'YTCypressCookie={cookie}'})
+        self.assertEqual(status, 200)
+        self.assertEqual(who['login'], 'remote-user')
+
+        with psycopg.connect(type(self).dsn) as conn:
+            row = conn.execute(
+                "SELECT salt, password_hash, origin FROM users WHERE login = 'remote-user'"
+            ).fetchone()
+        self.assertEqual(row, ('', '', 'external'))
+        # Without MOCK_YT_UPSTREAM there is nobody to vouch for this user:
+        # no guessable password opens a session.
+        self.assertEqual(self.login('remote-user', '')[0], 401)
 
     def test_7_database_connection_recovers_after_termination(self):
         _, cookie = self.login('iceberg', 'iceberg')

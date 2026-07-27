@@ -1053,3 +1053,53 @@ dialog.
 ```
 
 ---
+
+## 6. External authentication — delegating identity to a real YTsaurus
+
+For the migration scenario where a real YTsaurus instance is still available,
+the mock backend can use it as the identity provider while keeping users,
+sessions and settings in its own PostgreSQL (`mock-backend-py/server.py`,
+`userdb.py`). This covers **authentication only** — the external cluster's
+groups/ACLs are not consulted.
+
+```
+MOCK_YT_UPSTREAM=http://<real-proxy>          # enables delegation; empty = off
+MOCK_YT_UPSTREAM_TIMEOUT=5                    # seconds, per verification call
+```
+
+### 6.1 Login decision table
+
+`POST /login` with `Authorization: Basic base64(user:pass)`:
+
+| user's `origin` in local DB | what happens |
+|---|---|
+| `local` (seed users, `userdb.py add-user`) | verified against the local PBKDF2 hash only; the upstream is **never contacted**, even on a wrong password. This is the "special test user" path — it keeps working when the upstream is down and cannot be shadowed by an upstream account with the same login. |
+| `external`, or no row yet | the received Basic credentials are forwarded verbatim to `POST <MOCK_YT_UPSTREAM>/login`. `2xx` → identity confirmed; on the first success the user row is created (`origin='external'`) and a **local** session cookie is issued (the upstream's cookie is discarded). `4xx` → `401 {"code":1,"message":"Incorrect login or password"}` (same masked shape as §5.2a). `5xx`/unreachable/timeout → `503 {"code":1,"message":"External authentication is unavailable"}` — distinct from a bad password, and deliberately not `401` so the UI does not claim the password was wrong. |
+
+Identity is re-verified upstream on **every** login of an external user; only
+the *row* is created once. The local DB caches identity, never the password:
+external rows carry `salt='' , password_hash=''`, which can never match a
+PBKDF2 verification, so if the upstream is later unconfigured or down these
+users simply cannot start new sessions.
+
+### 6.2 Session model
+
+After login there is no difference between local and external users: sessions
+live in the local store, `/auth/whoami` and CSRF work as in §2. Consequences:
+
+* an already-issued session stays valid for its TTL even if the upstream
+  password changes or the upstream account is disabled — revocation before TTL
+  requires deleting the row from `sessions` (or `userdb.py add-user`, which
+  bumps `password_revision` and kills the user's sessions);
+* `userdb.py add-user <login> <pw>` on an external user converts it to
+  `origin='local'` (it then authenticates locally and stops consulting the
+  upstream); `list-users` marks external rows as `login (external)`.
+
+### 6.3 Deployment notes
+
+The Basic credentials are forwarded to `MOCK_YT_UPSTREAM` as received: point it
+at an `https://` proxy or keep the hop inside a trusted network. In the Helm
+chart set `auth.ytUpstream`; in docker compose set `MOCK_YT_UPSTREAM` for the
+`mock-backend` service. Tests: `tests/test_external_auth.py` (fake upstream,
+wire behavior) and `tests/test_user_persistence.py` test 8 (PostgreSQL row/
+session persistence).

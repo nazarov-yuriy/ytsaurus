@@ -36,6 +36,9 @@ services:
       PGDATABASE: mockusers
       PGPASSWORD: mock-password
       MOCK_PG_DSN: "connect_timeout=5 application_name=iceberg-ui-mock"
+      # Optional: real YTsaurus proxy that vouches for users not added locally
+      # (docs/auth.md "External authentication"), e.g. https://proxy.yt.example
+      MOCK_YT_UPSTREAM: "${MOCK_YT_UPSTREAM:-}"
     depends_on:
       postgres:
         condition: service_healthy

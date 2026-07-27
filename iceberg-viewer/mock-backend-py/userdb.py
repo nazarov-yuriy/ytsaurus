@@ -23,8 +23,12 @@ CREATE TABLE IF NOT EXISTS users (
     login             text PRIMARY KEY,
     salt              text NOT NULL,
     password_hash     text NOT NULL,
+    -- 'local': password verified here. 'external': identity verified against a
+    -- real YTsaurus (MOCK_YT_UPSTREAM); no password material is stored.
+    origin            text NOT NULL DEFAULT 'local',
     password_revision bigint NOT NULL DEFAULT 0,
     created_at        timestamptz NOT NULL DEFAULT now());
+ALTER TABLE users ADD COLUMN IF NOT EXISTS origin text NOT NULL DEFAULT 'local';
 CREATE TABLE IF NOT EXISTS settings (
     key   text PRIMARY KEY,
     value text NOT NULL);
@@ -121,6 +125,18 @@ if DSN:
     def user_exists(login):
         return bool(_query('SELECT 1 FROM users WHERE login = %s', (login,)))
 
+    def user_origin(login):
+        rows = _query('SELECT origin FROM users WHERE login = %s', (login,))
+        return rows[0][0] if rows else None
+
+    def external_login(login):
+        """Provision (once) an externally-verified user and open a session."""
+        _query("INSERT INTO users (login, salt, password_hash, origin)"
+               " VALUES (%s, '', '', 'external')"
+               ' ON CONFLICT (login) DO NOTHING RETURNING login',
+               (login,), retry=False)
+        return create_session(login) if user_origin(login) == 'external' else None
+
     def verify(login, password):
         rows = _query('SELECT salt, password_hash FROM users WHERE login = %s', (login,))
         if not rows:
@@ -194,9 +210,10 @@ if DSN:
     def set_password(login, password):
         salt, password_hash = _new_password(password)
         _query('WITH changed AS ('
-               ' INSERT INTO users (login, salt, password_hash) VALUES (%s, %s, %s)'
+               " INSERT INTO users (login, salt, password_hash) VALUES (%s, %s, %s)"
                ' ON CONFLICT (login) DO UPDATE'
-               ' SET salt = EXCLUDED.salt, password_hash = EXCLUDED.password_hash,'
+               " SET salt = EXCLUDED.salt, password_hash = EXCLUDED.password_hash,"
+               " origin = 'local',"
                ' password_revision = users.password_revision + 1'
                ' RETURNING login)'
                ' DELETE FROM sessions WHERE login = (SELECT login FROM changed)'
@@ -205,10 +222,12 @@ if DSN:
                retry=False)
 
     def list_users():
-        return [r[0] for r in _query('SELECT login FROM users ORDER BY login')]
+        return [login if origin == 'local' else f'{login} ({origin})'
+                for login, origin in _query('SELECT login, origin FROM users ORDER BY login')]
 
 else:  # in-RAM fallback: same behavior, nothing persisted
     _users = {}
+    _origins = {}
     _password_revisions = {}
     for _login, _password in SEED_USERS.items():
         _users[_login] = _new_password(_password)
@@ -222,6 +241,21 @@ else:  # in-RAM fallback: same behavior, nothing persisted
     def user_exists(login):
         with _lock:
             return login in _users
+
+    def user_origin(login):
+        with _lock:
+            return _origins.get(login, 'local') if login in _users else None
+
+    def external_login(login):
+        """Provision (once) an externally-verified user and open a session."""
+        with _lock:
+            if login in _users and _origins.get(login, 'local') == 'local':
+                return None
+            if login not in _users:
+                _users[login] = ('', '')  # unmatchable: never verifies locally
+                _origins[login] = 'external'
+                _password_revisions[login] = 0
+            return _create_session_locked(login)
 
     def verify(login, password):
         with _lock:
@@ -285,13 +319,16 @@ else:  # in-RAM fallback: same behavior, nothing persisted
             else:
                 _password_revisions[login] = 0
             _users[login] = _new_password(password)
+            _origins[login] = 'local'
             for cookie, info in list(_sessions.items()):
                 if info[0] == login:
                     del _sessions[cookie]
 
     def list_users():
         with _lock:
-            return sorted(_users)
+            return sorted(
+                login if _origins.get(login, 'local') == 'local' else f'{login} (external)'
+                for login in _users)
 
 
 if __name__ == '__main__':

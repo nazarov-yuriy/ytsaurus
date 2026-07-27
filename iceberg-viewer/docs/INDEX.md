@@ -13,7 +13,7 @@ Which doc covers what, and which doc mentions which. Regenerate with `python3 db
 
 ### [docs/auth.md](../docs/auth.md)
 *YTsaurus UI ↔ backend authentication, at wire level*
-- mentioned by: [README.md](../README.md), [docs/iceberg-considerations.md](../docs/iceberg-considerations.md)
+- mentioned by: [README.md](../README.md), [deploy/README.md](../deploy/README.md), [docs/iceberg-considerations.md](../docs/iceberg-considerations.md), [mock-backend-py/README.md](../mock-backend-py/README.md)
 
 ### [docs/table-viewer.md](../docs/table-viewer.md)
 *YTsaurus UI ↔ cluster wire protocol: Navigation + static Table viewer*
@@ -75,7 +75,7 @@ Which doc covers what, and which doc mentions which. Regenerate with `python3 db
 
 ### [mock-backend-py/README.md](../mock-backend-py/README.md)
 *Mock YTsaurus HTTP proxy — Python implementation*
-- mentions: [docs/timeouts.md](../docs/timeouts.md)
+- mentions: [docs/auth.md](../docs/auth.md), [docs/timeouts.md](../docs/timeouts.md)
 
 ### [recordings/README.md](../recordings/README.md)
 *Recorded play-session request corpus*
@@ -83,4 +83,5 @@ Which doc covers what, and which doc mentions which. Regenerate with `python3 db
 
 ### [deploy/README.md](../deploy/README.md)
 *Deployment: docker compose (local testing) and Kubernetes (Helm)*
+- mentions: [docs/auth.md](../docs/auth.md)
 - mentioned by: [README.md](../README.md), [docs/security-review.md](../docs/security-review.md)

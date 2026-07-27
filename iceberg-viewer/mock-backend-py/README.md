@@ -26,6 +26,12 @@ Environment:
 - `MOCK_COOKIE_TTL_SECONDS` (default 30d) — server and browser-cookie lifetime.
   Cookies are `Secure`; local HTTP password-auth testing requires the UI's
   `ytAuthAllowInsecure` option.
+- `MOCK_YT_UPSTREAM=<real proxy URL>` delegates identity of users not added
+  locally to a real YTsaurus `/login`; verified users are provisioned into the
+  local store (`origin='external'`, no password material) on first success.
+  Locally-added users always authenticate locally and never contact the
+  upstream. `MOCK_YT_UPSTREAM_TIMEOUT` (default 5 s) bounds each verification;
+  upstream failures surface as 503, not 401. See docs/auth.md §6.
 
 ## User management (PostgreSQL)
 

@@ -61,6 +61,10 @@ spec:
             - name: MOCK_DELAY
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.auth.ytUpstream }}
+            - name: MOCK_YT_UPSTREAM
+              value: {{ . | quote }}
+            {{- end }}
             {{- if ne (include "iceberg-ui-mock.auth.mode" .) "none" }}
             - name: MOCK_REQUIRE_AUTH
               value: "1"
