@@ -1010,9 +1010,14 @@ On mounting a cluster page (`updateCluster`, `UI/src/ui/store/actions/cluster-pa
 
    All sub-requests carry `suppress_transaction_coordinator_sync: true` and
    `suppress_upstream_sync: true` (`UI/src/shared/constants/index.ts:14-17`).
-   `NODE_DOES_NOT_EXIST` (code 500) on `@ui_config`, `@ui_config_dev_overrides`, or either
-   version path is tolerated (`cluster-params.ts:203-230`). Only a `mediumList` error is fatal
-   client-side (`UI/src/ui/store/actions/cluster-params.ts:101-104`).
+   In the standalone source checkout, `NODE_DOES_NOT_EXIST` (code 500) on
+   `@ui_config` or `@ui_config_dev_overrides` is tolerated, and the two version
+   errors are normalized to `0.0.0-unknown`; other scheduler/master errors,
+   a `mediumList` error, or a primary-master-list error are fatal
+   (`cluster-params.ts:203-246`). The published `ui:1.60.1` image used by the
+   manifests behaves differently and was observed to crash when either version
+   path failed, so the mock serves both as real version strings
+   (`empirical-findings.md`).
    Response shape the client expects:
    ```json
    {"mediumList": {"output": ["default"]},

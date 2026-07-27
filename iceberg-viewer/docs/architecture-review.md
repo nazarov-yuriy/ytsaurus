@@ -26,7 +26,8 @@ browser (React SPA + javascript-wrapper)
   the SPA, UI-specific endpoints (cluster-info/params, settings, presets,
   markdown, …) and reverse-proxies all YT commands to the HTTP proxy
   (`yt-api.ts`). This is a real, separate backend type — our API catalog
-  tracks it as the `ui-server` layer (109 endpoints total across both layers).
+  tracks it as the `ui-server` layer (115 endpoint records across both layers:
+  54 UI-server and 61 proxy records).
 - **Tier ② — HTTP proxies with roles.** Confirmed in
   `yt/docs/en/_includes/user-guide/proxy/about.md` and the proxy source:
   every HTTP proxy carries a **role**; Cypress requests (`get`, `set`, …) go to
@@ -52,7 +53,7 @@ browser (React SPA + javascript-wrapper)
 
 | Design element | Our implementation | Verdict |
 |---|---|---|
-| Tier ① UI API backend | The **real** ytsaurus-ui Node server, unmodified (dev mode or the official image in the chart) | ✅ matches by construction |
+| Tier ① UI API backend | The **real** ytsaurus-ui Node server. Helm and Compose use the stock official image; the ignored local checkout contains OAuth hardening that is not yet shipped by these manifests. | ✅ matches by construction for deployed protocol behavior; see `google-oauth.md` before using the local OAuth changes |
 | Tier ② HTTP proxy | `mock-backend-py` implements the HTTP-proxy protocol: `/api/v3|v4`, `/auth/whoami`, `/login`, `/hosts`, `/ping`, `/version` | ✅ correct tier; the mock replaces *only* the proxy |
 | Proxy roles (control vs data) | One mock instance serves both Cypress and heavy commands; `/hosts` returns itself | ✅ *as a degenerate case*: identical to a one-proxy cluster whose single proxy has the `data` role (data proxies legitimately serve everything) |
 | Heavy-proxy discovery | `disableHeavyProxies: true` in our clusters-config; browser wrapper has `useHeavyProxy=false` hardcoded; UI tunnel always sends `X-YT-Suppress-Redirect: 1` | ✅ we route everything to one address exactly the way the UI itself does against real clusters |

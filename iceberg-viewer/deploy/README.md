@@ -19,10 +19,12 @@ Services: `postgres` (users/sessions persisted in the `pgdata` volume),
 `mock-backend` (built from `docker/mock-backend.Dockerfile`, `/ready`-gated),
 `ui` (official `ghcr.io/ytsaurus/ui` image with `deploy/compose/` configs
 mounted — same wiring as the chart), plus on-demand `tests` and `e2e` runners.
-The suites are self-contained (they spawn their own servers inside the tests
-container); `compose-smoke.py` then exercises the composed stack end to end.
+The backend suites spawn their own servers inside the tests container; the
+PostgreSQL persistence suite uses the composed database, and `compose-smoke.py`
+then exercises the composed stack end to end.
 On Apple Silicon, if an image lacks arm64, prefix commands with
-`DOCKER_DEFAULT_PLATFORM=linux/amd64`. The `e2e` profile needs npm egress once.
+`DOCKER_DEFAULT_PLATFORM=linux/amd64`. Each fresh `e2e` run installs the pinned
+Playwright package in its temporary container and therefore needs npm egress.
 
 # Kubernetes deployment (Helm)
 
@@ -49,10 +51,11 @@ without PostgreSQL, an external verifier, or the explicit
 deployment, use the authenticated PostgreSQL example below or configure
 `auth.ytUpstream`; do not use the quick-start opt-in.
 
-No registry access is needed for the backend: by default the chart ships
+No custom backend image build or push is needed by default: the chart ships
 `server.py`/`data.py`/`webjson.py`/`userdb.py` in a ConfigMap and runs them on
-the stock `python:3.12-slim` image. The UI image is pulled from
-`ghcr.io/ytsaurus/ui` (same as the official chart).
+the stock `python:3.12-slim` image. Kubernetes still needs registry access to
+pull that base image, and the running pod needs PyPI access as described below.
+The UI image is pulled from `ghcr.io/ytsaurus/ui` (same as the official chart).
 
 ## Layout
 
@@ -80,7 +83,8 @@ the stock `python:3.12-slim` image. The UI image is pulled from
 - PostgreSQL user persistence (`postgres.enabled=true`): adds a `postgres:17-alpine`
   Deployment with a PVC, Secret-managed password (`postgres.password` or
   `postgres.existingSecret` with key `password`), and wires `MOCK_PG_DSN` into the
-  mock so users and login sessions survive pod restarts (table data stays fake).
+  mock so users, login sessions, the CSRF secret, and audit rows survive pod
+  restarts (catalog fixtures stay fake).
   It also selects `authentication: basic`, enables the UI login flow, and makes
   the backend reject missing/unknown credentials. Set
   `ui.cluster.authentication=none` together with `auth.allowAnonymous=true`
@@ -102,7 +106,11 @@ the stock `python:3.12-slim` image. The UI image is pulled from
   `auth.robotToken` at the same time; authenticated chart rendering rejects the
   published `mock-robot-token` placeholder. Users created explicitly with
   `userdb.py add-user` always authenticate locally and never contact the
-  upstream. See docs/auth.md "External authentication".
+  upstream. Without PostgreSQL, these users and their sessions are
+  process-local, so the chart rejects `mockBackend.replicaCount` greater than
+  one in authenticated mode; PostgreSQL removes that authentication-state
+  restriction, while fake table data remains process-local. See docs/auth.md
+  "External authentication".
 - `docker/mock-backend.Dockerfile` — optional baked image (includes the pinned
   PostgreSQL dependencies).
   Build and push an explicit tag to a registry reachable by the cluster, then

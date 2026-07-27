@@ -10,8 +10,8 @@ mock backend, as a first step toward serving the UI from an Apache Iceberg catal
   in this repo (`yt/yt/server/http_proxy`).
 - `docs/` — protocol documentation (**start at `docs/INDEX.md`** — the generated map of
   every doc and its cross-references):
-  - `history.md` — findings and corrections that predate the squashed commit
-    log: what was implemented wrongly at first, and what surprised us.
+  - `history.md` — findings and corrections intended to survive commit-history
+    cleanup: what was implemented wrongly at first, and what surprised us.
   - `auth.md` — login, cookies, CSRF, token flow.
   - `table-viewer.md` — navigation & static-table viewing wire protocol (get/list/exists,
     `read_table` with `web_json`, error format).
@@ -50,9 +50,10 @@ mock backend, as a first step toward serving the UI from an Apache Iceberg catal
 - `tests/test_userdb.py` — always-running PBKDF2, session-revocation, and reconnect
   unit tests; `test_user_persistence.py` adds isolated PostgreSQL integration
   coverage when `MOCK_PG_TEST_DSN` is available.
-- `tests/test_external_auth.py` — delegated authentication against a real
-  YTsaurus (`MOCK_YT_UPSTREAM`): external users provisioned on first verified
-  login, explicitly provisioned local users never leaving the local store
+- `tests/test_external_auth.py` — delegated-authentication contract tests using
+  an in-process stand-in for the real YTsaurus configured by
+  `MOCK_YT_UPSTREAM`: external users are provisioned on first verified login,
+  while explicitly provisioned local users never leave the local store
   (docs/auth.md "External authentication").
 - `tests/test_recording_security.py` — proves development traffic recordings
   redact credentials, fail open on filesystem errors, stay size-bounded, and

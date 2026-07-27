@@ -67,8 +67,10 @@ hardened before it is safe to use:
   composite cookie authenticator explicitly claims an `access_token` cookie
   (`auth_server/public.h:136-141`, docs/auth.md §4.4) and validates it against
   a configured userinfo endpoint. **Our backend does not read that cookie yet**
-  (`server.py authenticate()`, lines 224–238, knows only `YTCypressCookie` and
-  `Authorization: OAuth`) — that one branch is the entire backend gap.
+  (`server.py authenticate()` knows only `YTCypressCookie` and
+  `Authorization: OAuth`). Adding the cookie branch is the transport gap;
+  provider validation, identity provisioning, and correct CSRF classification
+  are additional required backend work described below.
 - Two Google-specific rough edges in the UI client:
   - `url.search = params.toString()` **overwrites** any query baked into
     `authPath`, so we cannot smuggle `access_type=offline&prompt=consent` into

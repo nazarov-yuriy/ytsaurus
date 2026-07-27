@@ -268,7 +268,7 @@
         "type": "batch-item<string>",
         "required": true,
         "support_status": "constant",
-        "description": "get //sys/scheduler/orchid/service/version; mock 500 -> UI falls back to '0.0.0-unknown'"
+        "description": "get //sys/scheduler/orchid/service/version; mock returns '24.1.0-mock' because UI 1.60+ expects a version string during bootstrap"
       },
       {
         "name": "uiConfig",
@@ -286,10 +286,10 @@
       },
       {
         "name": "masterVersion",
-        "type": "batch-item<string or list<string>>",
+        "type": "batch-item<string>",
         "required": true,
         "support_status": "constant",
-        "description": "version string from the first primary master; when the primary-master list is empty, the list batch item is returned instead (output: [] in the mock)"
+        "description": "get //sys/primary_masters/primary-master/orchid/service/version; the mock lists that primary master and returns '24.1.0-mock' because UI 1.60+ expects a version string during bootstrap"
       }
     ]
   },
@@ -443,7 +443,7 @@
   {
     "entry_type": "schema",
     "name": "pg-users-table",
-    "description": "PostgreSQL table `users` (mock-backend-py/userdb.py, active when MOCK_PG_DSN is set): the persisted user registry behind /login. Table data stays fake; only users/sessions are real state.",
+    "description": "PostgreSQL table `users` (mock-backend-py/userdb.py, active when MOCK_PG_DSN is set): the persisted user registry behind /login. Catalog fixtures stay fake; PostgreSQL also persists sessions, the CSRF setting, and the audit trail.",
     "fields": [
       {
         "name": "login",

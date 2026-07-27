@@ -36,7 +36,7 @@
     "command": "cluster-params",
     "method": "GET",
     "path": "/api/cluster-params/:ytAuthCluster",
-    "description": "Bootstrap step 2 (cached server-side). Server issues two execute_batch calls to the cluster proxy: (1) list //sys/primary_masters; (2) list //sys/media, get //sys/scheduler/orchid/service/version, get //sys/@ui_config, get //sys/@ui_config_dev_overrides, get //sys/primary_masters/<first>/orchid/service/version. All sub-requests carry suppress_transaction_coordinator_sync:true and suppress_upstream_sync:true. Only mediumList errors are fatal client-side.",
+    "description": "Bootstrap step 2 (cached server-side). Server issues two execute_batch calls to the cluster proxy: (1) list //sys/primary_masters; (2) list //sys/media, get //sys/scheduler/orchid/service/version, get //sys/@ui_config, get //sys/@ui_config_dev_overrides, get //sys/primary_masters/<first>/orchid/service/version. All sub-requests carry suppress_transaction_coordinator_sync:true and suppress_upstream_sync:true. The standalone source checkout normalizes code-500 scheduler/master errors to '0.0.0-unknown' and tolerates code 500 on the two UI-config items; other scheduler/master errors, mediumList errors, and primary-master-list errors are fatal. The published UI 1.60.1 image was observed to crash when either version path failed, so the mock serves both successfully.",
     "request": {"headers": {}, "params": {}},
     "response": {"body_schema": "{mediumList: BatchResultsItem<string[]>, schedulerVersion: BatchResultsItem<string>, masterVersion: BatchResultsItem<string>, uiConfig: BatchResultsItem<object>, uiDevConfig: BatchResultsItem<object>} where BatchResultsItem = {output?: any, error?: YTError}"},
     "api_version": "v3",

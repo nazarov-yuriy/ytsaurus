@@ -154,8 +154,15 @@ an `http://` UI.
 ### 0.4 OAuth
 
 `ytOAuthSettings` in the Node config enables the SSO flow
-(`ui/docs/configuration.md:156-172`, `ui/src/server/components/oauth.ts:12-22`).
+(`ui/docs/configuration.md`, `ui/src/server/components/oauth.ts`).
 It is orthogonal to `allowPasswordAuth` and is described in §3.4.
+
+The OAuth behavior documented below follows the hardened standalone
+`ytsaurus-ui` checkout at commit `5b1856f41c779cb0fdd79b9aaa6655307a549fe2`.
+That checkout is ignored by the parent repository; the parent Helm and Compose
+deployments still use stock `ghcr.io/ytsaurus/ui:1.60.1`, which does not contain
+the state/cookie hardening. See [google-oauth.md](google-oauth.md) before
+enabling OAuth.
 
 ---
 
@@ -290,8 +297,9 @@ when that feature is configured.
 | `YTCypressCookie` | cluster proxy (relayed) | browser→proxy on direct CORS calls | yes (proxy's choice) |
 | `<cluster>_YTCypressCookie` | UI server, `login.ts:57-63` | UI Node server only | inherits proxy's attrs |
 | `ytfront_<cluster>_xsrf_token` | **client JS**, `cluster-params.ts:262` | client JS (axios xsrf) | no |
-| `yt_oauth_access_token` | UI server, `oauth.ts:67-72` | UI Node server | yes, `Secure` |
-| `yt_oauth_refresh_token` | UI server, `oauth.ts:73-79` | UI Node server | yes, `Secure` |
+| `__Host-yt_oauth_state` | UI server at OAuth login | UI Node callback | yes; also `Secure; SameSite=Lax; Path=/` |
+| `__Host-yt_oauth_access_token` | UI server after OAuth callback/refresh | UI Node server | yes; also `Secure; SameSite=Lax; Path=/` |
+| `__Host-yt_oauth_refresh_token` | UI server after OAuth callback/refresh | UI Node server | yes; also `Secure; SameSite=Lax; Path=/` |
 
 Constants: `ui/src/shared/constants/index.ts:2,5,6`;
 `getXsrfCookieName` = `` `ytfront_${cluster}_xsrf_token` `` at
@@ -319,6 +327,12 @@ req.yt = {ytApiAuthHeaders: {Cookie: `access_token=${token}`}};
 Both are wrapped in `authorizationResolver`
 (`ui/src/server/utils/authorization.ts:23-32`) so OAuth wins if it already
 produced credentials.
+
+The current Python backend authenticates `YTCypressCookie` and the
+`Authorization: OAuth` robot header, but not the UI-generated
+`Cookie: access_token=...`. The latter flow therefore describes the UI and real
+YT proxy contract, not a supported authentication path in this backend; see
+[google-oauth.md](google-oauth.md).
 
 ⚠ Gotcha worth knowing when mocking: `isAuthorized()`
 (`ui/src/server/utils/authorization.ts:6-11`) is
@@ -560,18 +574,20 @@ See §2.8. `302` to `/` + cookie deletions.
 
 | route | line | handler | behaviour |
 |---|---|---|---|
-| `GET /oauth/login` | 64 | `oauthLogin`, `controllers/oauth-login.ts:9-11` | `302` to `<baseURL><authPath>?response_type=code&client_id&scope&redirect_uri=<base>/api/oauth/callback&state=state_<uuid>`; also sets a cookie named `state_<uuid>` whose value is `{"retPath": "<pathname+search of Referer>"}` (`components/oauth.ts:82-103`) |
-| `GET /api/oauth/callback` | 65 | `oauthCallback`, `oauth-login.ts:18-41` | reads `?code=&state=`, POSTs `grant_type=authorization_code` to `<baseURL><tokenPath>` (`oauth.ts:146-170`), stores `yt_oauth_access_token` (`maxAge=expires_in*1000`, `httpOnly`, `secure`) and `yt_oauth_refresh_token` (`maxAge=refresh_expires_in*1000`), then `302` to the saved `retPath` (default `/`) |
-| `GET /api/oauth/logout/callback` | 66 | `oauthLogout`, `oauth-login.ts:13-16` | `res.clearCookie` on both OAuth cookies, `302 /` |
+| `GET /oauth/login` | 64 | `oauthLogin`, `controllers/oauth-login.ts:10-12` | Validates the configured callback origin, sets one fixed `__Host-yt_oauth_state` cookie containing `{"state","retPath"}` for 10 minutes, then redirects to `new URL(authPath, baseURL)` with `response_type=code`, client, scope, explicit callback URL, and `state`. |
+| `GET /api/oauth/callback` | 65 | `oauthCallback`, `oauth-login.ts:19-43` | Requires exactly one state cookie and a constant-time state match, consumes that cookie before exchanging the code, then stores `__Host-yt_oauth_access_token` and (when returned) `__Host-yt_oauth_refresh_token`. Missing/invalid state or code returns 400; token-exchange failure returns a generic 502 without exposing IdP details. |
+| `GET /api/oauth/logout/callback` | 66 | `oauthLogout`, `oauth-login.ts:14-17` | Clears both OAuth cookies with the same `Secure; HttpOnly; SameSite=Lax; Path=/` attributes used to set them, then redirects to `/`. |
 
 Token refresh: if only the refresh cookie is present, `getOAuthAccessToken`
-(`oauth.ts:47-59`) POSTs `grant_type=refresh_token` and re-sets the cookies.
+(`oauth.ts:100-111`) POSTs `grant_type=refresh_token` and re-sets the cookies.
+A failed refresh is logged generically and clears both stale token cookies.
 
 The button is rendered only when `allowOAuth` is in `window.__DATA__`
 (`layout-config.ts:69`, `LoginFormPage.tsx:151-164`). The runtime eligibility
-check requires `baseURL`, `authPath`, `tokenPath`, `clientId`, and
-`clientSecret`; the typed configuration also requires `scope`, which is used in
-the authorization request (`oauth.ts:12-22,89-101`).
+check requires `baseURL`, `authPath`, `tokenPath`, `clientId`, `clientSecret`,
+and a valid explicit `callbackBaseUrl`; the typed configuration also requires
+`scope`, which is used in the authorization request
+(`oauth.ts:isOAuthAllowed`, `getOAuthLoginPath`).
 
 ### 3.5 `GET /api/cluster-info/:ytAuthCluster` — `routes.ts:56`
 
@@ -913,9 +929,13 @@ so the UI happily reports the user as `root`.
 
 ## 5. Minimal mock backend
 
-### 5.1 Recommended shape: no authentication at all
+### 5.1 Anonymous protocol-development shape (not a deployment recommendation)
 
-The cheapest correct configuration is to make the UI never ask about auth:
+For local protocol work, the smallest configuration makes the UI never ask
+about auth. It is not suitable for an internal deployment: the Helm chart
+requires the explicit development-only `auth.allowAnonymous=true` opt-in for
+this posture, while a direct backend run is loopback-only unless
+`MOCK_BIND_HOST` is deliberately changed.
 
 1. UI server env: do **not** set `ALLOW_PASSWORD_AUTH`, `WITH_AUTH` or
    `YT_AUTH_CLUSTER_ID`; do not configure `ytOAuthSettings`.
@@ -970,7 +990,12 @@ Note the username shortcut: if the UI runs in local mode
 Set `ALLOW_PASSWORD_AUTH=1` (and `YT_AUTH_ALLOW_INSECURE=1` when the UI is served
 over plain `http://`, otherwise the `Secure` cookie is dropped —
 `login.ts:89-118`), and set `"authentication": "basic"` in `clusters-config.json`.
-Then the mock proxy must implement exactly four things:
+For this backend, also set `MOCK_REQUIRE_AUTH=1`, configure a unique
+`MOCK_ROBOT_TOKEN` that matches the UI robot credential, and either provision
+the password user in PostgreSQL or configure delegated authentication.
+Without strict mode, a missing or invalid session reaches the development
+`iceberg` fallback and the login screen is not an authentication boundary.
+The core proxy behaviors are:
 
 **(a) `POST /login`** — accept `Authorization: Basic base64(user:pass)`, reply:
 
@@ -1003,8 +1028,13 @@ The UI relays that to the browser and `LoginFormPage.tsx:82-90` shows
 whether the UI Node server considers the session valid
 (`middlewares/authorization.ts:23-38`).
 
-**(c) API requests carrying `Cookie: YTCypressCookie=…`** — the mock can ignore
-the cookie value and the `X-Csrf-Token` header.
+**(c) API requests carrying `Cookie: YTCypressCookie=…`** — validate the same
+server-side session used by `/auth/whoami` and attach its identity. This
+backend also requires a valid `X-Csrf-Token` for cookie-authenticated non-GET
+commands; treating the cookie or CSRF header as decorative would turn the
+login form into a cosmetic rather than security boundary. Boot-path robot
+requests instead carry the configured `Authorization: OAuth` token; strict
+mode validates that token and does not apply cookie CSRF to it.
 
 **(d) A `401` shape the UI can act on** — the Node server relays the proxy's
 `401` and adds `x-yt-ui-cluster-name: <cluster>` itself
@@ -1108,11 +1138,15 @@ live in the local store, `/auth/whoami` and CSRF work as in §2. Consequences:
 The Basic credentials are forwarded to `MOCK_YT_UPSTREAM` as received: point it
 at an `https://` proxy or keep the hop inside a trusted network. In the Helm
 chart set `auth.ytUpstream` and a unique, non-default `auth.robotToken`;
-authenticated rendering rejects the published placeholder token. In docker
-compose, `MOCK_YT_UPSTREAM` only configures the backend verifier; the provided
-test stack remains anonymous and is not an authenticated deployment.
-Authenticated stores start with no built-in password users; provision any
-local accounts explicitly with `userdb.py add-user`. In particular, the
+authenticated rendering rejects the published placeholder token. The provided
+Compose stack is intentionally anonymous and does not set `MOCK_REQUIRE_AUTH`;
+setting a non-empty `MOCK_YT_UPSTREAM` there makes the backend fail startup
+rather than enabling delegated authentication behind the anonymous fallback.
+Use the authenticated Helm profile or an equivalently strict custom Compose
+configuration for delegation. Authenticated stores start with no built-in
+password users; provision local accounts in a PostgreSQL-backed store with
+`MOCK_PG_DSN=... python3 userdb.py add-user` (a separate RAM-mode CLI process
+cannot modify a running server). In particular, the
 published development pairs `iceberg`/`iceberg` and `root`/empty are not seeded,
 so an external user named `iceberg` is not shadowed by a local row. Strict mode
 also rejects those exact two password pairs before consulting the local store

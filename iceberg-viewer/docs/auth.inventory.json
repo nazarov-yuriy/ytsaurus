@@ -64,7 +64,7 @@
       },
       "body_schema": "empty (redirect)"
     },
-    "cookies": ["YTCypressCookie", "<cluster>_YTCypressCookie", "yt_oauth_access_token", "yt_oauth_refresh_token"],
+    "cookies": ["YTCypressCookie", "<cluster>_YTCypressCookie", "__Host-yt_oauth_access_token", "__Host-yt_oauth_refresh_token"],
     "needed_for_mock": false,
     "source_refs": [
       "ytsaurus-ui/packages/ui/src/server/routes.ts:62",
@@ -122,48 +122,48 @@
     "layer": "ui-server",
     "method": "GET",
     "path": "/oauth/login",
-    "description": "Starts the OIDC authorization-code flow. Sets a cookie named state_<uuid> containing {retPath: <pathname+search of Referer>} and 302s to the IdP authorization endpoint. Only wired when ytOAuthSettings is fully configured (baseURL, authPath, tokenPath, clientId, clientSecret).",
+    "description": "Starts the OIDC authorization-code flow in the hardened standalone UI checkout (not the stock image used by the parent deployment). Requires a fully configured ytOAuthSettings, including an explicit safe callbackBaseUrl. Sets one fixed __Host-yt_oauth_state cookie containing {state, retPath} for 10 minutes and redirects to new URL(authPath, baseURL).",
     "request": {"headers": {"Referer": "<current UI url>"}, "params": {}, "body": "none"},
     "response": {
       "status": 302,
       "headers": {
-        "Location": "<baseURL><authPath>?response_type=code&client_id=..&scope=..&redirect_uri=<base>/api/oauth/callback&state=state_<uuid>",
-        "Set-Cookie": ["state_<uuid>=j:{\"retPath\":\"/cluster/navigation\"}; Path=/"]
+        "Location": "<new URL(authPath, baseURL)>?response_type=code&client_id=..&scope=..&redirect_uri=<callbackBaseUrl>/api/oauth/callback&state=state_<uuid>",
+        "Set-Cookie": ["__Host-yt_oauth_state=j:{\"state\":\"state_<uuid>\",\"retPath\":\"/cluster/navigation\"}; Max-Age=600; Path=/; HttpOnly; Secure; SameSite=Lax"]
       },
       "body_schema": "empty (redirect)"
     },
-    "cookies": ["state_<uuid>"],
+    "cookies": ["__Host-yt_oauth_state"],
     "needed_for_mock": false,
     "source_refs": [
       "ytsaurus-ui/packages/ui/src/server/routes.ts:64",
-      "ytsaurus-ui/packages/ui/src/server/controllers/oauth-login.ts:9-11",
-      "ytsaurus-ui/packages/ui/src/server/components/oauth.ts:82-103"
+      "ytsaurus-ui/packages/ui/src/server/controllers/oauth-login.ts:10-12",
+      "ytsaurus-ui/packages/ui/src/server/components/oauth.ts:244-267"
     ]
   },
   {
     "layer": "ui-server",
     "method": "GET",
     "path": "/api/oauth/callback",
-    "description": "OIDC redirect target. Exchanges ?code for tokens via POST <baseURL><tokenPath> (grant_type=authorization_code), stores them in HttpOnly Secure cookies and redirects to the retPath saved under the state cookie.",
+    "description": "OIDC redirect target in the hardened standalone UI checkout. Requires exactly one raw __Host-yt_oauth_state cookie and a constant-time match with the required state query value, consumes the cookie before exchanging code via POST new URL(tokenPath, baseURL), stores tokens in __Host- cookies, and redirects only to the validated local retPath.",
     "request": {
-      "headers": {},
-      "params": {"code": "authorization code (query)", "state": "state_<uuid> (query, optional)"},
+      "headers": {"Cookie": "__Host-yt_oauth_state={state,retPath} (exactly one raw cookie entry required)"},
+      "params": {"code": "non-empty authorization code (query, required)", "state": "state_<uuid> (query, required and matched in constant time)"},
       "body": "none"
     },
     "response": {
       "status": 302,
       "headers": {
         "Location": "<retPath or />",
-        "Set-Cookie": ["yt_oauth_access_token=<jwt>; Max-Age=<expires_in>; HttpOnly; Secure", "yt_oauth_refresh_token=<jwt>; Max-Age=<refresh_expires_in>; HttpOnly; Secure"]
+        "Set-Cookie": ["__Host-yt_oauth_state=; Expires=<past>; Path=/; HttpOnly; Secure; SameSite=Lax", "__Host-yt_oauth_access_token=<token>; Max-Age=<expires_in>; Path=/; HttpOnly; Secure; SameSite=Lax", "__Host-yt_oauth_refresh_token=<token>; Max-Age=<refresh_expires_in>; Path=/; HttpOnly; Secure; SameSite=Lax (only when returned)"]
       },
-      "body_schema": "empty (redirect); on failure 500 with the error message as text/plain"
+      "body_schema": "empty on 302 redirect; invalid/missing state or code -> generic 400 text; token-exchange failure -> generic 502 text with no IdP error details"
     },
-    "cookies": ["yt_oauth_access_token", "yt_oauth_refresh_token"],
+    "cookies": ["__Host-yt_oauth_state (consumed)", "__Host-yt_oauth_access_token", "__Host-yt_oauth_refresh_token"],
     "needed_for_mock": false,
     "source_refs": [
       "ytsaurus-ui/packages/ui/src/server/routes.ts:65",
-      "ytsaurus-ui/packages/ui/src/server/controllers/oauth-login.ts:18-41",
-      "ytsaurus-ui/packages/ui/src/server/components/oauth.ts:66-79,146-170",
+      "ytsaurus-ui/packages/ui/src/server/controllers/oauth-login.ts:19-43",
+      "ytsaurus-ui/packages/ui/src/server/components/oauth.ts:201-242,310-334",
       "ytsaurus-ui/packages/ui/src/shared/constants/index.ts:5-6"
     ]
   },
@@ -175,15 +175,15 @@
     "request": {"headers": {}, "params": {}, "body": "none"},
     "response": {
       "status": 302,
-      "headers": {"Location": "/", "Set-Cookie": ["yt_oauth_access_token=; Expires=Thu, 01 Jan 1970 00:00:00 GMT", "yt_oauth_refresh_token=; Expires=Thu, 01 Jan 1970 00:00:00 GMT"]},
+      "headers": {"Location": "/", "Set-Cookie": ["__Host-yt_oauth_access_token=; Expires=<past>; Path=/; HttpOnly; Secure; SameSite=Lax", "__Host-yt_oauth_refresh_token=; Expires=<past>; Path=/; HttpOnly; Secure; SameSite=Lax"]},
       "body_schema": "empty (redirect)"
     },
-    "cookies": ["yt_oauth_access_token", "yt_oauth_refresh_token"],
+    "cookies": ["__Host-yt_oauth_access_token", "__Host-yt_oauth_refresh_token"],
     "needed_for_mock": false,
     "source_refs": [
       "ytsaurus-ui/packages/ui/src/server/routes.ts:66",
-      "ytsaurus-ui/packages/ui/src/server/controllers/oauth-login.ts:13-16",
-      "ytsaurus-ui/packages/ui/src/server/components/oauth.ts:61-64"
+      "ytsaurus-ui/packages/ui/src/server/controllers/oauth-login.ts:14-17",
+      "ytsaurus-ui/packages/ui/src/server/components/oauth.ts:114-117"
     ]
   },
   {

@@ -6,8 +6,11 @@ this project's code/tests; **[likely]** — strong evidence, not fully tested;
 
 ## 1. Data-model mapping (Cypress ⇄ Iceberg)
 
-- **[verified]** The swap point is exactly one module (`mock-backend-py/data.py`):
-  namespaces → `map_node`s, tables → `table` nodes. Everything protocol-side stays.
+- **[verified]** `mock-backend-py/data.py` is the current fake-catalog seam:
+  namespaces → `map_node`s, tables → `table` nodes. Replacing it with a real
+  catalog is not a one-module production change: the wire protocol can stay,
+  but server-side authorization, resource limits, and deployment hardening are
+  also required.
 - **[idea]** Multiple Iceberg **catalogs → multiple "clusters"** in
   clusters-config.json. The UI's cluster switcher becomes a catalog switcher for
   free; each catalog gets its own color theme/environment badge.
@@ -68,14 +71,19 @@ this project's code/tests; **[likely]** — strong evidence, not fully tested;
 
 ## 4. Auth & authorization
 
-- **[verified]** Three working modes exist today: anonymous (`authentication:
-  none`), password+cookie backed by PostgreSQL, and a robot OAuth token. The UI
-  also supports OIDC-style OAuth (`ytOAuthSettings`) — the right target for
-  company SSO [likely, config documented in auth.md §7 but untested here].
+- **[verified]** Working authentication paths include explicitly enabled
+  anonymous development mode, local password+cookie authentication (PostgreSQL
+  for durable deployment), delegated Basic verification against YTsaurus with
+  a local session, and a fixed OAuth robot token for UI-server bootstrap. The
+  UI also supports OIDC-style OAuth (`ytOAuthSettings`) — the right target for
+  company SSO [likely; the flow is documented in `auth.md` §3.4 and its design
+  caveats in `google-oauth.md`, but remains untested here]; the locally hardened
+  callback variant is not shipped by the stock UI image used here.
 - **[uncertain]** **Per-user catalog credentials**: the backend currently talks to
-  the catalog with one service identity. Passing the UI user's identity through
-  to catalog-level RBAC (Polaris/Unity/Glue) is an open design question —
-  token exchange? per-user REST sessions?
+  no real catalog. A first integration would likely use one service identity;
+  passing the UI user's identity through to catalog-level RBAC
+  (Polaris/Unity/Glue) is an open design question — token exchange? per-user
+  REST sessions?
 - **[verified]** `check_permission` is consulted by the UI; the mock always
   allows. For read-only Iceberg, deny `write`/`remove`/`administer` so the UI
   greys out mutating actions — **whether every write control honors a deny needs
@@ -124,11 +132,15 @@ new backend implementation:
 
 ## 7. Operations & scale
 
-- **[verified]** The backend is stateless except PostgreSQL users/sessions →
-  horizontal scaling is safe today. A real Iceberg backend stays stateless if
+- **[verified]** With PostgreSQL, mutable users, sessions, the CSRF secret, and
+  audit rows are shared, while the fake catalog tree is deterministic.
+  Authenticated RAM-backed replicas are not safe and the Helm chart rejects
+  more than one; anonymous replicas can serve consistently but retain separate
+  per-pod audit trails. A real Iceberg backend stays horizontally scalable if
   caches are per-pod or external.
-- **[idea]** Add request metrics/structured logs before real users (the mock
-  logs to stdout only); the `X-YT-Correlation-Id` the UI server already sends
+- **[idea]** Add request metrics and structured operational logs before real
+  users (the mock has a structured audit trail but request diagnostics are
+  plain stdout); the `X-YT-Correlation-Id` the UI server already sends
   [verified] is the natural trace key.
 - **[uncertain]** Huge namespaces (10k+ tables): the navigation `list` sends the
   full child list; UI-side virtualization quality at that size is untested.

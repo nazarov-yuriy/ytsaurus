@@ -60,7 +60,7 @@
     "layer": "ui-server",
     "method": "GET",
     "path": "/api/cluster-params/:ytAuthCluster",
-    "description": "Second HARD GATE. Server issues two execute_batch calls with the robot setup: (1) list //sys/primary_masters; (2) list //sys/media, get //sys/scheduler/orchid/service/version, get //sys/@ui_config, get //sys/@ui_config_dev_overrides, get //sys/primary_masters/<first>/orchid/service/version. Result is cached (auto-updated-cache). A non-empty mediumList.error aborts cluster init; NODE_DOES_NOT_EXIST (code 500) on ui_config / ui_config_dev_overrides / versions is tolerated.",
+    "description": "Second HARD GATE. Server issues two execute_batch calls with the robot setup: (1) list //sys/primary_masters; (2) list //sys/media, get //sys/scheduler/orchid/service/version, get //sys/@ui_config, get //sys/@ui_config_dev_overrides, get //sys/primary_masters/<first>/orchid/service/version. Result is cached (auto-updated-cache). In the checked-out UI source, NODE_DOES_NOT_EXIST (code 500) is tolerated for ui_config/ui_config_dev_overrides and is normalized to output '0.0.0-unknown' for scheduler/master versions; mediumList errors, mastersList errors, and other scheduler/master errors reject the endpoint. The deployed stock UI 1.60.1 was empirically observed to crash when either version output is missing, so the mock serves both version paths as real N.N.N-style strings.",
     "request": {"params": {"ytAuthCluster": "cluster id"}},
     "response": {"body_schema": "{mediumList: {output?: string[], error?: YTError}, schedulerVersion: {output?: string, error?: YTError}, uiConfig: {output?: ClusterUiConfig, error?: YTError}, uiDevConfig: {output?: ClusterUiConfig, error?: YTError}, masterVersion: {output?: string, error?: YTError}}"},
     "needed_for_mock": true,
@@ -283,13 +283,14 @@
     "layer": "ui-server",
     "method": "GET",
     "path": "/oauth/login , /api/oauth/callback , /api/oauth/logout/callback",
-    "description": "OpenID Connect flow. Only active when config.ytOAuthSettings is present (surfaces as ConfigData.allowOAuth).",
+    "description": "OpenID Connect flow in the hardened standalone UI checkout. The login UI advertises it through ConfigData.allowOAuth only when ytOAuthSettings has baseURL, authPath, tokenPath, clientId, clientSecret, and a valid explicit callbackBaseUrl. Uses one fixed __Host-yt_oauth_state cookie with matched one-time state and __Host- token cookies; these changes are not present in the stock UI image used by the parent deployment.",
     "request": {},
-    "response": {"body_schema": "redirects / cookie set (yt_oauth_access_token, yt_oauth_refresh_token)"},
+    "response": {"body_schema": "redirects / cookie set (__Host-yt_oauth_state, __Host-yt_oauth_access_token, optional __Host-yt_oauth_refresh_token); invalid callback state -> 400, token exchange failure -> generic 502"},
     "needed_for_mock": false,
     "source_refs": [
       "packages/ui/src/server/routes.ts:64",
-      "packages/ui/src/server/controllers/oauth-login.ts:9",
+      "packages/ui/src/server/controllers/oauth-login.ts:10",
+      "packages/ui/src/server/components/oauth.ts:64",
       "packages/ui/src/@types/core.d.ts:86"
     ]
   },

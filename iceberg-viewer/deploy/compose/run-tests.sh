@@ -1,7 +1,7 @@
 #!/bin/bash
-# Runs inside the `tests` compose service: every self-contained backend suite
-# (they spawn their own servers in this container) plus the end-to-end smoke
-# against the composed ui + mock-backend + postgres.
+# Runs inside the `tests` compose service: every backend suite (their server
+# subprocesses run in this container; persistence uses composed PostgreSQL)
+# plus the end-to-end smoke against the composed ui + mock-backend + postgres.
 set -e
 cd /workspace
 

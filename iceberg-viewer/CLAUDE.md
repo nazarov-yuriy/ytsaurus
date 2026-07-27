@@ -70,8 +70,9 @@ python3 db/sync.py check && python3 db/sync.py audit
   including oddities (YT code 500 inside HTTP 400, the 'CSFR' typo, string
   booleans in web_json). Check `mock-backend-py/REVIEW.md` and `docs/` before
   "fixing" anything that looks wrong; cite the upstream source when mirroring.
-- `data.py` must stay deterministic (sequential ids, fixed timestamps) —
-  golden replay compares bytes.
+- Static fixtures in `data.py` must stay deterministic (sequential ids, fixed
+  node timestamps) because golden replay compares bytes. The live
+  `//sys/logs/audit_log` projection is the deliberate exception.
 - `check_permission*` currently always allow and ACLs are empty. This remains a
   deployment blocker before real catalog data with differing user entitlements
   is served; do not mistake authentication for authorization.

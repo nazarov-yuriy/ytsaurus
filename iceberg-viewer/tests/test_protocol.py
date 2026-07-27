@@ -875,7 +875,7 @@ class TestParameterSources(BackendTestCase):
 
     def test_audit_log_table_exposes_strict_columns_only(self):
         # mock-backend-py/README.md "Audit log": the trail is browsable at
-        # //sys/logs/audit_log with ts/login/endpoint only — the schemaless
+        # //sys/logs/audit_log with ts/login/endpoint/http_code only — schemaless
         # `details` payload is never selected, so it cannot leak here.
         for port in self.each():
             call(port, 'POST', '/api/v3/get',

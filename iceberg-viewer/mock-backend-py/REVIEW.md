@@ -33,7 +33,9 @@ python3 db/sync.py check && python3 db/sync.py audit   # docs<->DB<->code<->traf
 3. **`server.py` HTTP layer**, especially its dedicated executors.
 4. **`server.py` commands** and **`webjson.py`** — wire-format
    mechanics, golden-pinned, mostly mechanical.
-5. **`data.py`** — fake data, no trust decisions; skim.
+5. **`data.py`** — fake data plus the live audit-metadata projection. Review
+   the `//sys/logs/audit_log` column allowlist as a trust decision; the
+   remaining fixtures are mostly mechanical.
 
 Prior review artifacts you can lean on: `docs/security-review.md` (a historical
 review whose findings remain open unless a later commit and regression test
@@ -120,9 +122,13 @@ protocol contract this code implements).
   401/code 110, bad signature → 401/code 110. The `'CSFR'` misspelling is the
   real proxy's typo (`helpers.cpp:187`), preserved deliberately.
 - The `2**53-1` bound mirrors the proxy's JS-safe-integer check.
-- Only cookie-authenticated mutating requests need the token: OAuth
-  and anonymous callers have no ambient browser credential to forge, so CSRF
-  does not apply to them. GET/HEAD/OPTIONS exempt per the real handler.
+- Only Cypress-cookie-authenticated mutating requests need the token.
+  `Authorization: OAuth` robot/header callers and anonymous callers have no
+  ambient browser credential to forge, so CSRF does not apply to them.
+  GET/HEAD/OPTIONS are exempt per the real handler. The backend does not
+  currently accept the UI's `Cookie: access_token=...`; if that browser-cookie
+  path is implemented, it must be classified as cookie authentication and
+  remain subject to CSRF.
 
 ### Trust ladder (`authenticate`)
 
@@ -134,6 +140,9 @@ falls back to the synthetic `iceberg` identity because `authentication: none`
 UIs send no credentials. Cookies are always validated against the session
 store: a wrong cookie never establishes a session; it is rejected in strict
 mode and reaches only the anonymous fallback in lenient mode.
+The OAuth item in this ladder means the `Authorization: OAuth` robot header,
+not the UI's `access_token` cookie; UI-native OAuth is not implemented by this
+backend.
 
 ### Commands
 
@@ -152,15 +161,23 @@ mode and reaches only the anonymous fallback in lenient mode.
   commands produce per-item errors, and per-command delays apply individually.
 - In `COMMANDS`, `get/list/exists/read_table/execute_batch` are dynamic
   (backed by `data.py`, the future Iceberg surface); the rest are constants.
+  One dynamic table is not fake catalog data:
+  `//sys/logs/audit_log` reads the live store through `userdb.audit_rows()` and
+  exposes only `ts`, `login`, `endpoint`, and `http_code`. The schemaless
+  `details` payload is deliberately absent, but the strict metadata is visible
+  to every caller because object authorization is not implemented.
   `list_operations`/`get_query_tracker_info` return faithful *empty* results
   (shapes from `scheduler_commands.cpp:417-441` / `query_commands.cpp:429-437`)
   so the Operations/Queries pages render empty states instead of error blocks.
-  `check_permission*` always allow. That is tolerable only while the served data
-  is fake and non-sensitive; server-side authorization is an unresolved
-  deployment blocker before real catalog data is connected
+  `check_permission*` always allow. That already makes the audit metadata
+  globally readable; for the remaining catalog fixtures it is tolerable only
+  while they are fake and non-sensitive. Server-side authorization is an
+  unresolved deployment blocker before real catalog data is connected
   (`docs/security-review.md` SEC-04).
-- `RAW_OUTPUT`: `read_table` output is already wire-shaped; annotating it
-  again would double-wrap.
+- `RAW_OUTPUT` has two deliberate cases: `read_table` is already fully
+  wire-shaped and would be double-wrapped, while
+  `get_table_columnar_statistics` must remain plain rather than receiving
+  typed scalar wrappers.
 
 ### CORS
 
@@ -224,7 +241,10 @@ for the normal UI reverse-proxy topology.
 **Structural contract:** PostgreSQL and in-RAM implementations expose the same
 public API and are selected at import by `MOCK_PG_DSN`. Any function added to
 one side must be added to the other; wire behavior must be identical. RAM
-discipline: every public function takes `_lock`.
+discipline: every access to mutable users, sessions, and audit state takes
+`_lock`; immutable `healthy()`/`csrf_secret()` reads do not need it. This
+contract includes the audit write/tail APIs and the strict-column
+`audit_rows()` projection consumed by `data.py`.
 
 ### Credentials
 
@@ -321,17 +341,24 @@ for faithfulness rather than taste.
 
 ## data.py
 
-Fake in-RAM Cypress tree and the current catalog-data seam (map nodes ↔
-namespaces, tables ↔ Iceberg tables). The fake module makes no trust decisions;
-a real catalog integration must add server-side authorization rather than
-treating this as a one-file swap. One contract worth knowing is
-**determinism** — node ids are sequential in creation order and all timestamps
-are fixed because the golden corpus compares responses byte-for-byte.
-Reordering the `_insert` calls changes ids
-and breaks golden replay; that is intended behavior, regenerate with
-`GOLDEN_UPDATE=1` only for deliberate changes. The `//sys` subtree is the
-minimal set of nodes the UI boot path reads (media, primary_masters,
-pool_trees with `@default_tree`, empty users/groups).
+Mostly fake in-RAM Cypress tree and the current catalog-data seam (map nodes ↔
+namespaces, tables ↔ Iceberg tables). A real catalog integration must add
+server-side authorization rather than treating this as a one-file swap.
+
+The ordinary fake nodes are deterministic: their ids are sequential in
+creation order and their node timestamps are fixed because the golden corpus
+compares responses byte-for-byte. Reordering `_insert` calls changes ids and
+breaks golden replay; that is intended behavior, and `GOLDEN_UPDATE=1` is only
+for deliberate changes. The exception is the live
+`//sys/logs/audit_log` table: its rows and row-count attributes come from
+`userdb`, so audit timestamps and contents change as requests are served.
+
+The `//sys` subtree now covers more than cluster bootstrap. It includes the
+media, master-version, pool-tree, user/group fixtures needed during startup;
+the live audit table; and empty-but-valid System-page containers/attributes for
+nodes, schedulers/controllers, masters, RPC proxies, resources, and chunk
+health. Keep those shapes aligned with the focused System-page protocol test,
+not just the golden bootstrap recording.
 
 ## Invariant → test map
 
@@ -347,6 +374,7 @@ pool_trees with `@default_tree`, empty users/groups).
 | Password change kills sessions, racing login included | `test_userdb.py`, `test_user_persistence.py` |
 | Interrupted PG writes are never replayed | `test_userdb.py` `TestPostgresRecovery` |
 | Audit rows < 1,000 bytes, no credentials, batch allowlist | `test_userdb.py` audit tests |
+| Browsable audit table exposes only `ts/login/endpoint/http_code` and stays live | `test_protocol.py`, `test_user_persistence.py` audit-table tests |
 | Unexpected routes/commands are audited & attributed | `test_user_persistence.py` |
 | Credentialed CORS is default-deny and exact-match only | `test_protocol.py` CORS tests |
 | Recordings redact secrets, stay bounded, and are forbidden with auth | `test_recording_security.py` |
@@ -360,7 +388,9 @@ pool_trees with `@default_tree`, empty users/groups).
 
 - **No authorization.** `check_permission*` always allow and ACLs are empty.
   This must be fixed, or explicitly accepted as global read access, before
-  serving data with different user entitlements (SEC-04).
+  serving data with different user entitlements (SEC-04). It already means
+  every caller can read the live audit table's strict metadata columns
+  (`ts`, `login`, `endpoint`, `http_code`), though not its `details` payload.
 - **No login rate limiting** — development mock stance, documented in README.
 - **Direct-process anonymous fallback.** Without `MOCK_REQUIRE_AUTH`, a direct
   server invocation identifies unauthenticated callers as `iceberg`, but binds

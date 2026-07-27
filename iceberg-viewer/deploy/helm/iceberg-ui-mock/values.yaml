@@ -1,7 +1,8 @@
 # Mock YT proxy (the backend under test).
 mockBackend:
-  # Authenticated deployments without PostgreSQL keep users and sessions in
-  # process memory, so the chart rejects more than one replica in that mode.
+  # Authenticated deployments without PostgreSQL keep users, sessions, the
+  # CSRF secret, and audit rows in process memory, so the chart rejects more
+  # than one replica in that mode.
   replicaCount: 1
   # By default the chart runs the backend sources shipped in files/ on a stock
   # python image, installing the pinned requirements.txt at pod start (needs
@@ -27,9 +28,10 @@ mockBackend:
     port: 80
   resources: {}
 
-# Optional real user persistence: users + login sessions in PostgreSQL.
+# Optional persistent backend state: users, login sessions, the CSRF secret,
+# and audit rows in PostgreSQL.
 # When enabled, the mock gets MOCK_PG_DSN (the PG driver is already part of
-# the always-installed requirements.txt). Table data stays fake.
+# the always-installed requirements.txt). Catalog fixtures stay fake.
 postgres:
   enabled: false
   image:

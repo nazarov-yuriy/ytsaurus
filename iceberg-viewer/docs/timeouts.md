@@ -62,9 +62,13 @@ MOCK_DELAY=read_table:5000,list:2000,get:1000 \
 - **`//sys` paths are never delayed** (rule follows from the 5 s boot budget
   above); infrastructure endpoints (`/ping`, `/ready`, `/version`,
   `/auth/whoami`, `/login`) are never delayed.
-- Delays never block other requests (one thread per connection).
+- Sync command handlers run in FastAPI's bounded worker pool, so ordinary
+  requests can overlap. `/ping` stays on the event loop; readiness health
+  checks and audit persistence use separate bounded executors and stay
+  independent of that pool.
 - Helm: `--set mockBackend.delay=read_table:5000,list:2000`.
 
-Covered by `tests/test_slow_backend.py` (6 tests: delayed-and-correct responses,
-//sys and infrastructure exemptions, per-sub-command batch delays, no
-head-of-line blocking).
+Covered by `tests/test_slow_backend.py` (9 tests: delayed-and-correct responses,
+`//sys` and infrastructure exemptions, per-sub-command batch delays, concurrent
+fast paths, `/ping` under a saturated handler pool or stalled audit write, and
+bounded readiness waiters).

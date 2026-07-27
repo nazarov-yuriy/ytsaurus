@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """User/session store: PostgreSQL when MOCK_PG_DSN is set, in-RAM otherwise.
 
-Users and login sessions are the one piece of real state in the mock; table
-data stays fake. CLI: python3 userdb.py add-user <login> [--password-stdin |
+Users, login sessions, the CSRF setting, and audit rows are real state; catalog
+fixtures stay fake. CLI: python3 userdb.py add-user <login> [--password-stdin |
 --password-file <path>] | list-users
 """
 import collections

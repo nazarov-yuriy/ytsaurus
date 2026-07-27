@@ -284,4 +284,5 @@ def resolve(ypath):
     return cur, attr_path
 
 
-# Users/sessions live in userdb.py (PostgreSQL or in-RAM).
+# Users, sessions, the CSRF secret, and audit rows live in userdb.py
+# (PostgreSQL or in-RAM).

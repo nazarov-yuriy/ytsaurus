@@ -1,14 +1,15 @@
 # Findings and corrections worth keeping
 
-The commit log for this project was squashed. Routine steps (adding endpoints,
-schema fields, docs, deployment plumbing) are not recorded here — the code and
-the other docs already describe *what* exists. This file records the things a
-reader could not reconstruct: **what we implemented wrongly at first and why the
-wrong version looked right**, and **behaviors of YTsaurus, its UI, and the
-tooling that surprised us**.
+This file is intended to survive history cleanup. It does not repeat routine
+steps (adding endpoints, schema fields, docs, deployment plumbing) because the
+code and the other docs already describe *what* exists. It records the things a
+reader could not reconstruct from the final tree: **what we implemented wrongly
+at first and why the wrong version looked right**, and **behaviors of YTsaurus,
+its UI, and the tooling that surprised us**.
 
 Protocol-level specifics live in `empirical-findings.md`; auth wire details in
-`auth.md`; a line-anchored code tour in `../mock-backend-py/REVIEW.md`. This
+`auth.md`; a function-and-invariant-oriented code tour in
+`../mock-backend-py/REVIEW.md`. This
 file is the *why it took several attempts* layer.
 
 ---

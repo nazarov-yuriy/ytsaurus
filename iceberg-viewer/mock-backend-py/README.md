@@ -2,7 +2,7 @@
 
 The sole mock-backend implementation: protocol logic on a FastAPI/uvicorn
 HTTP layer (see "HTTP layer" below), PostgreSQL optional.
-Reviewing this code? Start with [REVIEW.md](REVIEW.md) — a line-anchored
+Reviewing this code? Start with [REVIEW.md](REVIEW.md) — a function-oriented
 walkthrough of every trust decision and wire-protocol oddity.
 
 ## Run
@@ -59,17 +59,23 @@ Environment:
   upstream. `MOCK_YT_UPSTREAM_TIMEOUT` (default 5 s) bounds each verification;
   upstream failures surface as 503, not 401. See docs/auth.md §6.
 
-## User management (PostgreSQL)
+## User management, sessions, and audit state
 
-Users and login sessions are the one piece of real state; table data stays fake.
+Users, login sessions, and the audit trail are real state; catalog sample data
+stays fake.
 `userdb.py` speaks PostgreSQL when `MOCK_PG_DSN` is set and falls back to
 in-RAM storage otherwise. Neither store creates password users by default;
-provision local users explicitly with `userdb.py add-user`. The development
-seeds described above require an explicit anonymous-test opt-in.
+provision durable local users with
+`MOCK_PG_DSN=... python3 userdb.py add-user`. A separate RAM-mode CLI process
+has its own store and cannot modify a running server; authenticated RAM
+deployments therefore need delegated authentication or users provisioned
+inside the server process. The development seeds described above require an
+explicit anonymous-test opt-in.
 
 - Schema (auto-created on start): `users(login PK, salt, password_hash,
   origin, password_revision, created_at)` and `sessions(cookie PK, login FK,
-  password_revision, created_at, expires_at)`. Passwords are stored using
+  password_revision, created_at, expires_at)`, plus `settings` for the CSRF
+  secret and the `audit_log` described below. Passwords are stored using
   PBKDF2-HMAC-SHA256 with 600,000 iterations and 128-bit salts, never in
   plaintext. Sessions expire after the configured cookie TTL (30 days by
   default), matching the browser's `YTCypressCookie` lifetime.
@@ -106,8 +112,9 @@ seeds described above require an explicit anonymous-test opt-in.
 
 ## Audit log
 
-Every user-attributable request is recorded before its response is sent —
-`/login` attempts (success/rejected/upstream_unavailable, never the password),
+The middleware attempts to record every user-attributable request before its
+response is sent — `/login` attempts
+(success/rejected/upstream_unavailable, never the password),
 `/auth/whoami`, and each `/api/v3|v4` command including per-item summaries of
 `execute_batch`. Unexpected calls are covered too: unknown routes and
 unregistered commands are audited as 404s with `error_code`, attributed to the
@@ -154,11 +161,13 @@ request is still served (`/ready` reports the outage). Inspect with
 - `server.py` — routing, auth (Basic `/login`, `YTCypressCookie` sessions,
   CSRF, optional strict credentials and robot token), command dispatch, error
   envelopes, v4 `{value}` wrapping, and typed annotation.
-- `data.py` — the deterministic in-RAM fake-catalog seam. A real Iceberg
-  integration also requires server-side authorization and deployment
-  hardening; it is not a one-file production swap.
+- `data.py` — the mostly deterministic in-RAM fake-catalog tree, UI system-page
+  fixtures, and the live strict-column projection of
+  `//sys/logs/audit_log`. A real Iceberg integration also requires server-side
+  authorization and deployment hardening; it is not a one-file production
+  swap.
 - `userdb.py` — in-RAM or PostgreSQL-backed users, password hashes, sessions,
-  and the CSRF secret.
+  CSRF secret, and audit trail.
 - `webjson.py` — annotated JSON, typed annotation, and `web_json` encoders
   (schemaless and YQL value formats).
 

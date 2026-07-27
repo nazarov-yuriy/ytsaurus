@@ -323,7 +323,23 @@ routes are mounted only after `UPDATE_CLUSTER.FINAL_SUCCESS`
    `execute_batch` containing `check_permission_by_acl` against the `admins`
    group (`src/shared/utils/check-permission.ts:31-57`); failures are swallowed.
    This request can overlap the next step.
-4. `GET /api/cluster-params/:cluster` (`cluster-params.ts:77`). Response is the 5-tuple built in `src/server/components/cluster-params.ts:217-223`: `{mediumList, schedulerVersion, uiConfig, uiDevConfig, masterVersion}`, each a batch item `{output?, error?}`. **A non-empty `mediumList.error` aborts cluster init** (`cluster-params.ts:101-104`); errors in `uiConfig`/`uiDevConfig` with code `500` (`NODE_DOES_NOT_EXIST`) are tolerated (`cluster-params.ts:47-65`). Server-side this is two `execute_batch` calls against the proxy with the *robot* setup (`cluster-params.ts:60-94` and `:117-180`) reading `//sys/primary_masters`, `//sys/media`, `//sys/scheduler/orchid/service/version`, `//sys/@ui_config`, `//sys/@ui_config_dev_overrides`, `//sys/primary_masters/<m>/orchid/service/version`. Results are cached (`utils/auto-updated-cache.ts`).
+4. `GET /api/cluster-params/:cluster` (`cluster-params.ts:77`). Response is the
+   5-tuple built in `src/server/components/cluster-params.ts:217-223`:
+   `{mediumList, schedulerVersion, uiConfig, uiDevConfig, masterVersion}`, each
+   a batch item `{output?, error?}`. The standalone checkout tolerates code
+   `500` (`NODE_DOES_NOT_EXIST`) for `uiConfig`/`uiDevConfig` and normalizes
+   the two version items to `0.0.0-unknown`; other version errors, a
+   `mediumList.error`, or a primary-master-list error abort initialization
+   (`cluster-params.ts:203-246`). The published `ui:1.60.1` image used by this
+   project's manifests was observed to crash when either version lookup
+   failed, so the mock serves both version paths successfully. Server-side this
+   is two `execute_batch` calls against the proxy with the *robot* setup
+   (`cluster-params.ts:60-94` and `:117-180`) reading
+   `//sys/primary_masters`, `//sys/media`,
+   `//sys/scheduler/orchid/service/version`, `//sys/@ui_config`,
+   `//sys/@ui_config_dev_overrides`, and
+   `//sys/primary_masters/<m>/orchid/service/version`. Results are cached
+   (`utils/auto-updated-cache.ts`).
 5. `reloadUserSettings(login)` (`src/ui/store/actions/settings/index.ts:114-135`) → `provider.create()` + `provider.getAll()`. With remote settings enabled that is `POST /api/settings/<settingsCluster>/<login>/` then `GET /api/settings/<settingsCluster>/<login>/`, where `settingsCluster = userSettingsCluster ?? cluster` (`src/ui/store/selectors/global/index.ts:151-153`). With remote settings disabled, `create()` is a no-op and `getAll()` reads `localStorage` (§5.4).
 6. Once the page is mounted, `SupportedFeaturesUpdater` (`src/ui/containers/ClusterPage/SupportedFeaturesUpdater.tsx:11-16`) polls YT `get_supported_features` every 600 s (`src/ui/store/actions/global/supported-features.ts:29`).
 
@@ -574,6 +590,10 @@ Checked against `/shared/ytsaurus4/iceberg-viewer/mock-backend-py/server.py`:
   `get`, `list`, `exists`, `read_table`, `execute_batch`, `check_permission`,
   `check_permission_by_acl`, `get_supported_features`,
   `get_table_columnar_statistics`, and `whoami`.
+- Empty-but-valid `list_operations` and `get_query_tracker_info` responses let
+  the Operations and Queries pages render their empty states. The fake
+  `//sys` tree also contains the containers, counters, and version leaves used
+  by the System page, plus the live `//sys/logs/audit_log` metadata table.
 - Password login accepts HTTP Basic credentials at `/login` and returns a
   `YTCypressCookie`. The mock also enforces `X-Csrf-Token` for non-GET requests
   authenticated by one of its issued cookies.
@@ -590,7 +610,7 @@ surface:
   Components → Versions cannot load.
 - `/api/v4` command discovery is not implemented (the UI does not call it).
 - Commands beyond the list above return a YT-shaped `404`; pages that need
-  those commands are not covered.
+  other commands are not covered.
 - In the default auth-none mode, an unknown or expired `YTCypressCookie` falls
   back to the anonymous `iceberg` user. Strict mode exercises the corresponding
   401/login-dialog behavior.

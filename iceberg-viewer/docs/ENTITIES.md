@@ -20,8 +20,8 @@ Body of GET /api/cluster-params/:cluster (UI server; two execute_batch calls aga
 | Status | Field | Type | Required | Description |
 |--------|-------|------|----------|-------------|
 | 🟢 implemented | `mediumList` | batch-item<list<string>> | yes | list //sys/media; a present error aborts cluster init — MUST succeed |
-| 🟡 constant | `masterVersion` | batch-item<string or list<string>> | yes | version string from the first primary master; when the primary-master list is empty, the list batch item is returned instead (output: [] in the mock) |
-| 🟡 constant | `schedulerVersion` | batch-item<string> | yes | get //sys/scheduler/orchid/service/version; mock 500 -> UI falls back to '0.0.0-unknown' |
+| 🟡 constant | `masterVersion` | batch-item<string> | yes | get //sys/primary_masters/primary-master/orchid/service/version; the mock lists that primary master and returns '24.1.0-mock' because UI 1.60+ expects a version string during bootstrap |
+| 🟡 constant | `schedulerVersion` | batch-item<string> | yes | get //sys/scheduler/orchid/service/version; mock returns '24.1.0-mock' because UI 1.60+ expects a version string during bootstrap |
 | 🟡 constant | `uiConfig` | batch-item<map> | yes | get //sys/@ui_config; code-500 error tolerated |
 | 🟡 constant | `uiDevConfig` | batch-item<map> | yes | get //sys/@ui_config_dev_overrides; code-500 error tolerated |
 
@@ -186,7 +186,7 @@ PostgreSQL table `settings` (userdb.py): persisted server-wide values; currently
 
 ## pg-users-table
 
-PostgreSQL table `users` (mock-backend-py/userdb.py, active when MOCK_PG_DSN is set): the persisted user registry behind /login. Table data stays fake; only users/sessions are real state.
+PostgreSQL table `users` (mock-backend-py/userdb.py, active when MOCK_PG_DSN is set): the persisted user registry behind /login. Catalog fixtures stay fake; PostgreSQL also persists sessions, the CSRF setting, and the audit trail.
 
 | Status | Field | Type | Required | Description |
 |--------|-------|------|----------|-------------|

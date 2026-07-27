@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""End-to-end smoke for the compose stack (same checks as the Helm test pod),
-using only urllib so the tests image needs no extra packages.
+"""End-to-end smoke for the anonymous Compose stack.
+
+Mirrors the anonymous Helm test pod and additionally verifies /ready. Uses
+only urllib, so the smoke check itself needs no extra packages.
 
 Env: UI_URL (default http://ui), MOCK_URL (default http://mock-backend:8000).
 """

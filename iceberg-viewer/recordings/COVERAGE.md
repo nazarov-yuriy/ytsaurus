@@ -71,7 +71,7 @@ Recorded: 165 proxy-side requests, 119 browser-side requests, 61 distinct shapes
 Mock-critical (1):
 - `/ready` ()
 
-Out-of-scope/optional (14): `/api/v3`, `/api/v3/check_permission_by_acl`, `/api/v3/whoami`, `/api/v4`, `/api/v4/discover_proxies`, `/api/v4/get_current_user`, `/api/v4/issue_token`, `/api/v4/list_user_tokens`, `/api/v4/revoke_token`, `/api/v4/set_user_password`, `/cluster_connection`, `/internal/discover_versions/v2`, `/service`, `/service/version`
+Out-of-scope/optional (16): `/api/v3`, `/api/v3/check_permission_by_acl`, `/api/v3/list_operations`, `/api/v3/whoami`, `/api/v4`, `/api/v4/discover_proxies`, `/api/v4/get_current_user`, `/api/v4/get_query_tracker_info`, `/api/v4/issue_token`, `/api/v4/list_user_tokens`, `/api/v4/revoke_token`, `/api/v4/set_user_password`, `/cluster_connection`, `/internal/discover_versions/v2`, `/service`, `/service/version`
 
 ## Proxy endpoints: exercised (20)
 

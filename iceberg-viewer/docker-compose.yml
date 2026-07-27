@@ -7,7 +7,8 @@
 #   docker compose run --rm tests      # all backend suites + end-to-end smoke
 #   docker compose --profile e2e run --rm e2e   # headless-Chromium UI check
 #
-# Users/sessions persist in the pgdata volume; table data stays fake in RAM.
+# Users, sessions, the CSRF secret, and audit rows persist in pgdata; catalog
+# fixtures stay fake.
 # Apple Silicon note: if the UI image has no arm64 build, prefix commands with
 # DOCKER_DEFAULT_PLATFORM=linux/amd64.
 
@@ -40,8 +41,9 @@ services:
       PGDATABASE: mockusers
       PGPASSWORD: mock-password
       MOCK_PG_DSN: "connect_timeout=5 application_name=iceberg-ui-mock"
-      # Optional: real YTsaurus proxy that vouches for users not added locally
-      # (docs/auth.md "External authentication"), e.g. https://proxy.yt.example
+      # This anonymous Compose profile must leave delegation disabled. A
+      # non-empty upstream fails closed because delegated authentication also
+      # requires strict backend and UI auth; use the Helm profile for that.
       MOCK_YT_UPSTREAM: "${MOCK_YT_UPSTREAM:-}"
     depends_on:
       postgres:
@@ -77,9 +79,9 @@ services:
       mock-backend:
         condition: service_healthy
 
-  # `docker compose run --rm tests` — self-contained backend suites (they spawn
-  # their own servers inside the container) plus an end-to-end smoke against the
-  # composed ui + mock-backend + postgres.
+  # `docker compose run --rm tests` — backend suites (their server subprocesses
+  # run inside this container; the persistence suite uses composed PostgreSQL)
+  # plus an end-to-end smoke against the composed ui + mock-backend + postgres.
   tests:
     profiles: ["test"]
     image: python:3.12-slim
@@ -100,8 +102,8 @@ services:
       ui:
         condition: service_started
 
-  # `docker compose --profile e2e run --rm e2e` — real-browser check (needs npm
-  # egress once to fetch the playwright package; browsers ship in the image).
+  # `docker compose --profile e2e run --rm e2e` — real-browser check (each
+  # fresh run needs npm egress to fetch Playwright; browsers ship in the image).
   e2e:
     profiles: ["e2e"]
     image: mcr.microsoft.com/playwright:v1.53.1-noble
