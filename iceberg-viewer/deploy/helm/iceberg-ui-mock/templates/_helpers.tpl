@@ -84,11 +84,14 @@ upstream YTsaurus proxy enables password auth automatically; an all-in-RAM
 anonymous deployment requires the explicit development opt-in.
 */}}
 {{- define "iceberg-ui-mock.auth.mode" -}}
+{{- if not (kindIs "bool" .Values.auth.allowAnonymous) -}}
+{{- fail "auth.allowAnonymous must be a boolean" -}}
+{{- end -}}
 {{- $configured := .Values.ui.cluster.authentication -}}
 {{- if eq $configured "none" -}}
 {{- if .Values.auth.ytUpstream -}}
 {{- fail "ui.cluster.authentication=none is incompatible with non-empty auth.ytUpstream" -}}
-{{- else if not .Values.auth.allowAnonymous -}}
+{{- else if not (eq .Values.auth.allowAnonymous true) -}}
 {{- fail "authentication=none requires the explicit development-only auth.allowAnonymous=true opt-in" -}}
 {{- end -}}
 none
@@ -101,7 +104,7 @@ basic
 {{- fail "ui.cluster.authentication supports only none or basic in this chart" -}}
 {{- else if or .Values.postgres.enabled .Values.auth.ytUpstream -}}
 basic
-{{- else if .Values.auth.allowAnonymous -}}
+{{- else if eq .Values.auth.allowAnonymous true -}}
 none
 {{- else -}}
 {{- fail "configure postgres or auth.ytUpstream, or explicitly opt in to development-only anonymous mode with auth.allowAnonymous=true" -}}

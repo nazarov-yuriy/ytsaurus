@@ -39,6 +39,15 @@ fi
 assert_present "$test_tmp/unconfigured.stderr" \
     'explicitly opt in to development-only anonymous mode'
 
+if "$helm_bin" template auth-regression "$chart_dir" \
+    --namespace auth-regression \
+    --set-string auth.allowAnonymous=false \
+    >"$test_tmp/string-false.yaml" 2>"$test_tmp/string-false.stderr"; then
+    fail "string-valued auth.allowAnonymous bypassed the boolean guard"
+fi
+assert_present "$test_tmp/string-false.stderr" 'auth.allowAnonymous'
+assert_present "$test_tmp/string-false.stderr" 'boolean'
+
 "$helm_bin" template auth-regression "$chart_dir" \
     --namespace auth-regression \
     --set auth.allowAnonymous=true >"$test_tmp/default.yaml"
