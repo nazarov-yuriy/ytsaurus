@@ -862,11 +862,17 @@ def api_command(request: Request, version: str, command: str):
         return yt_error_response(request, status, error)
 
     params = dict(request.query_params)
-    if hdr := request.headers.get('X-YT-Parameters'):
+    # The wrapper may send parameters either as one plain JSON header or as
+    # base64 numbered parts (X-YT-Parameters-0..N) — ui 1.60.x uses the latter.
+    try:
+        hdr = gather_header(request.headers, 'X-YT-Parameters')
+    except ValueError as error:
+        return yt_error_response(request, 400, yt_error(1, str(error)))
+    if hdr:
         try:
             params.update(json.loads(hdr))
         except ValueError:
-            log(f'  !! bad X-YT-Parameters: {hdr[:200]}')
+            log('  !! bad X-YT-Parameters JSON')
     body_buf = request.state.body_buf
     if body_buf and 'json' in (request.headers.get('Content-Type') or 'json'):
         try:

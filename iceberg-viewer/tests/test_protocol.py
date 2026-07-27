@@ -873,6 +873,32 @@ class TestParameterSources(BackendTestCase):
                            body={'path': '//home/iceberg/warehouse/trips/@dynamic'})
             self.assertIs(b, False)
 
+    def test_base64_numbered_parameter_headers(self):
+        # ytsaurus-ui 1.60.x sends parameters as base64 numbered header parts
+        # (X-YT-Parameters-0..N) like the real proxy's gathered YT headers.
+        # Regression: the compose UI's getPoolDefaultPoolTreeName request.
+        encoded = base64.b64encode(json.dumps({
+            'path': '//sys/pool_trees/@default_tree',
+            'suppress_access_tracking': 'true'}).encode()).decode()
+        for port in self.each():
+            status, tree, _ = call(port, 'GET', '/api/v3/get', headers={
+                'X-YT-Parameters-0': encoded,
+                'X-YT-Header-Format': '<encode_utf8=%false>json'})
+            self.assertEqual(status, 200)
+            self.assertEqual(tree, 'physical')
+
+            split_at = len(encoded) // 2  # payloads may span several parts
+            status, tree, _ = call(port, 'GET', '/api/v3/get', headers={
+                'X-YT-Parameters-0': encoded[:split_at],
+                'X-YT-Parameters-1': encoded[split_at:]})
+            self.assertEqual(status, 200)
+            self.assertEqual(tree, 'physical')
+
+            status, body, _ = call(port, 'GET', '/api/v3/get', headers={
+                'X-YT-Parameters-0': 'not*base64'})
+            self.assertEqual(status, 400)
+            self.assertIn('Unable to parse X-YT-Parameters header', body['message'])
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

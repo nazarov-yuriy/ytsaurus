@@ -68,3 +68,18 @@ POST /api/yt/mock/api/v3/read_table    {path: <t>[#0:#51], web_json, max_selecte
   `NODE_PATH=../ytsaurus-ui/packages/ui/node_modules node play.js`.
   For ad-hoc debugging, also capture `pageerror`, `requestfailed`, and responses with
   status ≥ 400.
+
+## X-YT-Parameters can arrive as base64 numbered header parts
+
+The javascript-wrapper in newer UI builds (observed with the published
+`ghcr.io/ytsaurus/ui:1.60.1` image; our dev checkout sends the plain header)
+transmits command parameters as `X-YT-Parameters-0..N`: base64 of the UTF-8
+JSON, split across numbered headers, alongside
+`X-YT-Header-Format: <encode_utf8=%false>json`. The real proxy gathers and
+decodes numbered parts for any YT header; the mock does the same via
+`gather_header` for `X-YT-Parameters` (and already did for
+`X-YT-Error-Format`). Symptom when unsupported: every affected command sees no
+parameters at all — e.g. `get //sys/pool_trees/@default_tree` became
+`Error resolving path None` and the UI fell back to a default pool tree with a
+warning toast. Pinned by `test_protocol.py
+TestParameterSources.test_base64_numbered_parameter_headers`.
