@@ -1094,9 +1094,10 @@ live in the local store, `/auth/whoami` and CSRF work as in §2. Consequences:
 
 * an already-issued session stays valid for its TTL even if the upstream
   password changes or the upstream account is disabled — revocation before TTL
-  requires deleting the row from `sessions` (or `userdb.py add-user`, which
-  bumps `password_revision` and kills the user's sessions);
-* `userdb.py add-user <login> <pw>` on an external user converts it to
+  requires deleting the row from `sessions` (or
+  `userdb.py add-user LOGIN --password-stdin`, which bumps
+  `password_revision` and kills the user's sessions);
+* `userdb.py add-user LOGIN --password-stdin` on an external user converts it to
   `origin='local'` (it then authenticates locally and stops consulting the
   upstream); `list-users` marks external rows as `login (external)`.
 

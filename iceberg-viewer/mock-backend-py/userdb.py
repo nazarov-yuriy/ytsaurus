@@ -2,7 +2,8 @@
 """User/session store: PostgreSQL when MOCK_PG_DSN is set, in-RAM otherwise.
 
 Users and login sessions are the one piece of real state in the mock; table
-data stays fake. CLI: python3 userdb.py add-user <login> <password> | list-users
+data stays fake. CLI: python3 userdb.py add-user <login> [--password-stdin |
+--password-file <path>] | list-users
 """
 import collections
 import hashlib
@@ -635,9 +636,35 @@ else:  # in-RAM fallback: same behavior, nothing persisted
 
 
 if __name__ == '__main__':
+    def password_from_cli(arguments):
+        if not arguments:
+            if not sys.stdin.isatty():
+                sys.exit(
+                    'non-interactive add-user requires --password-stdin or '
+                    '--password-file')
+            import getpass
+            return getpass.getpass('Password: ')
+        if arguments == ['--password-stdin']:
+            password = sys.stdin.read()
+        elif len(arguments) == 2 and arguments[0] == '--password-file':
+            with open(arguments[1], encoding='utf-8') as password_file:
+                password = password_file.read()
+        else:
+            sys.exit(
+                'usage: userdb.py add-user <login> [--password-stdin | '
+                '--password-file <path>]')
+        # Secret files and pipes conventionally have one line terminator. Do
+        # not otherwise strip whitespace, which may intentionally be part of
+        # the password.
+        if password.endswith('\n'):
+            password = password[:-1]
+            if password.endswith('\r'):
+                password = password[:-1]
+        return password
+
     cmd = sys.argv[1] if len(sys.argv) > 1 else ''
-    if cmd == 'add-user' and len(sys.argv) == 4:
-        set_password(sys.argv[2], sys.argv[3])
+    if cmd == 'add-user' and len(sys.argv) >= 3:
+        set_password(sys.argv[2], password_from_cli(sys.argv[3:]))
         print(f'user {sys.argv[2]} saved ({"postgres" if DSN else "RAM only — set MOCK_PG_DSN"})')
     elif cmd == 'list-users':
         print('\n'.join(list_users()))
@@ -646,4 +673,6 @@ if __name__ == '__main__':
             print(json.dumps({'ts': ts.isoformat(), 'user': login, 'endpoint': endpoint,
                               'details': details}, ensure_ascii=False))
     else:
-        sys.exit('usage: userdb.py add-user <login> <password> | list-users | audit-tail [n]')
+        sys.exit(
+            'usage: userdb.py add-user <login> [--password-stdin | '
+            '--password-file <path>] | list-users | audit-tail [n]')

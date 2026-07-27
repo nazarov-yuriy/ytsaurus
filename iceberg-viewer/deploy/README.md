@@ -135,10 +135,12 @@ helm upgrade --install iceberg-ui deploy/helm/iceberg-ui-mock \
 ```
 
 An authenticated deployment starts with no local password users. Once the
-backend is ready, run `/app/userdb.py add-user <login> <password>` in a backend
-pod using your normal secret-injection process; the pod already has
-`MOCK_PG_DSN` configured. The chart never enables the anonymous-test
-`MOCK_ENABLE_DEV_SEED_USERS` fixture.
+backend is ready, stream a password from your secret-management workflow into
+`kubectl exec -i BACKEND_POD -- python3 /app/userdb.py add-user LOGIN
+--password-stdin`; the pod already has `MOCK_PG_DSN` configured. Do not place
+the password in the command line, a Helm value, or shell history.
+`--password-file <mounted-secret-path>` is also supported. The chart never
+enables the anonymous-test `MOCK_ENABLE_DEV_SEED_USERS` fixture.
 
 The same database also receives the backend's audit trail (`audit_log` table:
 strict `ts`/`login`/`endpoint` columns plus a schemaless `details` jsonb — see

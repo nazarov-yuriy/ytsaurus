@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 import threading
 import types
@@ -105,6 +106,38 @@ class TestPasswordStorage(unittest.TestCase):
         self.assertNotIn('root', self.userdb.list_users())
         self.assertFalse(self.userdb.verify('iceberg', 'iceberg'))
         self.assertFalse(self.userdb.verify('root', ''))
+
+    def test_cli_rejects_passwords_in_process_arguments(self):
+        environment = {
+            **os.environ,
+            'MOCK_ENABLE_DEV_SEED_USERS': '',
+            'MOCK_PG_DSN': '',
+            'MOCK_REQUIRE_AUTH': '',
+        }
+        exposed = subprocess.run(
+            [
+                sys.executable,
+                str(USERDB),
+                'add-user',
+                'alice',
+                'password-in-argv',
+            ],
+            env=environment, capture_output=True, text=True, check=False)
+        self.assertNotEqual(exposed.returncode, 0)
+        self.assertIn('--password-stdin', exposed.stderr)
+
+        protected = subprocess.run(
+            [
+                sys.executable,
+                str(USERDB),
+                'add-user',
+                'alice',
+                '--password-stdin',
+            ],
+            env=environment, input='password-over-stdin\n',
+            capture_output=True, text=True, check=False)
+        self.assertEqual(protected.returncode, 0, protected.stderr)
+        self.assertNotIn('password-over-stdin', protected.stdout)
 
     def test_development_seeds_require_explicit_anonymous_opt_in(self):
         development = load_userdb(dev_seed_users=True)

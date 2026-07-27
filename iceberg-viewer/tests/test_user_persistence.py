@@ -73,6 +73,19 @@ def storage_env(dsn):
     return env
 
 
+def add_user(dsn, login, password):
+    subprocess.run(
+        [
+            sys.executable,
+            str(BACKEND / 'userdb.py'),
+            'add-user',
+            login,
+            '--password-stdin',
+        ],
+        env=storage_env(dsn), input=password + '\n', text=True, check=True,
+        stdout=subprocess.DEVNULL)
+
+
 def start_server(dsn):
     env = {
         **storage_env(dsn),
@@ -114,13 +127,7 @@ class TestUserPersistence(unittest.TestCase):
                 options=f'-c search_path={cls.schema}',
                 application_name=cls.application_name)
             cls.proc = start_server(cls.dsn)
-            subprocess.run(
-                [
-                    sys.executable, str(BACKEND / 'userdb.py'), 'add-user',
-                    LOCAL_USER, LOCAL_PASSWORD,
-                ],
-                env=storage_env(cls.dsn), check=True,
-                stdout=subprocess.DEVNULL)
+            add_user(cls.dsn, LOCAL_USER, LOCAL_PASSWORD)
         except Exception:
             cls.drop_schema()
             raise
@@ -191,26 +198,18 @@ class TestUserPersistence(unittest.TestCase):
         self.assertEqual(who['realm'], 'cypress_cookie')  # session came from PG
 
     def test_4_cli_added_user_is_visible_without_restart(self):
-        subprocess.run([sys.executable, str(BACKEND / 'userdb.py'), 'add-user', 'alice', 's3cret'],
-                       env=storage_env(type(self).dsn), check=True,
-                       stdout=subprocess.DEVNULL)
+        add_user(type(self).dsn, 'alice', 's3cret')
         status, cookie = self.login('alice', 's3cret')
         self.assertEqual(status, 200)
         _, who, _ = call('GET', '/auth/whoami', {'Cookie': cookie})
         self.assertEqual(who['login'], 'alice')
 
     def test_5_password_change_revokes_existing_sessions(self):
-        subprocess.run(
-            [sys.executable, str(BACKEND / 'userdb.py'), 'add-user', 'session-owner', 'old-secret'],
-            env=storage_env(type(self).dsn), check=True,
-            stdout=subprocess.DEVNULL)
+        add_user(type(self).dsn, 'session-owner', 'old-secret')
         status, cookie = self.login('session-owner', 'old-secret')
         self.assertEqual(status, 200)
 
-        subprocess.run(
-            [sys.executable, str(BACKEND / 'userdb.py'), 'add-user', 'session-owner', 'new-secret'],
-            env=storage_env(type(self).dsn), check=True,
-            stdout=subprocess.DEVNULL)
+        add_user(type(self).dsn, 'session-owner', 'new-secret')
         status, _, _ = call('GET', '/auth/whoami', {'Cookie': cookie})
         self.assertEqual(status, 401)
         status, _ = self.login('session-owner', 'new-secret')

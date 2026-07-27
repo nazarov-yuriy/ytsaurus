@@ -78,7 +78,10 @@ seeds described above require an explicit anonymous-test opt-in.
 - With PostgreSQL, password logins and their cookies survive server restarts,
   connection loss is recovered lazily, and users added out-of-band are visible
   without a restart:
-  `MOCK_PG_DSN=... python3 userdb.py add-user <login> <password>` (also `list-users`).
+  `printf '%s\n' "$PASSWORD" | MOCK_PG_DSN=... python3 userdb.py add-user
+  LOGIN --password-stdin` (also `--password-file PATH` and `list-users`).
+  Interactive `add-user LOGIN` prompts without echo; passwords are never
+  accepted in process arguments.
   Authenticated mode rejects the two published development password pairs even
   if they are accidentally provisioned; stronger passwords for those login
   names and all other explicitly provisioned users continue to work.
