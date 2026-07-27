@@ -474,6 +474,10 @@ _AUDIT_CAPACITY = asyncio.Semaphore(1)
 _AUDIT_TIMEOUT_SECONDS = 5
 _HEALTH_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix='mock-health')
 _HEALTH_CAPACITY = asyncio.Semaphore(1)
+_HEALTH_TIMEOUT_SECONDS = float(
+    os.environ.get('MOCK_HEALTH_TIMEOUT_SECONDS') or 0.5)
+if _HEALTH_TIMEOUT_SECONDS <= 0:
+    raise RuntimeError('MOCK_HEALTH_TIMEOUT_SECONDS must be positive')
 _INFRA_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix='mock-infra')
 _INFRA_CAPACITY = asyncio.Semaphore(2)
 
@@ -718,8 +722,17 @@ async def ping(request: Request):
 
 @app.api_route('/ready', methods=METHODS)
 async def ready(request: Request):
-    healthy = await run_dedicated(
-        _HEALTH_EXECUTOR, _HEALTH_CAPACITY, userdb.healthy)
+    try:
+        healthy = await asyncio.wait_for(
+            run_dedicated(
+                _HEALTH_EXECUTOR, _HEALTH_CAPACITY, userdb.healthy),
+            timeout=_HEALTH_TIMEOUT_SECONDS)
+    except TimeoutError:
+        healthy = False
+        log('  !! readiness check timed out')
+    except Exception as error:
+        healthy = False
+        log('  !! readiness check failed', type(error).__name__)
     return await run_dedicated(
         _INFRA_EXECUTOR, _INFRA_CAPACITY,
         json_response, request, 200 if healthy else 503, {})

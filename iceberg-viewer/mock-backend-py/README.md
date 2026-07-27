@@ -30,6 +30,9 @@ Environment:
   strict mode; it maps to the `iceberg` user.
 - `MOCK_DELAY=<ms|cmd:ms,...>` simulates a slow catalog on data commands
   (`//sys` paths and infrastructure endpoints exempt) — see `../docs/timeouts.md`.
+- `MOCK_HEALTH_TIMEOUT_SECONDS` (default 0.5) bounds both admission to and
+  execution of the dedicated PostgreSQL readiness worker; a timeout returns
+  503 without delaying `/ping`.
 - `MOCK_CORS_ORIGINS=<origin,...>` enables credentialed browser access for an
   exact comma-separated list of `http(s)://host[:port]` origins. CORS is
   disabled by default (the normal UI server-to-backend topology does not need

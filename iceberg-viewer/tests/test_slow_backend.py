@@ -24,6 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PORT = 8032
 AUDIT_PORT = 8033
+HEALTH_PORT = 8034
 DELAY_SPEC = 'list:1200,read_table:2000,get:800'
 
 _procs = []
@@ -213,6 +214,79 @@ server.uvicorn.run(
                 self.assertEqual(result[0][0], 200)
                 self.assertGreaterEqual(result[0][2], 0.45)
                 self.assertLess(result[0][2], 1.2)
+            finally:
+                process.terminate()
+                process.wait(timeout=10)
+
+    def test_stalled_health_check_has_bounded_waiters(self):
+        wrapper = """
+import os
+import time
+from pathlib import Path
+import server
+
+def stalled_health():
+    Path(os.environ['MOCK_HEALTH_TEST_MARKER']).touch()
+    time.sleep(2)
+    return False
+
+server.userdb.healthy = stalled_health
+server._HEALTH_TIMEOUT_SECONDS = 0.3
+server.uvicorn.run(
+    server.app, host='', port=server.PORT, log_level='warning',
+    timeout_keep_alive=5)
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / 'health-entered'
+            env = {key: value for key, value in os.environ.items()
+                   if key not in (
+                       'MOCK_DELAY',
+                       'MOCK_HEALTH_TIMEOUT_SECONDS',
+                       'MOCK_PG_DSN',
+                       'MOCK_RECORD',
+                   )}
+            env['MOCK_HEALTH_TEST_MARKER'] = str(marker)
+            env['PYTHONPATH'] = os.pathsep.join(filter(None, (
+                str(ROOT / 'mock-backend-py'), env.get('PYTHONPATH', ''))))
+            process = subprocess.Popen(
+                [sys.executable, '-c', wrapper, str(HEALTH_PORT)],
+                env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                for _ in range(50):
+                    try:
+                        urllib.request.urlopen(
+                            f'http://localhost:{HEALTH_PORT}/ping', timeout=1)
+                        break
+                    except OSError:
+                        time.sleep(0.1)
+                else:
+                    self.fail('health-stall backend did not start')
+
+                count = 24
+                barrier = threading.Barrier(count + 1)
+
+                def readiness():
+                    barrier.wait(timeout=5)
+                    return timed_call(HEALTH_PORT, 'GET', '/ready')
+
+                started = time.monotonic()
+                with ThreadPoolExecutor(max_workers=count) as clients:
+                    calls = [clients.submit(readiness) for _ in range(count)]
+                    barrier.wait(timeout=5)
+                    deadline = time.monotonic() + 2
+                    while not marker.exists() and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    self.assertTrue(
+                        marker.exists(), 'health function was not entered')
+
+                    ping_started = time.monotonic()
+                    urllib.request.urlopen(
+                        f'http://localhost:{HEALTH_PORT}/ping', timeout=5)
+                    self.assertLess(time.monotonic() - ping_started, 0.7)
+
+                    results = [call.result(timeout=3) for call in calls]
+                self.assertTrue(all(result[0] == 503 for result in results))
+                self.assertLess(time.monotonic() - started, 1.2)
             finally:
                 process.terminate()
                 process.wait(timeout=10)
