@@ -315,7 +315,9 @@ class TestStrictAuth(BackendTestCase):
             self.assertIs(exists, True)
 
     def test_published_development_credentials_are_rejected(self):
-        credentials = (b'iceberg:iceberg', b'root:')
+        # The non-ASCII password must fail with the same masked 401, not a 500
+        # (a distinct status would fingerprint the published login names).
+        credentials = (b'iceberg:iceberg', b'root:', 'iceberg:пароль'.encode())
         for port in self.each():
             for raw_credentials in credentials:
                 with self.subTest(credentials=raw_credentials):

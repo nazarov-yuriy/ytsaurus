@@ -163,6 +163,11 @@ class TestPasswordStorage(unittest.TestCase):
         self.assertTrue(
             authenticated.verify('iceberg', 'strong-iceberg-secret'))
         self.assertTrue(authenticated.verify('root', 'strong-root-secret'))
+        # Non-ASCII passwords for published login names must compare False,
+        # not raise (compare_digest rejects non-ASCII str).
+        self.assertFalse(
+            authenticated.is_published_development_credential('iceberg', 'пароль'))
+        self.assertFalse(authenticated.verify('iceberg', 'пароль'))
 
     def test_ram_store_is_always_healthy(self):
         self.assertTrue(self.userdb.healthy())

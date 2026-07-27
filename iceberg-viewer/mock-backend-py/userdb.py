@@ -142,11 +142,14 @@ def _new_password(password):
 
 def is_published_development_credential(login, password):
     """Return whether this is one of the public anonymous-test credentials."""
+    # Compare bytes: compare_digest raises on non-ASCII str, and a 500 there
+    # would fingerprint which login names are on the published list.
     return (
         isinstance(login, str)
         and isinstance(password, str)
         and login in PUBLISHED_DEV_USERS
-        and secrets.compare_digest(password, PUBLISHED_DEV_USERS[login]))
+        and secrets.compare_digest(
+            password.encode(), PUBLISHED_DEV_USERS[login].encode()))
 
 
 def _is_forbidden_published_credential(login, password):
