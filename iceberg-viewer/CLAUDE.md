@@ -3,8 +3,9 @@
 Reuse ytsaurus-ui as an Apache Iceberg catalog viewer. This directory contains
 the reverse-engineered YT HTTP-proxy protocol (docs + SQLite catalog), a Python
 mock backend that serves the real UI, recorded-traffic test corpora, and
-Helm/compose deployment. `mock-backend-py/data.py` is the designated swap
-point for a real Iceberg catalog; everything else is meant to stay.
+Helm/compose deployment. `mock-backend-py/data.py` is the current fake-catalog
+seam, but connecting real Iceberg data is not a one-file swap: it also requires
+server-side authorization and a deliberate deployment security posture.
 
 ## Environment setup
 
@@ -29,11 +30,22 @@ helm lint deploy/helm/iceberg-ui-mock --set auth.allowAnonymous=true
 bash deploy/helm/iceberg-ui-mock/tests/test-auth-render.sh
 ```
 
+The direct backend process binds `127.0.0.1` and falls back to development-only
+anonymous identity when `MOCK_REQUIRE_AUTH` is unset. External binding requires
+an explicit `MOCK_BIND_HOST`; container manifests set `0.0.0.0`. The Helm chart
+does not choose anonymous posture implicitly: configure PostgreSQL or delegated
+authentication, or explicitly render with `auth.allowAnonymous=true`.
+Authenticated rendering rejects published robot/database placeholders and
+multiple RAM-backed backend replicas, while runtime stores have no default
+users. Server startup independently rejects delegated auth without strict mode
+and the published robot token in strict mode.
+
 ## Test & consistency gates (all must stay green)
 
 ```bash
 for t in test_protocol test_userdb test_cookie_model test_slow_backend \
-         test_recording_security test_golden_replay test_external_auth; do
+         test_recording_security test_golden_replay test_external_auth \
+         test_auth_configuration; do
   .venv/bin/python tests/$t.py
 done
 python3 db/sync.py check && python3 db/sync.py audit
@@ -60,12 +72,26 @@ python3 db/sync.py check && python3 db/sync.py audit
   "fixing" anything that looks wrong; cite the upstream source when mirroring.
 - `data.py` must stay deterministic (sequential ids, fixed timestamps) —
   golden replay compares bytes.
+- `check_permission*` currently always allow and ACLs are empty. This remains a
+  deployment blocker before real catalog data with differing user entitlements
+  is served; do not mistake authentication for authorization.
 - `userdb.py` has parallel PostgreSQL and in-RAM implementations of the same
   API; change both, behavior must match. PG writes use `retry=False`.
-- FastAPI route handlers are sync (`def`) on purpose — command logic blocks;
-  read request bodies from `request.state.body_buf`, never `await`.
+- Command/login FastAPI handlers are sync (`def`) because their logic blocks;
+  read request bodies from `request.state.body_buf`, never `await` there.
+  Health, discovery, and audit work use bounded dedicated executors. Preserve
+  `/ready`'s total deadline and capacity accounting so a timed-out worker
+  cannot create an unbounded queue, and keep `/ping` independent of the shared
+  sync-handler pool.
 - Audit trail: strict columns (ts/login/endpoint) + schemaless jsonb details,
-  written before the response, fail-open, capped < 1000 bytes per row.
+  written before the response and fail-open. The user-controlled payload is
+  structurally secret-redacted and capped below 1,000 bytes; writes use a
+  dedicated single-worker executor with bounded admission and completion.
+- Browser CORS is default-deny. `MOCK_CORS_ORIGINS` admits only exact HTTP(S)
+  origins; keep it empty for the normal UI reverse-proxy topology.
+- `MOCK_RECORD` is development-only and is refused with strict or delegated
+  authentication. Preserve structural secret redaction, opaque/oversized body
+  omission, mode-0600 creation, the 50 MiB file cap, and fail-open I/O.
 
 ## Pitfalls (learned the hard way)
 

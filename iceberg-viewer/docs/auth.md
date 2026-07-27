@@ -982,7 +982,9 @@ Set-Cookie: YTCypressCookie=0123456789abcdef0123456789abcdef0123456789abcdef0123
 
 Omit `Secure` when serving the UI over `http://` (or rely on
 `ytAuthAllowInsecure` to strip it). The real proxy emits no `SameSite`
-attribute; omit it when matching the real wire format. On bad credentials:
+attribute. This backend intentionally adds `SameSite=Lax` as a browser
+hardening deviation; omit it only when reproducing the upstream wire format
+itself. On bad credentials:
 
 ```http
 HTTP/1.1 401 Unauthorized

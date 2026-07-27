@@ -130,7 +130,10 @@ the stock `python:3.12-slim` image. The UI image is pulled from
 
 Authenticated chart rendering rejects the published `mock-robot-token`
 placeholder, and enabling PostgreSQL rejects the published `mock-password`
-placeholder. Supply unique credentials for both boundaries:
+placeholder. A pod-level validator also rejects that database placeholder if
+it arrives through `postgres.existingSecret`, and the backend performs the
+same check before database initialization. Supply unique credentials for both
+boundaries:
 
 ```bash
 helm upgrade --install iceberg-ui deploy/helm/iceberg-ui-mock \

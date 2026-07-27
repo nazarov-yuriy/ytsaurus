@@ -144,8 +144,9 @@ request is still served (`/ready` reports the outage). Inspect with
 - `server.py` — routing, auth (Basic `/login`, `YTCypressCookie` sessions,
   CSRF, optional strict credentials and robot token), command dispatch, error
   envelopes, v4 `{value}` wrapping, and typed annotation.
-- `data.py` — the deterministic in-RAM cluster. **Swap this file for an Apache
-  Iceberg catalog implementation; everything else stays.**
+- `data.py` — the deterministic in-RAM fake-catalog seam. A real Iceberg
+  integration also requires server-side authorization and deployment
+  hardening; it is not a one-file production swap.
 - `userdb.py` — in-RAM or PostgreSQL-backed users, password hashes, sessions,
   and the CSRF secret.
 - `webjson.py` — annotated JSON, typed annotation, and `web_json` encoders

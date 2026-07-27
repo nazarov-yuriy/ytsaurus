@@ -4,6 +4,43 @@ Review date: 2026-07-26
 
 Reviewed revision: `d82922e8a44`
 
+## Remediation status at current HEAD
+
+This document preserves the evidence and line references from the reviewed
+revision above. They are a historical snapshot, not a description of the
+current implementation. The follow-up status below was checked on 2026-07-27;
+a finding marked partial or open remains a deployment consideration.
+
+| ID | Current status | Follow-up |
+|---|---|---|
+| SEC-01 | **Fixed** | Helm now fails unless authentication is configured or `auth.allowAnonymous=true` is explicitly selected for development (`5c4cf417520`, `75c8194c50d`). |
+| SEC-02 | **Fixed** | Runtime seed users were removed; published password pairs and the robot placeholder are rejected by both deployment and direct-runtime paths (`bcee1c0a3b1`, `1087d6a2c07`). |
+| SEC-03 | **Partial** | Helm inline values and external Secrets, plus `PGPASSWORD`-based backend deployments, reject `mock-password` (`7c6404859d9`, `ba01d47a92e`), but the runtime role is still the PostgreSQL bootstrap owner and network isolation remains open. |
+| SEC-04 | **Open** | The fake catalog still intentionally grants every authenticated identity global read access. Define and enforce authorization before attaching data with differing entitlements. |
+| SEC-05 | **Fixed** | CORS is default-deny with an exact allowlist, CSRF uses a secret HMAC, and session cookies use `SameSite=Lax` (`4f9e61d3327`, `8c74b8829ad`, `a53d75dd86b`). |
+| SEC-06 | **Fixed** | Error response headers escape control characters and raw-wire regressions cover the boundary (`2113e886ad0`). |
+| SEC-07 | **Partial** | The backend emits `Secure; HttpOnly; SameSite=Lax`, but the chart does not require HTTPS and the UI can strip `Secure` for HTTP origins; service-to-service TLS is also unenforced. |
+| SEC-08 | **Partial** | FastAPI/uvicorn replaced the unbounded stdlib server; health and audit work have bounded dedicated executors and readiness has a total deadline (`1c688b40130`, `21888c0ef31`, `5d245df8a74`). Request-body, login, batch, and workload resource budgets remain open. |
+| SEC-09 | **Open** | The chart still has no NetworkPolicy separating UI, backend, PostgreSQL, and other workloads. |
+| SEC-10 | **Partial** | Sessions now expire and are password-revision-bound in both stores, but there is no logout/revoke endpoint and stored bearer values remain reusable until expiry. |
+| SEC-11 | **Fixed** | The hand-written HTTP parser was removed in favor of uvicorn (`1c688b40130`). |
+| SEC-12 | **Open** | Command-specific verb and operation policy is still not enforced. This is lower risk only while every implemented data command is read-only. |
+| SEC-13 | **Partial** | Recordings redact secrets, omit unsafe bodies, are size-bounded and forbidden with authentication; user passwords no longer enter argv (`d099f3f5771`, `d8a42d9e9d7`). External-Secret support for the robot credential and secret-derived annotations remain. |
+| SEC-14 | **Open** | The default ConfigMap-source workload still runs as root and pod hardening/service-account controls are not enforced. |
+| SEC-15 | **Partial** | Python versions are exact-pinned, but the default pod still installs them at startup without package hashes and images remain tag-based (`f54b83e7088`). |
+| SEC-16 | **Fixed** | Direct runs bind `127.0.0.1` unless explicitly overridden, container manifests opt into their required wildcard bind, and the anonymous Compose UI is loopback-only (`081a51f72ca`, `c8fa5fdef2f`). |
+
+The critical authentication and published-credential entry paths in the
+supported Helm profile are closed. The service is still not a general
+multi-tenant production profile: at minimum, resolve SEC-04, SEC-07, SEC-08,
+and SEC-09 for the intended environment, or explicitly document the accepted
+global-read and trusted network assumptions.
+
+OAuth is not enabled by this chart. If it is added, do not enable the stock
+UI callback as-is: the hardened state/cookie work currently exists only in the
+ignored standalone UI checkout and is not shipped by the parent Helm or
+Compose configuration. See [google-oauth.md](google-oauth.md).
+
 ## Scope and threat model
 
 The primary target is the chart-deployed Python backend, its PostgreSQL
@@ -20,11 +57,11 @@ The review assumes:
   confidentiality matters; and
 - an attacker does not start with Kubernetes administrator or host access.
 
-The current chart describes itself as a development mock. That explains some
-of the choices below, but it also means the current chart is not a safe
-internal deployment profile.
+The chart at the reviewed revision described itself as a development mock.
+That explained some of the choices below, but also meant that revision was not
+a safe internal deployment profile.
 
-## Overall result
+## Overall result at the reviewed revision
 
 **Do not expose the current deployment to internal users yet.** Authentication
 is disabled by default. Enabling the supplied authenticated mode does not

@@ -13,7 +13,7 @@ Which doc covers what, and which doc mentions which. Regenerate with `python3 db
 
 ### [docs/auth.md](../docs/auth.md)
 *YTsaurus UI ↔ backend authentication, at wire level*
-- mentioned by: [README.md](../README.md), [deploy/README.md](../deploy/README.md), [docs/google-oauth.md](../docs/google-oauth.md), [docs/iceberg-considerations.md](../docs/iceberg-considerations.md), [mock-backend-py/README.md](../mock-backend-py/README.md)
+- mentioned by: [README.md](../README.md), [deploy/README.md](../deploy/README.md), [docs/google-oauth.md](../docs/google-oauth.md), [docs/iceberg-considerations.md](../docs/iceberg-considerations.md), [docs/security-review.md](../docs/security-review.md), [mock-backend-py/README.md](../mock-backend-py/README.md)
 
 ### [docs/table-viewer.md](../docs/table-viewer.md)
 *YTsaurus UI ↔ cluster wire protocol: Navigation + static Table viewer*
@@ -51,7 +51,7 @@ Which doc covers what, and which doc mentions which. Regenerate with `python3 db
 
 ### [docs/security-review.md](../docs/security-review.md)
 *Backend security review*
-- mentions: [README.md](../README.md), [deploy/README.md](../deploy/README.md)
+- mentions: [README.md](../README.md), [deploy/README.md](../deploy/README.md), [docs/auth.md](../docs/auth.md), [docs/google-oauth.md](../docs/google-oauth.md)
 
 ### [docs/proxy-test-coverage.md](../docs/proxy-test-coverage.md)
 *YTsaurus http-proxy test suites vs the mock backend*
@@ -96,3 +96,4 @@ Which doc covers what, and which doc mentions which. Regenerate with `python3 db
 ### [docs/google-oauth.md](../docs/google-oauth.md)
 *Google OAuth for the Iceberg viewer — design notes*
 - mentions: [docs/auth.md](../docs/auth.md)
+- mentioned by: [docs/security-review.md](../docs/security-review.md)
