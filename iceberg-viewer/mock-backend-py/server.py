@@ -15,8 +15,10 @@ import os
 import re
 import secrets
 import sys
+import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -39,6 +41,10 @@ ROBOT_TOKEN = os.environ.get('MOCK_ROBOT_TOKEN', '')
 # e.g. http://proxy.yt.svc:80 — see docs/auth.md "External authentication".
 UPSTREAM = os.environ.get('MOCK_YT_UPSTREAM', '').rstrip('/')
 UPSTREAM_TIMEOUT = float(os.environ.get('MOCK_YT_UPSTREAM_TIMEOUT') or 5)
+if RECORD_PATH and (REQUIRE_AUTH or UPSTREAM):
+    raise RuntimeError(
+        'MOCK_RECORD is a development-only fixture and cannot be used with '
+        'authenticated or delegated authentication')
 
 # MOCK_DELAY simulates a slow catalog: "1500" delays every data command by 1.5s,
 # "read_table:5000,list:2000" per command. //sys paths are never delayed — the
@@ -406,6 +412,29 @@ CORS_EXPOSE = ('Content-Type, X-YT-Error, X-YT-Response-Code, X-YT-Response-Mess
 RECORDED_HEADERS = ('authorization', 'cookie', 'x-csrf-token', 'content-type', 'accept',
                     'x-yt-correlation-id', 'x-yt-parameters', 'x-yt-input-format',
                     'x-yt-output-format', 'x-yt-header-format', 'x-yt-suppress-redirect')
+RECORD_FILE_LIMIT_BYTES = 50 * 1024 * 1024
+RECORD_BODY_LIMIT_BYTES = 64 * 1024
+RECORD_REDACTED = '<redacted>'
+_RECORD_SECRET_KEYS = frozenset({
+    'access_token', 'api_key', 'authorization', 'authorization_code',
+    'client_secret', 'cookie', 'credential', 'csrf_token', 'id_token',
+    'password', 'passwd', 'private_key', 'proxy_authorization',
+    'refresh_token', 'robot_token', 'secret', 'session', 'session_token',
+    'set_cookie', 'x_csrf_token', 'ytcypresscookie',
+})
+_RECORD_SECRET_SUFFIXES = (
+    '_credential', '_credentials', '_password', '_passwd', '_secret', '_token')
+_REDACTED_RECORD_HEADERS = frozenset({
+    'authorization', 'cookie', 'x-csrf-token', 'x-yt-parameters'})
+_AUTHORIZATION_VALUE = re.compile(
+    r'(?i)\b(Basic|Bearer|OAuth)(\s+)[A-Za-z0-9._~+/=-]+')
+_INLINE_SECRET_VALUE = re.compile(
+    r'(?i)\b(access_token|api_key|authorization_code|client_secret|csrf_token|'
+    r'id_token|password|passwd|refresh_token|robot_token|session_token)'
+    r'(\s*[=:]\s*)([^&\s,;]+)')
+_RECORD_LOCK = threading.Lock()
+_record_limit_reported = False
+_record_error_reported = False
 # Infrastructure endpoints (health probes, discovery) are not user actions.
 AUDIT_EXEMPT = ('/ping', '/ready', '/version', '/service/version', '/api', '/api/', '/hosts')
 
@@ -473,27 +502,124 @@ def cors_headers(request):
             'Access-Control-Max-Age': '3600'}
 
 
+def _record_key_is_sensitive(key):
+    words = re.sub(r'(?<=[a-z0-9])(?=[A-Z])', '_', str(key))
+    normalized = re.sub(r'[^a-z0-9]+', '_', words.lower()).strip('_')
+    return (
+        normalized in _RECORD_SECRET_KEYS
+        or normalized.endswith(_RECORD_SECRET_SUFFIXES))
+
+
+def _redact_record_text(value):
+    value = _AUTHORIZATION_VALUE.sub(
+        lambda match: f'{match.group(1)}{match.group(2)}{RECORD_REDACTED}',
+        value)
+    return _INLINE_SECRET_VALUE.sub(
+        lambda match: (
+            f'{match.group(1)}{match.group(2)}{RECORD_REDACTED}'),
+        value)
+
+
+def _redact_record_value(value, depth=0):
+    if depth >= 12 and isinstance(value, (dict, list)):
+        return '<omitted: nesting too deep>'
+    if isinstance(value, dict):
+        return {
+            str(key): (
+                RECORD_REDACTED if _record_key_is_sensitive(key)
+                else _redact_record_value(child, depth + 1))
+            for key, child in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_record_value(child, depth + 1) for child in value]
+    if isinstance(value, str):
+        return _redact_record_text(value)
+    return value
+
+
+def _record_body(buf):
+    if not buf:
+        return None
+    if len(buf) > RECORD_BODY_LIMIT_BYTES:
+        return {
+            '_recording_omitted': 'body exceeds recording limit',
+            'byte_length': len(buf),
+        }
+    try:
+        value = json.loads(buf)
+    except (TypeError, ValueError):
+        return {
+            '_recording_omitted': 'non-JSON body',
+            'byte_length': len(buf),
+        }
+    return _redact_record_value(value)
+
+
+def _record_query(raw_query):
+    if not raw_query:
+        return ''
+    if len(raw_query.encode('utf-8', 'replace')) > RECORD_BODY_LIMIT_BYTES:
+        return '?_recording_omitted=query+exceeds+recording+limit'
+    try:
+        fields = urllib.parse.parse_qsl(
+            raw_query, keep_blank_values=True, max_num_fields=1000)
+    except ValueError:
+        return '?_recording_omitted=too+many+query+fields'
+    safe_fields = [
+        (key, RECORD_REDACTED if (
+            _record_key_is_sensitive(key) or key.lower() in ('code', 'state'))
+         else _redact_record_text(value))
+        for key, value in fields
+    ]
+    return '?' + urllib.parse.urlencode(safe_fields)
+
+
+def _record_headers(headers):
+    result = {}
+    for header in RECORDED_HEADERS:
+        value = headers.get(header)
+        if not value:
+            continue
+        result[header] = (
+            RECORD_REDACTED if header in _REDACTED_RECORD_HEADERS
+            else _redact_record_text(value))
+    return result
+
+
 def record(request, status, body_bytes):
+    global _record_error_reported, _record_limit_reported
     if not RECORD_PATH:
         return
 
-    def parse(buf):
-        if not buf:
-            return None
-        try:
-            return json.loads(buf)
-        except ValueError:
-            return buf.decode('utf-8', 'replace')[:4000]
-
-    with open(RECORD_PATH, 'a') as f:
-        f.write(json.dumps({
-            'ts': datetime.now(timezone.utc).isoformat(),
-            'method': request.method, 'path': request.url.path,
-            'query': f'?{request.url.query}' if request.url.query else '',
-            'request_headers': {h: request.headers[h] for h in RECORDED_HEADERS
-                                if request.headers.get(h)},
-            'request_body': parse(request.state.body_buf), 'status': status,
-            'response_body': parse(body_bytes)}, ensure_ascii=False) + '\n')
+    entry = {
+        'ts': datetime.now(timezone.utc).isoformat(),
+        'method': request.method,
+        'path': request.url.path,
+        'query': _record_query(request.url.query),
+        'request_headers': _record_headers(request.headers),
+        'request_body': _record_body(request.state.body_buf),
+        'status': status,
+        'response_body': _record_body(body_bytes),
+    }
+    encoded = (
+        json.dumps(entry, ensure_ascii=False, separators=(',', ':')) + '\n'
+    ).encode('utf-8')
+    try:
+        with _RECORD_LOCK:
+            descriptor = os.open(
+                RECORD_PATH, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            with os.fdopen(descriptor, 'ab') as output:
+                output.seek(0, os.SEEK_END)
+                if output.tell() + len(encoded) > RECORD_FILE_LIMIT_BYTES:
+                    if not _record_limit_reported:
+                        log('  !! recording size limit reached; further entries omitted')
+                        _record_limit_reported = True
+                    return
+                output.write(encoded)
+    except OSError as error:
+        if not _record_error_reported:
+            log('  !! recording write failed', type(error).__name__)
+            _record_error_reported = True
 
 
 def respond(request, status, body_bytes, headers=None, media_type=None):
@@ -537,8 +663,8 @@ async def request_pipeline(request, call_next):
             _INFRA_EXECUTOR, _INFRA_CAPACITY, respond, request, 200, b'')
     request.state.body_buf = await request.body()  # uvicorn decodes chunked itself
     log(request.method,
-        request.url.path + (f'?{request.url.query}' if request.url.query else ''),
-        f'body={request.state.body_buf[:300]}' if request.state.body_buf else '')
+        request.url.path + ('?<omitted>' if request.url.query else ''),
+        f'body_bytes={len(request.state.body_buf)}')
     try:
         response = await call_next(request)
     except Exception as e:

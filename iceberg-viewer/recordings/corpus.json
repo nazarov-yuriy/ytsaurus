@@ -42,7 +42,7 @@
     "login": "iceberg",
     "realm": "mock",
     "real_login": "iceberg",
-    "csrf_token": "csrf-iceberg"
+    "csrf_token": "<redacted>"
    }
   }
  },
@@ -1388,7 +1388,7 @@
    "path": "/login",
    "query": "",
    "request_headers": {
-    "authorization": "Basic aWNlYmVyZzppY2ViZXJn",
+    "authorization": "<redacted>",
     "content-type": "application/x-www-form-urlencoded",
     "accept": "application/json, text/plain, */*"
    },
@@ -1577,7 +1577,7 @@
      "login": "iceberg",
      "realm": "mock",
      "real_login": "iceberg",
-     "csrf_token": "csrf-iceberg"
+     "csrf_token": "<redacted>"
     },
     "version": "mock-proxy-1.0.0"
    }
@@ -2689,7 +2689,7 @@
    "query": "",
    "request_body": {
     "username": "iceberg",
-    "password": "iceberg"
+    "password": "<redacted>"
    },
    "status": 200,
    "response_body": null

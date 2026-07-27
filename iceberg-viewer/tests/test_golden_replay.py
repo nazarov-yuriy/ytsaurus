@@ -15,6 +15,7 @@ Nondeterministic values are normalized before comparison: CSRF tokens (random
 secret + timestamp), the /hosts self-address, and /login (empty body, random
 Set-Cookie — status/headers-only comparison).
 """
+import base64
 import json
 import os
 import re
@@ -33,6 +34,9 @@ PORT = 8061
 UPDATE = bool(os.environ.get('GOLDEN_UPDATE'))
 
 SKIP_BODY_PATHS = {'/login'}  # empty body; Set-Cookie is random
+REDACTED = '<redacted>'
+DEV_LOGIN_AUTHORIZATION = (
+    'Basic ' + base64.b64encode(b'iceberg:iceberg').decode())
 
 _proc = None
 
@@ -68,6 +72,10 @@ def send(entry):
     body = entry.get('request_body')
     data = None
     headers = dict(entry.get('request_headers') or {})
+    # The checked-in corpus contains no credential material. Replay supplies
+    # the explicit anonymous-test fixture only at the point of use.
+    if entry['path'] == '/login' and headers.get('authorization') == REDACTED:
+        headers['authorization'] = DEV_LOGIN_AUTHORIZATION
     if body is not None:
         data = (body if isinstance(body, str) else json.dumps(body)).encode()
         headers.setdefault('Content-Type', 'application/json')

@@ -33,7 +33,9 @@ bash deploy/helm/iceberg-ui-mock/tests/test-auth-render.sh
 
 ```bash
 for t in test_protocol test_userdb test_cookie_model test_slow_backend \
-         test_golden_replay test_external_auth; do .venv/bin/python tests/$t.py; done
+         test_recording_security test_golden_replay test_external_auth; do
+  .venv/bin/python tests/$t.py
+done
 python3 db/sync.py check && python3 db/sync.py audit
 ```
 

@@ -4,8 +4,13 @@ Exact request/response traffic captured while driving ytsaurus-ui through every
 interaction an Iceberg viewer needs, at both capture points:
 
 - `proxy-traffic.jsonl` — UI-server → proxy requests, recorded by the mock backend
-  (start it with `MOCK_RECORD=<path> python3 ../mock-backend-py/server.py 8000`). Full
-  request headers/bodies and response status/bodies.
+  (start an anonymous development backend with
+  `MOCK_RECORD=<path> python3 ../mock-backend-py/server.py 8000`). It records
+  safe header shapes, JSON request/response bodies, and status values.
+  Credential headers, sensitive query parameters, and credential-shaped JSON
+  fields are replaced with `<redacted>`; non-JSON or oversized bodies are
+  represented only by metadata. Authenticated/delegated startup rejects
+  recording mode, and each recording file has a 50 MiB hard limit.
 - `browser-traffic.jsonl` — browser → UI-server `/api/*` requests, extracted from a
   Playwright HAR (the raw 125MB HAR is deleted after extraction).
 - `extras.jsonl` — endpoints not reachable by clicking (login, logout, cluster
@@ -36,7 +41,9 @@ writes:
   enforced by `python3 ../tests/test_golden_replay.py`: it replays all of
   `proxy-traffic.jsonl` against the backend and diffs status, `X-YT-Response-Code`,
   `Content-Type` and body (CSRF tokens, the /hosts self-address and the random
-  /login Set-Cookie are normalized). Run it after backend changes and before
+  /login Set-Cookie are normalized). The checked-in `/login` request contains
+  only a redaction marker; the replay test supplies its explicit anonymous-test
+  credential in memory. Run it after backend changes and before
   swapping `data.py` for a real Iceberg catalog. After deliberate behavior
   changes — or after re-recording the corpus for a new UI version — regenerate
   with `GOLDEN_UPDATE=1 python3 ../tests/test_golden_replay.py` and review the

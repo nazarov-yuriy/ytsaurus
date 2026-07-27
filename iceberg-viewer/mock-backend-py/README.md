@@ -15,7 +15,11 @@ python3 server.py 8000
 
 Environment:
 
-- `MOCK_RECORD=<path>` appends request/response pairs as JSONL.
+- `MOCK_RECORD=<path>` appends sanitized request/response pairs as JSONL for
+  anonymous development sessions only. Startup rejects it in strict or
+  delegated-authentication mode. Credential-shaped headers, query parameters,
+  and nested JSON fields are redacted; non-JSON bodies are omitted, individual
+  bodies over 64 KiB are omitted, and the file stops growing at 50 MiB.
 - `MOCK_PG_DSN=<libpq conninfo>` switches user/session storage to PostgreSQL.
 - `MOCK_REQUIRE_AUTH=1` rejects missing/expired cookies and unknown OAuth
   tokens instead of using the anonymous `iceberg` fallback.
@@ -103,8 +107,10 @@ The compact JSON representation of `login`, `endpoint`, and `details` is
 strictly smaller than 1,000 bytes per row. Oversized text is shortened, details
 keep the high-signal fields, and large batches retain only the leading
 command/path summaries plus a `requests_omitted` count; `_audit_truncated`
-marks a lossy record. Full request/response bodies, headers, and credentials
-are never retained.
+marks a lossy or redacted record. Nested fields whose names identify passwords,
+authorization, cookies, sessions, secrets, credentials, or tokens are replaced
+with `<redacted>` before either RAM or PostgreSQL persistence. Full
+request/response bodies and headers are never retained by the audit log.
 
 Storage follows `userdb.py`: the `audit_log` table in PostgreSQL (indexed by
 `ts`), or a bounded in-RAM deque (last 10,000 entries) without `MOCK_PG_DSN`.

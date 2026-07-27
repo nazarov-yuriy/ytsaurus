@@ -52,6 +52,9 @@ mock backend, as a first step toward serving the UI from an Apache Iceberg catal
   YTsaurus (`MOCK_YT_UPSTREAM`): external users provisioned on first verified
   login, explicitly provisioned local users never leaving the local store
   (docs/auth.md "External authentication").
+- `tests/test_recording_security.py` — proves development traffic recordings
+  redact credentials, fail open on filesystem errors, stay size-bounded, and
+  cannot be enabled alongside strict or delegated authentication.
 - `tests/test_golden_replay.py` — replays the recorded UI corpus
   (`recordings/proxy-traffic.jsonl`) against the backend and diffs every response
   with `recordings/golden.jsonl` (the wire contract with the UI; regenerate with
