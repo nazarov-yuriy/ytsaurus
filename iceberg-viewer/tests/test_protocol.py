@@ -886,14 +886,16 @@ class TestParameterSources(BackendTestCase):
                 'path': f'//sys/logs/audit_log[#{max(0, count - 50)}:#{count}]',
                 'output_format': {'$value': 'web_json',
                                   '$attributes': {'max_selected_column_count': 50}}})
-            self.assertEqual(body['all_column_names'], ['endpoint', 'login', 'ts'])
+            self.assertEqual(body['all_column_names'],
+                             ['endpoint', 'http_code', 'login', 'ts'])
             self.assertGreater(len(body['rows']), 0)
             # Other suites share this backend, so search instead of relying
             # on row order.
             row = next(r for r in reversed(body['rows'])
                        if r['endpoint']['$value'] == '/api/v3/get')
-            self.assertEqual(set(row), {'ts', 'login', 'endpoint'})
+            self.assertEqual(set(row), {'ts', 'login', 'endpoint', 'http_code'})
             self.assertEqual(row['login']['$value'], 'iceberg')
+            self.assertEqual(row['http_code'], {'$type': 'int64', '$value': '200'})
             self.assertRegex(row['ts']['$value'], r'^\d{4}-\d{2}-\d{2}T.*Z$')
 
             _, count_before, _ = call(port, 'POST', '/api/v3/get',

@@ -83,7 +83,7 @@ python3 db/sync.py check && python3 db/sync.py audit
   `/ready`'s total deadline and capacity accounting so a timed-out worker
   cannot create an unbounded queue, and keep `/ping` independent of the shared
   sync-handler pool.
-- Audit trail: strict columns (ts/login/endpoint) + schemaless jsonb details,
+- Audit trail: strict columns (ts/login/endpoint/http_code) + schemaless jsonb details,
   written before the response and fail-open. The user-controlled payload is
   structurally secret-redacted and capped below 1,000 bytes; writes use a
   dedicated single-worker executor with bounded admission and completion.

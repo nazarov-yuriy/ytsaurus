@@ -252,18 +252,22 @@ class TestPasswordStorage(unittest.TestCase):
         # Strict fields: timestamp, user, endpoint. Everything else is an
         # arbitrary details payload whose shape is expected to change.
         self.userdb.audit('alice', '/api/v4/get',
-                          {'command': 'get', 'path': '//home', 'status': 200})
-        self.userdb.audit(None, '/login', {'outcome': 'rejected', 'novel_field': [1, {'x': 2}]})
+                          {'command': 'get', 'path': '//home'}, http_code=200)
+        self.userdb.audit(None, '/login', {'outcome': 'rejected', 'novel_field': [1, {'x': 2}]},
+                          http_code=401)
         first, second = self.userdb.audit_tail(2)
 
-        ts, login, endpoint, details = first
+        ts, login, endpoint, http_code, details = first
         self.assertIsNotNone(ts.tzinfo)
-        self.assertEqual((login, endpoint), ('alice', '/api/v4/get'))
+        self.assertEqual((login, endpoint, http_code), ('alice', '/api/v4/get', 200))
         self.assertEqual(details['path'], '//home')
-        ts, login, endpoint, details = second
+        ts, login, endpoint, http_code, details = second
         self.assertIsNone(login)  # unauthenticated actions carry no user
-        self.assertEqual(endpoint, '/login')
+        self.assertEqual((endpoint, http_code), ('/login', 401))
         self.assertEqual(details['novel_field'], [1, {'x': 2}])
+        # Out-of-range or non-int codes store as NULL rather than raising.
+        self.userdb.audit('alice', '/x', {}, http_code='500')
+        self.assertIsNone(self.userdb.audit_tail(1)[0][3])
 
     def test_audit_payload_is_bounded_and_batch_requests_are_summarised(self):
         requests = [
@@ -278,7 +282,7 @@ class TestPasswordStorage(unittest.TestCase):
             '/api/v3/execute_batch/' + ('e' * 10_000),
             {'method': 'POST', 'status': 200, 'command': 'execute_batch',
              'requests': requests, 'unbounded': 'x' * 100_000})
-        _, login, endpoint, details = self.userdb.audit_tail(1)[0]
+        _, login, endpoint, _, details = self.userdb.audit_tail(1)[0]
 
         payload = {'login': login, 'endpoint': endpoint, 'details': details}
         self.assertLess(
@@ -304,7 +308,7 @@ class TestPasswordStorage(unittest.TestCase):
         details = {'path': '//tmp/\x00object', 'values': ['before']}
         self.userdb.audit('user\x00name', '/api/\x00get', details)
         details['values'][0] = 'after'
-        _, login, endpoint, stored = self.userdb.audit_tail(1)[0]
+        _, login, endpoint, _, stored = self.userdb.audit_tail(1)[0]
 
         self.assertNotIn('\x00', login + endpoint + stored['path'])
         self.assertEqual(stored['values'], ['before'])
@@ -358,7 +362,7 @@ class TestPasswordStorage(unittest.TestCase):
 
         self.userdb.audit('alice', '/api/v4/get', details)
         details['headers']['Authorization'] = 'changed-after-audit'
-        _, _, _, stored = self.userdb.audit_tail(1)[0]
+        _, _, _, _, stored = self.userdb.audit_tail(1)[0]
         encoded = self.userdb._compact_json(stored)
 
         for secret_value in [*secret_values, 'changed-after-audit']:
@@ -396,7 +400,7 @@ class TestPasswordStorage(unittest.TestCase):
         self.userdb.audit('alice', '/api/v4/get', {
             'method': 'POST', 'deep': deep, 'wide': wide,
             'huge_text': 'x' * 1_000_000})
-        _, _, _, stored = self.userdb.audit_tail(1)[0]
+        _, _, _, _, stored = self.userdb.audit_tail(1)[0]
 
         self.assertTrue(stored['_audit_truncated'])
         self.assertEqual(
@@ -479,7 +483,7 @@ class TestPostgresRecovery(unittest.TestCase):
         _, params = next(
             execution for execution in connections[0].executions
             if execution[0].startswith('INSERT INTO audit_log'))
-        login, endpoint, raw_details = params
+        login, endpoint, _http_code, raw_details = params
         details = json.loads(raw_details)
 
         self.assertNotIn('postgres-access-secret', raw_details)

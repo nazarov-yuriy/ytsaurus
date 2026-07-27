@@ -199,13 +199,15 @@ AUDIT_LOG_SCHEMA = [
     {'name': 'ts', 'type': 'string', 'type_v3': {'type_name': 'optional', 'item': 'string'}},
     {'name': 'login', 'type': 'string', 'type_v3': {'type_name': 'optional', 'item': 'string'}},
     {'name': 'endpoint', 'type': 'string', 'type_v3': {'type_name': 'optional', 'item': 'string'}},
+    {'name': 'http_code', 'type': 'int64', 'type_v3': {'type_name': 'optional', 'item': 'int64'}},
 ]
 
 
 def _audit_log_rows():
     import userdb  # deferred: keeps data.py importable without the store loaded
-    return [{'ts': _js_iso(ts.astimezone(timezone.utc)), 'login': login, 'endpoint': endpoint}
-            for ts, login, endpoint in userdb.audit_rows()]
+    return [{'ts': _js_iso(ts.astimezone(timezone.utc)), 'login': login,
+             'endpoint': endpoint, 'http_code': http_code}
+            for ts, login, endpoint, http_code in userdb.audit_rows()]
 
 
 _insert('sys/logs', make_map_node())

@@ -151,7 +151,7 @@ the password in the command line, a Helm value, or shell history.
 enables the anonymous-test `MOCK_ENABLE_DEV_SEED_USERS` fixture.
 
 The same database also receives the backend's audit trail (`audit_log` table:
-strict `ts`/`login`/`endpoint` columns plus a schemaless `details` jsonb — see
+strict `ts`/`login`/`endpoint`/`http_code` columns plus a schemaless `details` jsonb — see
 mock-backend-py/README.md "Audit log"); size it and set a retention policy
 before exposing an installation to real traffic.
 

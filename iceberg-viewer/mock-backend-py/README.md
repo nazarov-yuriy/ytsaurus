@@ -117,11 +117,12 @@ endpoints (`/ping`, `/ready`, `/version`, `/hosts*`, `/api` discovery, CORS
 preflights) are exempt.
 
 The schema separates what is stable from what is not: strict columns for the
-essentials — `ts timestamptz`, `login` (NULL when unauthenticated), `endpoint`
+essentials — `ts timestamptz`, `login` (NULL when unauthenticated),
+`endpoint`, `http_code`
 — and a schemaless `details jsonb` for the payload, whose shape is expected to
-change freely (currently `method`, `status`, and per-endpoint extras such as
-`command`, `path`, `requests`, `outcome`, `origin`, `error_code`). Adding a
-field is just adding a dict key at the call site; no migration.
+change freely (currently `method` and per-endpoint extras such as `command`,
+`path`, `requests`, `outcome`, `origin`, `error_code`). Adding a field is just
+adding a dict key at the call site; no migration.
 
 The compact JSON representation of `login`, `endpoint`, and `details` is
 strictly smaller than 1,000 bytes per row. Oversized text is shortened, details
@@ -134,7 +135,8 @@ request/response bodies and headers are never retained by the audit log.
 
 The trail is browsable in the UI's own table viewer at `//sys/logs/audit_log`
 (a live table: rows and `@row_count` are computed per read). It projects the
-strict columns only — `ts`, `login`, `endpoint` — and the schemaless `details`
+strict columns only — `ts`, `login`, `endpoint`, `http_code` — and the
+schemaless `details`
 payload is never selected at any layer, so its evolving contents cannot leak
 through the catalog API. Note the usual caveat: authorization is out of scope,
 so any authenticated caller (or anyone, in anonymous development mode) can

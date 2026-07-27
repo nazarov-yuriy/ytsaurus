@@ -721,8 +721,8 @@ async def request_pipeline(request, call_next):
         try:  # audit is fail-open: a storage outage must not break serving
             await run_audit(
                 request.state.audit_user, path,
-                {'method': request.method, 'status': response.status_code,
-                 **request.state.audit_extra})
+                {'method': request.method, **request.state.audit_extra},
+                response.status_code)
         except Exception as e:
             log('  !! audit write failed', repr(e))
     return response

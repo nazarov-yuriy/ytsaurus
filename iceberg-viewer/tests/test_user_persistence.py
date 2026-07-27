@@ -261,7 +261,7 @@ class TestUserPersistence(unittest.TestCase):
 
     def test_9_actions_are_audited_with_strict_fields_and_jsonb_details(self):
         # mock-backend-py/README.md "Audit log": strict columns for
-        # ts/login/endpoint, everything else in a schemaless jsonb payload.
+        # ts/login/endpoint/http_code, everything else in schemaless jsonb.
         _, cookie = self.login(LOCAL_USER, LOCAL_PASSWORD)
         self.login(LOCAL_USER, 'wrong-password-audit')
         call('GET', '/auth/whoami', {'Cookie': cookie})
@@ -274,35 +274,36 @@ class TestUserPersistence(unittest.TestCase):
 
         with psycopg.connect(type(self).dsn) as conn:
             rows = conn.execute(
-                'SELECT ts, login, endpoint, details FROM audit_log ORDER BY id').fetchall()
+                'SELECT ts, login, endpoint, http_code, details'
+                ' FROM audit_log ORDER BY id').fetchall()
 
         def last(endpoint):
             return next(r for r in reversed(rows) if r[2] == endpoint)
 
         self.assertNotIn('/ping', [r[2] for r in rows])  # probes are exempt
 
-        ts, login, _, details = last('/api/v4/get')
+        ts, login, _, http_code, details = last('/api/v4/get')
         self.assertIsNotNone(ts.tzinfo)
         self.assertEqual(login, 'iceberg')
-        self.assertEqual((details['method'], details['status']), ('POST', 200))
+        self.assertEqual((details['method'], http_code), ('POST', 200))
         self.assertEqual((details['command'], details['path']),
                          ('get', '//home/iceberg/warehouse'))
 
-        _, _, _, details = last('/api/v3/execute_batch')
+        _, _, _, _, details = last('/api/v3/execute_batch')
         self.assertEqual(details['requests'], [
             {'command': 'get', 'path': '//home'},
             {'command': 'exists', 'path': '//tmp'}])
 
-        _, login, _, details = last('/login')  # the failed attempt was last
+        _, login, _, http_code, details = last('/login')  # the failed attempt was last
         self.assertEqual(login, LOCAL_USER)
-        self.assertEqual((details['outcome'], details['status']), ('rejected', 401))
-        success = next(r[3] for r in reversed(rows)
-                       if r[2] == '/login' and r[3].get('outcome') == 'success')
+        self.assertEqual((details['outcome'], http_code), ('rejected', 401))
+        success = next(r[4] for r in reversed(rows)
+                       if r[2] == '/login' and r[4].get('outcome') == 'success')
         self.assertEqual(success['origin'], 'local')
 
         self.assertEqual(last('/auth/whoami')[1], LOCAL_USER)
         # Credentials must never reach the audit trail.
-        self.assertNotIn('wrong-password-audit', json.dumps([r[3] for r in rows]))
+        self.assertNotIn('wrong-password-audit', json.dumps([r[4] for r in rows]))
 
     def test_9b_unexpected_calls_are_audited_too(self):
         # Drift detection depends on this: a UI (or anything else) hitting a
@@ -315,21 +316,22 @@ class TestUserPersistence(unittest.TestCase):
 
         with psycopg.connect(type(self).dsn) as conn:
             rows = conn.execute(
-                'SELECT login, endpoint, details FROM audit_log ORDER BY id').fetchall()
+                'SELECT login, endpoint, http_code, details'
+                ' FROM audit_log ORDER BY id').fetchall()
 
         def last(endpoint):
             return next(r for r in reversed(rows) if r[1] == endpoint)
 
-        login, _, details = last('/api/v4/frobnicate_table')  # unknown command
+        login, _, http_code, details = last('/api/v4/frobnicate_table')  # unknown command
         self.assertEqual(login, 'iceberg')
-        self.assertEqual((details['status'], details['error_code'], details['command']),
+        self.assertEqual((http_code, details['error_code'], details['command']),
                          (404, 1, 'frobnicate_table'))
 
-        login, _, details = last('/internal/discover_versions/v2')  # unknown route
+        login, _, http_code, details = last('/internal/discover_versions/v2')  # unknown route
         self.assertEqual(login, 'iceberg')
-        self.assertEqual((details['status'], details['error_code']), (404, 1))
+        self.assertEqual((http_code, details['error_code']), (404, 1))
 
-        _, _, details = last('/api/v3/execute_batch')  # unknown batch item
+        _, _, _, details = last('/api/v3/execute_batch')  # unknown batch item
         self.assertEqual(details['requests'],
                          [{'command': 'mystery_cmd', 'path': '//x'}])
 
@@ -343,11 +345,12 @@ class TestUserPersistence(unittest.TestCase):
             'output_format': {'$value': 'web_json',
                               '$attributes': {'max_selected_column_count': 50}}})
         self.assertEqual(status, 200)
-        self.assertEqual(body['all_column_names'], ['endpoint', 'login', 'ts'])
+        self.assertEqual(body['all_column_names'],
+                         ['endpoint', 'http_code', 'login', 'ts'])
         self.assertGreater(len(body['rows']), 0)
         self.assertNotIn('details', json.dumps(body))
         row = body['rows'][0]
-        self.assertEqual(set(row), {'ts', 'login', 'endpoint'})
+        self.assertEqual(set(row), {'ts', 'login', 'endpoint', 'http_code'})
 
     def test_7_database_connection_recovers_after_termination(self):
         _, cookie = self.login(LOCAL_USER, LOCAL_PASSWORD)

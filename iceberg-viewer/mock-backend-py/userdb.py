@@ -106,11 +106,13 @@ CREATE TABLE IF NOT EXISTS sessions (
 -- Strict columns only for the essentials; everything with a changing shape
 -- goes into the schemaless details. login is NULL for unauthenticated requests.
 CREATE TABLE IF NOT EXISTS audit_log (
-    id       bigserial PRIMARY KEY,
-    ts       timestamptz NOT NULL DEFAULT now(),
-    login    text,
-    endpoint text NOT NULL,
-    details  jsonb NOT NULL DEFAULT '{}');
+    id        bigserial PRIMARY KEY,
+    ts        timestamptz NOT NULL DEFAULT now(),
+    login     text,
+    endpoint  text NOT NULL,
+    http_code integer,
+    details   jsonb NOT NULL DEFAULT '{}');
+ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS http_code integer;
 CREATE INDEX IF NOT EXISTS audit_log_ts ON audit_log (ts);
 """
 
@@ -337,6 +339,13 @@ def _bounded_audit_details(details):
     return result
 
 
+def _sanitize_http_code(http_code):
+    if isinstance(http_code, int) and not isinstance(http_code, bool) \
+            and 100 <= http_code <= 599:
+        return http_code
+    return None
+
+
 def _sanitize_audit(login, endpoint, details):
     safe_login = (
         None if login is None
@@ -510,20 +519,22 @@ if DSN:
         return [login if origin == 'local' else f'{login} ({origin})'
                 for login, origin in _query('SELECT login, origin FROM users ORDER BY login')]
 
-    def audit(login, endpoint, details):
+    def audit(login, endpoint, details, http_code=None):
         login, endpoint, details = _sanitize_audit(login, endpoint, details)
-        _query('INSERT INTO audit_log (login, endpoint, details)'
-               ' VALUES (%s, %s, %s::jsonb) RETURNING id',
-               (login, endpoint, _compact_json(details)), retry=False)
+        _query('INSERT INTO audit_log (login, endpoint, http_code, details)'
+               ' VALUES (%s, %s, %s, %s::jsonb) RETURNING id',
+               (login, endpoint, _sanitize_http_code(http_code),
+                _compact_json(details)), retry=False)
 
     def audit_tail(count):
-        rows = _query('SELECT ts, login, endpoint, details FROM audit_log'
-                      ' ORDER BY id DESC LIMIT %s', (count,))
+        rows = _query('SELECT ts, login, endpoint, http_code, details'
+                      ' FROM audit_log ORDER BY id DESC LIMIT %s', (count,))
         return rows[::-1]
 
     def audit_rows():
         """Non-sensitive columns only — feeds the //sys/logs/audit_log table."""
-        return _query('SELECT ts, login, endpoint FROM audit_log ORDER BY id')
+        return _query(
+            'SELECT ts, login, endpoint, http_code FROM audit_log ORDER BY id')
 
 else:  # in-RAM fallback: same behavior, nothing persisted
     _users = {}
@@ -636,10 +647,11 @@ else:  # in-RAM fallback: same behavior, nothing persisted
 
     _audit = collections.deque(maxlen=10_000)
 
-    def audit(login, endpoint, details):
+    def audit(login, endpoint, details, http_code=None):
         login, endpoint, details = _sanitize_audit(login, endpoint, details)
         with _lock:
-            _audit.append((datetime.now(timezone.utc), login, endpoint, details))
+            _audit.append((datetime.now(timezone.utc), login, endpoint,
+                           _sanitize_http_code(http_code), details))
 
     def audit_tail(count):
         with _lock:
@@ -648,7 +660,8 @@ else:  # in-RAM fallback: same behavior, nothing persisted
     def audit_rows():
         """Non-sensitive columns only — feeds the //sys/logs/audit_log table."""
         with _lock:
-            return [(ts, login, endpoint) for ts, login, endpoint, _ in _audit]
+            return [(ts, login, endpoint, http_code)
+                    for ts, login, endpoint, http_code, _ in _audit]
 
 
 if __name__ == '__main__':
@@ -685,9 +698,11 @@ if __name__ == '__main__':
     elif cmd == 'list-users':
         print('\n'.join(list_users()))
     elif cmd == 'audit-tail':
-        for ts, login, endpoint, details in audit_tail(int(sys.argv[2]) if len(sys.argv) > 2 else 20):
+        for ts, login, endpoint, http_code, details in audit_tail(
+                int(sys.argv[2]) if len(sys.argv) > 2 else 20):
             print(json.dumps({'ts': ts.isoformat(), 'user': login, 'endpoint': endpoint,
-                              'details': details}, ensure_ascii=False))
+                              'http_code': http_code, 'details': details},
+                             ensure_ascii=False))
     else:
         sys.exit(
             'usage: userdb.py add-user <login> [--password-stdin | '
