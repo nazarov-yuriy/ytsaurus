@@ -271,6 +271,80 @@ class TestPasswordStorage(unittest.TestCase):
         self.assertNotIn('\x00', login + endpoint + stored['path'])
         self.assertEqual(stored['values'], ['before'])
 
+    def test_audit_redacts_nested_credentials_and_keeps_benign_fields(self):
+        secret_values = [
+            'plain-password',
+            'basic-authorization',
+            'session-cookie',
+            'csrf-token-value',
+            'oauth-access-token',
+            'oauth-refresh-token',
+            'oidc-id-token',
+            'robot-token-value',
+            'client-secret-value',
+            'database-password',
+            'api-secret-value',
+            'cloud-credential-value',
+            'api-key-value',
+            'private-key-value',
+            'session-value',
+        ]
+        details = {
+            'password': secret_values[0],
+            'headers': {
+                'Authorization': secret_values[1],
+                'Cookie': secret_values[2],
+                'X-CSRF-Token': secret_values[3],
+            },
+            'oauth': {
+                'access_token': secret_values[4],
+                'refreshToken': secret_values[5],
+                'id-token': secret_values[6],
+                'robot_token': secret_values[7],
+                'clientSecret': secret_values[8],
+                'apiKey': secret_values[12],
+                'private_key': secret_values[13],
+                'session': secret_values[14],
+            },
+            'database_password': secret_values[9],
+            'api-secret': secret_values[10],
+            'cloud_credential': secret_values[11],
+            'metadata': {
+                'error_code': 401,
+                'path': '//home',
+                'command': 'get',
+                'primary_key': 'id',
+                'token_count': 12,
+            },
+        }
+
+        self.userdb.audit('alice', '/api/v4/get', details)
+        details['headers']['Authorization'] = 'changed-after-audit'
+        _, _, _, stored = self.userdb.audit_tail(1)[0]
+        encoded = self.userdb._compact_json(stored)
+
+        for secret_value in [*secret_values, 'changed-after-audit']:
+            self.assertNotIn(secret_value, encoded)
+        self.assertEqual(stored['password'], '<redacted>')
+        self.assertEqual(stored['headers']['Authorization'], '<redacted>')
+        self.assertEqual(stored['oauth']['refreshToken'], '<redacted>')
+        self.assertEqual(stored['database_password'], '<redacted>')
+        self.assertEqual(stored['api-secret'], '<redacted>')
+        self.assertEqual(stored['cloud_credential'], '<redacted>')
+        self.assertEqual(stored['oauth']['apiKey'], '<redacted>')
+        self.assertEqual(stored['oauth']['private_key'], '<redacted>')
+        self.assertEqual(stored['oauth']['session'], '<redacted>')
+        self.assertEqual(
+            {key: stored['metadata'][key] for key in (
+                'error_code', 'path', 'command', 'primary_key', 'token_count')},
+            {'error_code': 401, 'path': '//home', 'command': 'get',
+             'primary_key': 'id', 'token_count': 12})
+        self.assertTrue(stored['_audit_truncated'])
+        self.assertLess(
+            self.userdb._json_size({
+                'login': 'alice', 'endpoint': '/api/v4/get', 'details': stored}),
+            self.userdb.AUDIT_PAYLOAD_LIMIT_BYTES)
+
     def test_audit_normalisation_has_bounded_depth_and_width(self):
         class NoFullIteration(list):
             def __iter__(self):
@@ -356,14 +430,25 @@ class TestPostgresRecovery(unittest.TestCase):
             return connection
 
         userdb = load_userdb('dbname=mock', fake_psycopg(connect))
-        userdb.audit('u' * 10_000, '/unknown/' + ('p' * 10_000),
-                     {'path': 'x' * 100_000})
+        userdb.audit(
+            'u' * 10_000,
+            '/unknown/' + ('p' * 10_000),
+            {'path': '//home',
+             'nested': {
+                 'accessToken': 'postgres-access-secret',
+                 'client_secret': 'postgres-client-secret',
+                 'error_code': 'benign-error-code'}})
         _, params = next(
             execution for execution in connections[0].executions
             if execution[0].startswith('INSERT INTO audit_log'))
         login, endpoint, raw_details = params
         details = json.loads(raw_details)
 
+        self.assertNotIn('postgres-access-secret', raw_details)
+        self.assertNotIn('postgres-client-secret', raw_details)
+        self.assertEqual(details['nested']['accessToken'], '<redacted>')
+        self.assertEqual(details['nested']['client_secret'], '<redacted>')
+        self.assertEqual(details['nested']['error_code'], 'benign-error-code')
         self.assertLess(
             len(json.dumps(
                 {'login': login, 'endpoint': endpoint, 'details': details},

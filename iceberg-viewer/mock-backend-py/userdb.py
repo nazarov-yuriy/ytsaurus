@@ -9,6 +9,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import secrets
 import sys
 import threading
@@ -39,6 +40,43 @@ _AUDIT_VALUE_JSON_BYTES = 160
 _AUDIT_KEY_JSON_BYTES = 64
 _AUDIT_MAX_ITEMS = 8
 _AUDIT_MAX_DEPTH = 3
+_AUDIT_REDACTED = '<redacted>'
+_AUDIT_SENSITIVE_KEYS = frozenset({
+    'access_token',
+    'api_key',
+    'authorization',
+    'client_secret',
+    'cookie',
+    'credential',
+    'credentials',
+    'csrf_token',
+    'id_token',
+    'passwd',
+    'password',
+    'private_key',
+    'proxy_authorization',
+    'refresh_token',
+    'robot_token',
+    'secret',
+    'session',
+    'session_id',
+    'set_cookie',
+    'token',
+    'ytcypresscookie',
+})
+_AUDIT_SENSITIVE_SUFFIXES = (
+    '_api_key',
+    '_authorization',
+    '_cookie',
+    '_credential',
+    '_credentials',
+    '_passwd',
+    '_password',
+    '_private_key',
+    '_secret',
+    '_session',
+    '_token',
+)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -147,6 +185,20 @@ def _bounded_audit_text(value, encoded_limit):
     return sample[:low] + suffix
 
 
+def _is_sensitive_audit_key(key):
+    """Match credential-bearing field names without hiding benign metadata."""
+    text = key if isinstance(key, str) else str(key)
+    # Only the tail is relevant for suffix matching. Bounding it also prevents
+    # an attacker-controlled, enormous key from making redaction itself costly.
+    text = text[-256:]
+    text = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1_\2', text)
+    text = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', text)
+    normalised = re.sub(r'[^a-z0-9]+', '_', text.lower()).strip('_')
+    return (
+        normalised in _AUDIT_SENSITIVE_KEYS
+        or normalised.endswith(_AUDIT_SENSITIVE_SUFFIXES))
+
+
 def _normalise_audit_value(value, depth=0):
     """Copy only a bounded JSON prefix and report whether anything was omitted."""
     if isinstance(value, str):
@@ -170,6 +222,10 @@ def _normalise_audit_value(value, depth=0):
                 break
             safe_key = _bounded_audit_text(key, _AUDIT_KEY_JSON_BYTES)
             if safe_key in result:
+                truncated = True
+                continue
+            if _is_sensitive_audit_key(key):
+                result[safe_key] = _AUDIT_REDACTED
                 truncated = True
                 continue
             if depth == 0 and safe_key == 'requests' and isinstance(child, (list, tuple)):
