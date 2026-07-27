@@ -10,6 +10,8 @@ mock backend, as a first step toward serving the UI from an Apache Iceberg catal
   in this repo (`yt/yt/server/http_proxy`).
 - `docs/` — protocol documentation (**start at `docs/INDEX.md`** — the generated map of
   every doc and its cross-references):
+  - `history.md` — findings and corrections that predate the squashed commit
+    log: what was implemented wrongly at first, and what surprised us.
   - `auth.md` — login, cookies, CSRF, token flow.
   - `table-viewer.md` — navigation & static-table viewing wire protocol (get/list/exists,
     `read_table` with `web_json`, error format).

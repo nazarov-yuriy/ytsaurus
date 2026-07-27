@@ -6,14 +6,14 @@ Which doc covers what, and which doc mentions which. Regenerate with `python3 db
 
 ### [README.md](../README.md)
 *Reusing the YTsaurus UI as an Apache Iceberg catalog viewer*
-- mentions: [deploy/README.md](../deploy/README.md), [docs/API-INDEX.md](../docs/API-INDEX.md), [docs/ENTITIES.md](../docs/ENTITIES.md), [docs/auth.md](../docs/auth.md), [docs/bootstrap-config.md](../docs/bootstrap-config.md), [docs/coverage-notes.md](../docs/coverage-notes.md), [docs/iceberg-considerations.md](../docs/iceberg-considerations.md), [docs/table-viewer.md](../docs/table-viewer.md), [docs/timeouts.md](../docs/timeouts.md)
+- mentions: [deploy/README.md](../deploy/README.md), [docs/API-INDEX.md](../docs/API-INDEX.md), [docs/ENTITIES.md](../docs/ENTITIES.md), [docs/auth.md](../docs/auth.md), [docs/bootstrap-config.md](../docs/bootstrap-config.md), [docs/coverage-notes.md](../docs/coverage-notes.md), [docs/history.md](../docs/history.md), [docs/iceberg-considerations.md](../docs/iceberg-considerations.md), [docs/table-viewer.md](../docs/table-viewer.md), [docs/timeouts.md](../docs/timeouts.md)
 - mentioned by: [deploy/README.md](../deploy/README.md), [docs/security-review.md](../docs/security-review.md)
 
 ## Protocol documentation (handwritten)
 
 ### [docs/auth.md](../docs/auth.md)
 *YTsaurus UI ↔ backend authentication, at wire level*
-- mentioned by: [README.md](../README.md), [deploy/README.md](../deploy/README.md), [docs/google-oauth.md](../docs/google-oauth.md), [docs/iceberg-considerations.md](../docs/iceberg-considerations.md), [docs/security-review.md](../docs/security-review.md), [mock-backend-py/README.md](../mock-backend-py/README.md)
+- mentioned by: [README.md](../README.md), [deploy/README.md](../deploy/README.md), [docs/google-oauth.md](../docs/google-oauth.md), [docs/history.md](../docs/history.md), [docs/iceberg-considerations.md](../docs/iceberg-considerations.md), [docs/security-review.md](../docs/security-review.md), [mock-backend-py/README.md](../mock-backend-py/README.md)
 
 ### [docs/table-viewer.md](../docs/table-viewer.md)
 *YTsaurus UI ↔ cluster wire protocol: Navigation + static Table viewer*
@@ -25,7 +25,7 @@ Which doc covers what, and which doc mentions which. Regenerate with `python3 db
 
 ### [docs/empirical-findings.md](../docs/empirical-findings.md)
 *Empirical findings from driving the real UI against the mock*
-- no cross-references
+- mentioned by: [docs/history.md](../docs/history.md)
 
 ### [docs/coverage-notes.md](../docs/coverage-notes.md)
 *Coverage notes: conventions and out-of-scope endpoints*
@@ -97,3 +97,8 @@ Which doc covers what, and which doc mentions which. Regenerate with `python3 db
 *Google OAuth for the Iceberg viewer — design notes*
 - mentions: [docs/auth.md](../docs/auth.md)
 - mentioned by: [docs/security-review.md](../docs/security-review.md)
+
+### [docs/history.md](../docs/history.md)
+*Findings and corrections worth keeping*
+- mentions: [docs/auth.md](../docs/auth.md), [docs/empirical-findings.md](../docs/empirical-findings.md)
+- mentioned by: [README.md](../README.md)
