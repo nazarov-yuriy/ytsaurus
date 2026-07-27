@@ -78,13 +78,17 @@ app.kubernetes.io/component: postgres
 {{- end }}
 
 {{/*
-An explicit cluster authentication value wins. Otherwise PostgreSQL enables
-password auth automatically; the all-in-RAM default remains anonymous.
+An explicit cluster authentication value wins, except that delegated
+authentication may never be paired with "none". Otherwise PostgreSQL or an
+upstream YTsaurus proxy enables password auth automatically; the all-in-RAM
+default remains anonymous.
 */}}
 {{- define "iceberg-ui-mock.auth.mode" -}}
-{{- if .Values.ui.cluster.authentication -}}
+{{- if and .Values.auth.ytUpstream (eq .Values.ui.cluster.authentication "none") -}}
+{{- fail "ui.cluster.authentication=none is incompatible with non-empty auth.ytUpstream" -}}
+{{- else if .Values.ui.cluster.authentication -}}
 {{- .Values.ui.cluster.authentication -}}
-{{- else if .Values.postgres.enabled -}}
+{{- else if or .Values.postgres.enabled .Values.auth.ytUpstream -}}
 basic
 {{- else -}}
 none

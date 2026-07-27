@@ -50,8 +50,11 @@ postgres:
 auth:
   robotToken: mock-robot-token
   # Real YTsaurus HTTP proxy URL that verifies users not added locally; on
-  # first success they are provisioned into PostgreSQL (origin=external).
-  # Locally-added test users keep working without it. Empty disables delegation.
+  # first success they are provisioned into the configured user store
+  # (origin=external). A non-empty value selects basic/strict authentication
+  # when ui.cluster.authentication is empty; pairing it with an explicit "none"
+  # is rejected. Locally-added test users keep working without it. Empty
+  # disables delegation.
   # See docs/auth.md "External authentication". Example: "https://proxy.yt.example".
   ytUpstream: ""
 
@@ -71,8 +74,9 @@ ui:
     environment: development
     group: Mock
     theme: grapefruit
-    # Empty selects "basic" with PostgreSQL and "none" otherwise. Set an explicit
-    # value to override that behavior (including "none" to opt out with PG).
+    # Empty selects "basic" with PostgreSQL or auth.ytUpstream, and "none"
+    # otherwise. Set an explicit value to override that behavior. "none" may
+    # opt out with PostgreSQL, but is rejected when auth.ytUpstream is set.
     authentication: ""
     proxy: ""
   env: []

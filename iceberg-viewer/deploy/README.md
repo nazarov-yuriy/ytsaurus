@@ -59,6 +59,9 @@ the stock `python:3.12-slim` image. The UI image is pulled from
   - `templates/tests/test-smoke.yaml` — `helm test` pod: probes the mock
     directly, both UI boot gates (`cluster-info`, `cluster-params`), an `exists`
     command through the UI tunnel, and a `read_table` web_json response.
+  - `tests/test-auth-render.sh` — source-level `helm template` regression checks
+    for anonymous defaults, automatic strict authentication with
+    `auth.ytUpstream`, and rejection of contradictory authentication settings.
 - PostgreSQL user persistence (`postgres.enabled=true`): adds a `postgres:17-alpine`
   Deployment with a PVC, Secret-managed password (`postgres.password` or
   `postgres.existingSecret` with key `password`), and wires `MOCK_PG_DSN` into the
@@ -74,10 +77,13 @@ the stock `python:3.12-slim` image. The UI image is pulled from
   baked image for air-gapped clusters.
 - External authentication (`auth.ytUpstream=https://proxy.yt.example`): users
   not added locally are verified against that real YTsaurus proxy's `/login`
-  and provisioned into PostgreSQL on first success (no password material is
-  stored for them). Locally-added users — `userdb.py add-user`, the seed
-  `iceberg`/`iceberg` — always authenticate locally and never contact the
-  upstream. See docs/auth.md "External authentication".
+  and provisioned into the configured user store on first success (no password
+  material is stored for them). The setting automatically selects
+  `authentication: basic`, enables strict backend authentication, and cannot be
+  combined with an explicit `ui.cluster.authentication=none`. Locally-added
+  users — `userdb.py add-user`, the seed `iceberg`/`iceberg` — always
+  authenticate locally and never contact the upstream. See docs/auth.md
+  "External authentication".
 - `docker/mock-backend.Dockerfile` — optional baked image (includes the pinned
   PostgreSQL dependencies).
   Build and push an explicit tag to a registry reachable by the cluster, then
