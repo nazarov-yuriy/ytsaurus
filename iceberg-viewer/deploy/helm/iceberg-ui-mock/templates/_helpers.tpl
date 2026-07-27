@@ -112,7 +112,11 @@ none
 {{- end }}
 
 {{- define "iceberg-ui-mock.postgres.password" -}}
-{{- required "postgres.password must be non-empty when postgres.enabled=true and existingSecret is unset" .Values.postgres.password -}}
+{{- $password := required "postgres.password must be non-empty when postgres.enabled=true and existingSecret is unset" .Values.postgres.password | toString -}}
+{{- if eq $password "mock-password" -}}
+{{- fail "postgres.password must be changed from the published mock-password default when postgres.enabled=true" -}}
+{{- end -}}
+{{- $password -}}
 {{- end }}
 
 {{/*

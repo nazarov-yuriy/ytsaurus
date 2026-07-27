@@ -37,6 +37,7 @@ postgres:
   # changing them after PostgreSQL has initialized persistent storage.
   # The chart reconciles this role password on every PostgreSQL pod start.
   # Alternatively point existingSecret at a Secret with key "password".
+  # Enabling PostgreSQL with this published placeholder is rejected.
   password: mock-password
   existingSecret: ""
   # Helm cannot observe out-of-band Secret updates. Bump this value in the same

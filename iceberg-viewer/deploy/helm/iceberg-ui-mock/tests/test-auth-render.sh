@@ -4,6 +4,7 @@ set -euo pipefail
 chart_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 helm_bin=${HELM_BIN:-helm}
 safe_test_token=auth-regression-only-9f187c83e48e4ca8
+safe_database_password=database-regression-only-481cd126704c4460
 test_tmp=$(mktemp -d)
 trap 'rm -rf "$test_tmp"' EXIT
 
@@ -45,6 +46,28 @@ if "$helm_bin" template auth-regression "$chart_dir" \
 fi
 assert_present "$test_tmp/default-token.stderr" \
     'auth.robotToken must be changed from the published mock-robot-token default'
+
+if "$helm_bin" template auth-regression "$chart_dir" \
+    --namespace auth-regression \
+    --set postgres.enabled=true \
+    --set-string "auth.robotToken=$safe_test_token" \
+    >"$test_tmp/default-database-password.yaml" \
+    2>"$test_tmp/default-database-password.stderr"; then
+    fail "PostgreSQL rendered with the published default database password"
+fi
+assert_present "$test_tmp/default-database-password.stderr" \
+    'postgres.password must be changed from the published mock-password default'
+
+"$helm_bin" template auth-regression "$chart_dir" \
+    --namespace auth-regression \
+    --set postgres.enabled=true \
+    --set-string "postgres.password=$safe_database_password" \
+    --set-string "auth.robotToken=$safe_test_token" \
+    >"$test_tmp/postgres.yaml"
+assert_present "$test_tmp/postgres.yaml" '            - name: MOCK_PG_DSN'
+assert_present "$test_tmp/postgres.yaml" '            - name: MOCK_REQUIRE_AUTH'
+assert_absent "$test_tmp/postgres.yaml" '            - name: MOCK_ENABLE_DEV_SEED_USERS'
+assert_absent "$test_tmp/postgres.yaml" 'mock-password'
 
 "$helm_bin" template auth-regression "$chart_dir" \
     --namespace auth-regression \

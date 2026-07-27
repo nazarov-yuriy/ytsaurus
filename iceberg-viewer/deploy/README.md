@@ -117,8 +117,8 @@ the stock `python:3.12-slim` image. The UI image is pulled from
 ## PostgreSQL credentials and rotation
 
 Authenticated chart rendering rejects the published `mock-robot-token`
-placeholder. Supply a unique robot token; for PostgreSQL-backed authentication,
-replace the database password at the same time:
+placeholder, and enabling PostgreSQL rejects the published `mock-password`
+placeholder. Supply unique credentials for both boundaries:
 
 ```bash
 helm upgrade --install iceberg-ui deploy/helm/iceberg-ui-mock \
