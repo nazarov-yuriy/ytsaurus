@@ -1074,7 +1074,11 @@ MOCK_YT_UPSTREAM_TIMEOUT=5                    # seconds, per verification call
 | user's `origin` in local DB | what happens |
 |---|---|
 | `local` (seed users, `userdb.py add-user`) | verified against the local PBKDF2 hash only; the upstream is **never contacted**, even on a wrong password. This is the "special test user" path — it keeps working when the upstream is down and cannot be shadowed by an upstream account with the same login. |
-| `external`, or no row yet | the received Basic credentials are forwarded verbatim to `POST <MOCK_YT_UPSTREAM>/login`. `2xx` → identity confirmed; on the first success the user row is created (`origin='external'`) and a **local** session cookie is issued (the upstream's cookie is discarded). `4xx` → `401 {"code":1,"message":"Incorrect login or password"}` (same masked shape as §5.2a). `5xx`/unreachable/timeout → `503 {"code":1,"message":"External authentication is unavailable"}` — distinct from a bad password, and deliberately not `401` so the UI does not claim the password was wrong. |
+| `external`, or no row yet | the received Basic credentials are forwarded verbatim to `POST <MOCK_YT_UPSTREAM>/login`. A direct `2xx` containing a non-empty `YTCypressCookie` → identity confirmed; on the first success the user row is created (`origin='external'`) and a **local** session cookie is issued (the upstream's cookie is discarded). `4xx` → `401 {"code":1,"message":"Incorrect login or password"}` (same masked shape as §5.2a). `3xx`, a `2xx` without the expected cookie, `5xx`, unreachability, or timeout → `503 {"code":1,"message":"External authentication is unavailable"}` — distinct from a bad password, and deliberately not `401` so the UI does not claim the password was wrong. |
+
+Redirects are never followed. This prevents the Basic credentials from being
+forwarded to a redirect target and ensures that only the configured proxy can
+confirm an identity.
 
 Identity is re-verified upstream on **every** login of an external user; only
 the *row* is created once. The local DB caches identity, never the password:

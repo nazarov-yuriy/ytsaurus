@@ -19,6 +19,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from email.utils import format_datetime
+from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qsl, urlsplit
 
@@ -145,6 +146,29 @@ def escape_header_value(value):
 
 # ---- auth (user/session storage lives in userdb: PostgreSQL or in-RAM) -----
 
+class RefuseRedirects(urllib.request.HTTPRedirectHandler):
+    """Never forward login credentials to a redirect target."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(req.full_url, code, msg, headers, fp)
+
+
+UPSTREAM_OPENER = urllib.request.build_opener(RefuseRedirects())
+
+
+def has_cypress_cookie(headers):
+    for header in headers.get_all('Set-Cookie', ()):
+        cookies = SimpleCookie()
+        try:
+            cookies.load(header)
+        except CookieError:
+            continue
+        cookie = cookies.get('YTCypressCookie')
+        if cookie is not None and cookie.value:
+            return True
+    return False
+
+
 def upstream_login(encoded_credentials):
     """Verify Basic credentials against the real YTsaurus /login.
 
@@ -154,10 +178,12 @@ def upstream_login(encoded_credentials):
         f'{UPSTREAM}/login', method='POST',
         headers={'Authorization': f'Basic {encoded_credentials}'})
     try:
-        with urllib.request.urlopen(req, timeout=UPSTREAM_TIMEOUT):
-            return True
+        with UPSTREAM_OPENER.open(req, timeout=UPSTREAM_TIMEOUT) as response:
+            if 200 <= response.status < 300 and has_cypress_cookie(response.headers):
+                return True
+            return None
     except urllib.error.HTTPError as e:
-        return False if e.code < 500 else None
+        return False if 400 <= e.code < 500 else None
     except OSError:
         return None
 

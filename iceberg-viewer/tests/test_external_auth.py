@@ -34,12 +34,32 @@ UNUSED_PORT = 8074   # nothing listens here
 
 _procs = []
 _upstream = None
+_redirect_target = None
+
+
+class RedirectTarget(BaseHTTPRequestHandler):
+    """A hostile redirect target that would receive forwarded credentials."""
+    hits = []
+
+    def log_message(self, *args):
+        pass
+
+    def _respond(self):
+        self.hits.append(self.headers.get('Authorization'))
+        self.send_response(200)
+        self.send_header('Set-Cookie', 'YTCypressCookie=redirected-cookie; Path=/')
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+
+    do_GET = _respond
+    do_POST = _respond
 
 
 class FakeUpstream(BaseHTTPRequestHandler):
     """Real-YTsaurus stand-in: /login accepts `accounts`, 500s for 'outage'."""
     accounts = {'alice': 'wonderland', 'iceberg': 'real-yt-password'}
     hits = collections.Counter()
+    redirect_url = None
 
     def log_message(self, *args):
         pass
@@ -56,6 +76,11 @@ class FakeUpstream(BaseHTTPRequestHandler):
         FakeUpstream.hits[user] += 1
         if user == 'outage':
             self.send_response(500)
+        elif user == 'no-cookie':
+            self.send_response(200)
+        elif user == 'redirect':
+            self.send_response(302)
+            self.send_header('Location', self.redirect_url)
         elif self.accounts.get(user) == password:
             self.send_response(200)
             self.send_header('Set-Cookie', 'YTCypressCookie=upstream-cookie; Path=/')
@@ -66,7 +91,12 @@ class FakeUpstream(BaseHTTPRequestHandler):
 
 
 def setUpModule():
-    global _upstream
+    global _redirect_target, _upstream
+    _redirect_target = ThreadingHTTPServer(('localhost', 0), RedirectTarget)
+    FakeUpstream.redirect_url = (
+        f'http://127.0.0.1:{_redirect_target.server_port}/redirect-target')
+    threading.Thread(target=_redirect_target.serve_forever, daemon=True).start()
+
     _upstream = ThreadingHTTPServer(('localhost', UPSTREAM_PORT), FakeUpstream)
     threading.Thread(target=_upstream.serve_forever, daemon=True).start()
 
@@ -95,6 +125,7 @@ def tearDownModule():
     for p in _procs:
         p.wait(timeout=10)
     _upstream.shutdown()
+    _redirect_target.shutdown()
 
 
 def call(port, method, path, headers=None):
@@ -194,6 +225,18 @@ class TestExternalAuth(unittest.TestCase):
         # Wrong local password fails fast with 401, not 503: local users are
         # decided locally even while the external YTsaurus is down.
         self.assertEqual(login(DEAD_PORT, 'iceberg', 'nope')[0], 401)
+
+    def test_8_upstream_success_without_cookie_maps_to_503(self):
+        status, body, _ = login(PORT, 'no-cookie', 'any')
+        self.assertEqual(status, 503)
+        self.assertEqual(body['message'], 'External authentication is unavailable')
+
+    def test_9_cross_origin_redirect_is_not_followed(self):
+        before = list(RedirectTarget.hits)
+        status, body, _ = login(PORT, 'redirect', 'secret')
+        self.assertEqual(status, 503)
+        self.assertEqual(body['message'], 'External authentication is unavailable')
+        self.assertEqual(RedirectTarget.hits, before)
 
 
 if __name__ == '__main__':
