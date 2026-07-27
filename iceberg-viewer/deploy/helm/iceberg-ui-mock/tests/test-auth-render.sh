@@ -3,6 +3,7 @@ set -euo pipefail
 
 chart_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 helm_bin=${HELM_BIN:-helm}
+safe_test_token=auth-regression-only-9f187c83e48e4ca8
 test_tmp=$(mktemp -d)
 trap 'rm -rf "$test_tmp"' EXIT
 
@@ -35,9 +36,19 @@ assert_present "$test_tmp/default.yaml" '"authentication":"none"'
 assert_absent "$test_tmp/default.yaml" '            - name: ALLOW_PASSWORD_AUTH'
 assert_absent "$test_tmp/default.yaml" '            - name: MOCK_REQUIRE_AUTH'
 
+if "$helm_bin" template auth-regression "$chart_dir" \
+    --namespace auth-regression \
+    --set-string auth.ytUpstream=https://proxy.yt.example \
+    >"$test_tmp/default-token.yaml" 2>"$test_tmp/default-token.stderr"; then
+    fail "authenticated mode rendered with the published default robot token"
+fi
+assert_present "$test_tmp/default-token.stderr" \
+    'auth.robotToken must be changed from the published mock-robot-token default'
+
 "$helm_bin" template auth-regression "$chart_dir" \
     --namespace auth-regression \
     --set-string auth.ytUpstream=https://proxy.yt.example \
+    --set-string "auth.robotToken=$safe_test_token" \
     >"$test_tmp/upstream.yaml"
 assert_present "$test_tmp/upstream.yaml" '"authentication":"basic"'
 assert_present "$test_tmp/upstream.yaml" '            - name: ALLOW_PASSWORD_AUTH'
@@ -48,6 +59,7 @@ if "$helm_bin" template auth-regression "$chart_dir" \
     --namespace auth-regression \
     --set-string auth.ytUpstream=https://proxy.yt.example \
     --set-string ui.cluster.authentication=none \
+    --set-string "auth.robotToken=$safe_test_token" \
     >"$test_tmp/invalid.yaml" 2>"$test_tmp/invalid.stderr"; then
     fail "auth.ytUpstream with authentication=none rendered successfully"
 fi

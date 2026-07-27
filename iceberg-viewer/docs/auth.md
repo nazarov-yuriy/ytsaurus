@@ -1103,7 +1103,9 @@ live in the local store, `/auth/whoami` and CSRF work as in §2. Consequences:
 
 The Basic credentials are forwarded to `MOCK_YT_UPSTREAM` as received: point it
 at an `https://` proxy or keep the hop inside a trusted network. In the Helm
-chart set `auth.ytUpstream`; in docker compose set `MOCK_YT_UPSTREAM` for the
-`mock-backend` service. Tests: `tests/test_external_auth.py` (fake upstream,
-wire behavior) and `tests/test_user_persistence.py` test 8 (PostgreSQL row/
-session persistence).
+chart set `auth.ytUpstream` and a unique, non-default `auth.robotToken`;
+authenticated rendering rejects the published placeholder token. In docker
+compose, `MOCK_YT_UPSTREAM` only configures the backend verifier; the provided
+test stack remains anonymous and is not an authenticated deployment. Tests:
+`tests/test_external_auth.py` (fake upstream, wire behavior) and
+`tests/test_user_persistence.py` test 8 (PostgreSQL row/session persistence).

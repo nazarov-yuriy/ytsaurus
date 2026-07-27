@@ -96,7 +96,11 @@ none
 {{- end }}
 
 {{- define "iceberg-ui-mock.auth.robotToken" -}}
-{{- required "auth.robotToken must be non-empty when authentication is enabled" .Values.auth.robotToken -}}
+{{- $token := required "auth.robotToken must be non-empty when authentication is enabled" .Values.auth.robotToken | toString -}}
+{{- if eq $token "mock-robot-token" -}}
+{{- fail "auth.robotToken must be changed from the published mock-robot-token default when authentication is enabled" -}}
+{{- end -}}
+{{- $token -}}
 {{- end }}
 
 {{- define "iceberg-ui-mock.ui.interfaceSecret" -}}

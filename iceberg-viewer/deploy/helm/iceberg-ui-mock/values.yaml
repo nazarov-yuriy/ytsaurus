@@ -46,7 +46,8 @@ postgres:
   resources: {}
 
 # Robot credentials used only for authenticated mock deployments. The same token
-# is mounted into the UI and backend; replace the default before exposing the UI.
+# is mounted into the UI and backend. The published value is an anonymous-mode
+# placeholder; chart rendering rejects it whenever authentication is enabled.
 auth:
   robotToken: mock-robot-token
   # Real YTsaurus HTTP proxy URL that verifies users not added locally; on
