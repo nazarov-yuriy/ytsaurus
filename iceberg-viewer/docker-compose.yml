@@ -1,4 +1,7 @@
-# Full stack in containers — nothing runs on the host (macOS-friendly).
+# Local test stack in containers — nothing runs on the host (macOS-friendly).
+# The UI intentionally uses anonymous authentication and is published only on
+# the IPv4 loopback interface. Do not use this file as an internal deployment
+# profile; use the fail-closed Helm chart for that.
 #
 #   docker compose up --build          # UI on http://localhost:8080/mock/navigation
 #   docker compose run --rm tests      # all backend suites + end-to-end smoke
@@ -60,7 +63,7 @@ services:
       - ./deploy/compose/common.js:/opt/app/dist/server/configs/custom/common.js:ro
       - ./deploy/compose/yt-interface-secret.json:/opt/app/secrets/yt-interface-secret.json:ro
     ports:
-      - "8080:80"
+      - "127.0.0.1:8080:80"
     depends_on:
       mock-backend:
         condition: service_healthy

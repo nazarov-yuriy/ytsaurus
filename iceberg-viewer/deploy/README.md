@@ -10,6 +10,11 @@ docker compose run --rm tests        # all backend suites + end-to-end smoke, in
 docker compose --profile e2e run --rm e2e   # headless-Chromium render check
 ```
 
+Compose is deliberately an anonymous local-test profile, not an internal
+deployment configuration. Its UI port is bound to `127.0.0.1` so Docker does
+not expose it on the host's LAN interfaces. Use the authenticated, fail-closed
+Helm configuration below for any shared environment.
+
 Services: `postgres` (users/sessions persisted in the `pgdata` volume),
 `mock-backend` (built from `docker/mock-backend.Dockerfile`, `/ready`-gated),
 `ui` (official `ghcr.io/ytsaurus/ui` image with `deploy/compose/` configs
