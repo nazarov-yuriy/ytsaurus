@@ -450,7 +450,7 @@
         "type": "text PK",
         "required": true,
         "support_status": "implemented",
-        "description": "user login; seeded with iceberg/root, extendable via `userdb.py add-user`"
+        "description": "user login; no users are created by default, so provision each account explicitly with `userdb.py add-user`"
       },
       {
         "name": "salt",
